@@ -133,7 +133,7 @@ export function x402PayerFromEnv(config: NodeJS.ProcessEnv, operator: string, en
     rpcUrl: config.RPC_URL ?? WHITECHAIN_RPC_URL,
     rpcFallbackUrl: config.RPC_FALLBACK_URL ?? WHITECHAIN_RPC_URL,
     chainId: Number(config.CHAIN_ID ?? WHITECHAIN_CHAIN_ID),
-    usdc: token as Address,
+    usdc: (config.USDC_ADDRESS || token) as Address,
   });
   if (payer.account.address.toLowerCase() === operator.toLowerCase()) throw new Error('x402 payer must not be the worker operator');
   if (payer.account.address.toLowerCase() === enforcer.toLowerCase()) throw new Error('x402 payer must not be the contract enforcer');

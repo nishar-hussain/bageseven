@@ -288,6 +288,9 @@ importers:
       '@bagseven/db':
         specifier: workspace:*
         version: link:../db
+      '@fastify/cors':
+        specifier: ^11.3.0
+        version: 11.3.0
       fastify:
         specifier: ^5.12.5
         version: 5.12.5

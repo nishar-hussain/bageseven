@@ -70,4 +70,6 @@ Tools: `bagseven_status`, `grant_status`, `check_entitlement`, `consume_entitlem
 
 ## Production
 
-See [docs/HOSTING.md](./docs/HOSTING.md). Required: `AUTH_SECRET`, `DAEMON_AUTH_TOKEN`, `RESEND_API_KEY`. Sign-in is open unless you set `AUTH_ALLOWLIST`.
+Deploy landing and console on **Vercel**, and daemon, gateway, policy, MCP, Postgres and Redis on **Railway**. Service configs and variable templates are in `deploy/railway/` and `deploy/vercel/`; follow [docs/HOSTING.md](./docs/HOSTING.md) for setup, shared secrets and the live World / Whitechain / Arkiv tracks. World is the primary login; `AUTH_ALLOWLIST` controls email recovery access.
+
+Run `pnpm setup:prod`, fill in the root `.env.prod`, then rerun it to generate private per-service imports. Railway Root Directory is `/` for every backend service (root `railway.json` defaults to daemon). Deploy the Vercel projects separately with roots `apps/landing` and `apps/console`.

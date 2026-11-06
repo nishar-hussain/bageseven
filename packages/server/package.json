@@ -18,6 +18,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@fastify/cors": "^11.3.0",
     "@bagseven/db": "workspace:*",
     "fastify": "^5.12.5",
     "ioredis": "^6.0.0",

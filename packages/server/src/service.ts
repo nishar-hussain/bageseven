@@ -2,6 +2,8 @@ import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastif
 import type { Redis } from 'ioredis';
 import type { Database } from '@bagseven/db';
 import { errorResponse } from './errors.js';
+import cors from '@fastify/cors';
+import { isCorsOriginAllowed } from './cors.js';
 
 export interface ServiceDeps {
   db: Database;
@@ -25,6 +27,12 @@ export async function createService(opts: CreateServiceOptions): Promise<Fastify
     ...opts.fastifyOptions,
   });
 
+  await app.register(cors, {
+    origin: (origin, callback) => callback(null, isCorsOriginAllowed(origin)),
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    exposedHeaders: ['mcp-session-id'],
+  });
+
   app.setErrorHandler((err, _req, reply) => {
     const { status, body } = errorResponse(err);
     if (status >= 500) {
@@ -42,7 +50,8 @@ export async function createService(opts: CreateServiceOptions): Promise<Fastify
 
   await opts.buildRoutes(app, { db: opts.db, redis: opts.redis, config: process.env });
 
-  const host = opts.host ?? '0.0.0.0';
+  // Dual stack also accepts Railway's private IPv6 network.
+  const host = opts.host ?? process.env.HOST ?? '::';
   await app.listen({ port: opts.port, host });
   app.log.info({ service: opts.name, port: opts.port }, 'listening');
   return app;

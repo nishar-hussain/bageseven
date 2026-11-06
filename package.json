@@ -10,6 +10,7 @@
   "scripts": {
     "setup": "node scripts/setup-platform.mjs",
     "setup:platform": "node scripts/setup-platform.mjs",
+    "setup:prod": "node scripts/setup-prod.mjs",
     "dev": "node scripts/start-local.mjs",
     "start:local": "node scripts/start-local.mjs",
     "mcp:local": "node scripts/mcp-local.mjs",

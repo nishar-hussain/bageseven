@@ -11,6 +11,7 @@ function rootEnvPath(): string {
 function readEnvWorker(): string {
   const fromProcess = process.env.BAGSEVEN_MCP_WORKER?.trim();
   if (fromProcess) return fromProcess;
+  if (process.env.NODE_ENV === 'production') return '';
   const path = rootEnvPath();
   if (!existsSync(path)) return '';
   for (const line of readFileSync(path, 'utf8').split('\n')) {
@@ -37,6 +38,12 @@ function upsertEnvWorker(worker: string): void {
 }
 
 function configs(worker: string) {
+  const publicUrl = process.env.BAGSEVEN_MCP_PUBLIC_URL?.replace(/\/$/, '');
+  if (publicUrl) {
+    return {
+      cursorMcp: { mcpServers: { bagseven: { url: `${publicUrl}/mcp` } } },
+    };
+  }
   const daemon = process.env.DAEMON_URL ?? 'http://127.0.0.1:4001';
   const root = resolve(process.cwd(), '../..');
   const cmd = `BAGSEVEN_MCP_WORKER=${worker} BAGSEVEN_MCP_PORT=4009 DAEMON_URL=${daemon} pnpm bagseven-mcp`;
@@ -93,6 +100,9 @@ export async function POST() {
   if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   let worker = readEnvWorker();
   if (!worker) {
+    if (process.env.NODE_ENV === 'production') {
+      return NextResponse.json({ error: 'Set the same BAGSEVEN_MCP_WORKER in Railway MCP and Vercel console variables' }, { status: 503 });
+    }
     worker = randomUUID();
     upsertEnvWorker(worker);
   }

@@ -38,7 +38,7 @@ async function proxy(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
     return NextResponse.json({ error: { code: 'NOT_FOUND', message: 'Unknown policy route' } }, { status: 404 });
   }
 
-  const gateway = (process.env.NEXT_PUBLIC_GATEWAY_URL || process.env.GATEWAY_URL || 'http://127.0.0.1:4000').replace(
+  const gateway = (process.env.GATEWAY_URL || process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://127.0.0.1:4000').replace(
     /\/$/,
     '',
   );

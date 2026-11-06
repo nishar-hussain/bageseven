@@ -471,7 +471,7 @@ async function main(): Promise<void> {
   const redis = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379');
   await createService({
     name: 'bagseven-daemon',
-    port: Number(process.env.DAEMON_PORT ?? 4001),
+    port: Number(process.env.PORT ?? process.env.DAEMON_PORT ?? 4001),
     db,
     redis,
     buildRoutes,

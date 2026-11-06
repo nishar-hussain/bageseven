@@ -11,7 +11,7 @@ async function main(): Promise<void> {
 
   await createService({
     name: 'bagseven-policy',
-    port: Number(process.env.POLICY_PORT ?? 4003),
+    port: Number(process.env.PORT ?? process.env.POLICY_PORT ?? 4003),
     db,
     redis,
     buildRoutes: buildPolicyRoutes,

@@ -1,0 +1,17 @@
+.git
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+**/.env
+**/.env.*
+**/*.tsbuildinfo
+**/coverage
+.data
+**/.data
+.aws
+.codex
+.agents
+.bagseven-bin
+**/*.log
+**/*.rdb

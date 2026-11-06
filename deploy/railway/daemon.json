@@ -1,0 +1,19 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "deploy/Dockerfile.backend"
+  },
+  "deploy": {
+    "startCommand": "node services/daemon/dist/index.js",
+    "healthcheckPath": "/healthz",
+    "healthcheckTimeout": 120,
+    "numReplicas": 1,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 10,
+    "preDeployCommand": [
+      "pnpm db:migrate"
+    ],
+    "sleepApplication": false
+  }
+}

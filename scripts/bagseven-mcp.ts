@@ -319,7 +319,7 @@ function isInitializeRequest(body: unknown): boolean {
 
 async function main(): Promise<void> {
   if (!WORKER) throw new Error('BAGSEVEN_MCP_WORKER is required');
-  const httpPort = process.env.BAGSEVEN_MCP_PORT ?? process.env.MCP_HTTP_PORT;
+  const httpPort = process.env.PORT ?? process.env.BAGSEVEN_MCP_PORT ?? process.env.MCP_HTTP_PORT;
   if (httpPort) {
     const { randomUUID } = await import('node:crypto');
     const { StreamableHTTPServerTransport } = await import('@modelcontextprotocol/sdk/server/streamableHttp.js');
@@ -330,13 +330,17 @@ async function main(): Promise<void> {
     app.use(express.urlencoded({ extended: false }));
     /** ChatGPT / remote clients: one transport per MCP session id. */
     const transports = new Map<string, InstanceType<typeof StreamableHTTPServerTransport>>();
-    const corsOrigin = process.env.BAGSEVEN_MCP_CORS_ORIGIN ?? '*';
+    const { isCorsOriginAllowed } = await import('@bagseven/server');
+    const corsEnv = { ...process.env, CORS_ORIGIN: process.env.BAGSEVEN_MCP_CORS_ORIGIN ?? process.env.CORS_ORIGIN };
     const publicUrl = (process.env.BAGSEVEN_MCP_PUBLIC_URL ?? '').replace(/\/$/, '');
     const oauthRequired =
       (process.env.MCP_OAUTH_REQUIRED ?? (publicUrl ? 'true' : 'false')).toLowerCase() === 'true';
 
     app.use((req, res, next) => {
-      res.setHeader('access-control-allow-origin', corsOrigin);
+      res.vary('Origin');
+      if (req.headers.origin && isCorsOriginAllowed(req.headers.origin, corsEnv)) {
+        res.setHeader('access-control-allow-origin', req.headers.origin);
+      }
       res.setHeader(
         'access-control-allow-headers',
         'authorization, content-type, mcp-session-id, accept, mcp-protocol-version',
@@ -465,6 +469,7 @@ async function main(): Promise<void> {
 
     // Health must NOT be on /mcp — ChatGPT uses GET /mcp for the SSE stream.
     app.get('/health', health);
+    app.get('/healthz', health);
     app.get('/', health);
     app.get('/mcp', mcpHandler);
     app.get('/v1/mcp', mcpHandler);
@@ -473,7 +478,7 @@ async function main(): Promise<void> {
     app.delete('/mcp', mcpHandler);
     app.delete('/v1/mcp', mcpHandler);
 
-    app.listen(Number(httpPort), '127.0.0.1', () =>
+    app.listen(Number(httpPort), process.env.HOST ?? '::', () =>
       console.error(
         `[bagseven-mcp] HTTP :${httpPort}/mcp oauth=${oauthRequired} public=${publicUrl || 'unset'} json=true`,
       ),
