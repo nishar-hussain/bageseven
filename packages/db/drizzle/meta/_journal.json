@@ -50,6 +50,13 @@
       "when": 1791396240000,
       "tag": "0006_provider_transaction_fees",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1791396300000,
+      "tag": "0007_checkout_worker",
+      "breakpoints": true
     }
   ]
 }

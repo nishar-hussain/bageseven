@@ -5,6 +5,7 @@
  * to the Bagseven daemon, which identifies the worker, signs the request and
  * calls the policy/mandate services.
  */
+import { registerManagementTools } from './mcp-management-tools.ts';
 import { readFileSync } from 'node:fs';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -52,6 +53,7 @@ const text = (value: unknown) => ({ content: [{ type: 'text' as const, text: JSO
 function buildServer(): McpServer {
   if (!WORKER) throw new Error('BAGSEVEN_MCP_WORKER must bind this MCP instance to one worker');
   const server = new McpServer({ name: 'bagseven-mcp', version: '0.1.0' }, { capabilities: { tools: {} } });
+  registerManagementTools(server, WORKER, daemon);
 
   server.registerTool(
     'bagseven_status',
@@ -89,24 +91,25 @@ function buildServer(): McpServer {
       description: 'Request a direct payment or fetch a paid HTTP resource. The Bagseven daemon handles the payment challenge, policy evaluation and mandate settlement.',
       inputSchema: {
         url: z.string().url().optional().describe('paid HTTP resource; the daemon will handle a 402 payment challenge'),
-        amount: z.string().min(1).optional().describe('direct USDC amount, for example 0.10'),
+        amount: z.string().min(1).optional().describe('direct USDT amount; must fit the live mandate budget'),
         recipient: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional().describe('direct recipient wallet address'),
         reason: z.string().max(500).optional().describe('audit reason'),
+        idempotency_key: z.string().min(1).max(200).optional().describe('Use the same key when retrying a payment to prevent duplicate transfers'),
       },
     },
-    async ({ url, amount, recipient, reason }) => {
+    async ({ url, amount, recipient, reason, idempotency_key }) => {
       const cleanUrl = url?.trim() || undefined;
       // For an x402 URL, the daemon must derive amount and recipient from the
       // provider's signed 402 challenge. Ignore any extra values hallucinated
       // by the model, which may be empty, formatted as currency, or invalid.
       const request = cleanUrl
-        ? { url: cleanUrl, reason: reason?.trim() || undefined }
+        ? { url: cleanUrl, reason: reason?.trim() || undefined, idempotency_key }
         : {
             // Models commonly serialize optional fields as empty strings.
             // Remove those values before daemon validation.
             amount: amount?.trim() || undefined,
             recipient: recipient?.trim() || undefined,
-            reason: reason?.trim() || undefined,
+            reason: reason?.trim() || undefined, idempotency_key,
           };
       return text(await daemon('POST', `/internal/workers/${encodeURIComponent(WORKER)}/fetch`, request));
     },
@@ -118,13 +121,17 @@ function buildServer(): McpServer {
       title: 'Bagseven child worker',
       description: 'Create a child worker under an existing Bagseven mandate.',
       inputSchema: {
-        mandate_id: z.string().uuid(),
-        parent_agent_id: z.string().uuid(),
+        mandate_id: z.string().uuid().optional(),
+        parent_agent_id: z.string().uuid().optional(),
         operator_address: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
         share_percent: z.number().int().min(1).max(100),
+        signature: z.string().regex(/^0x[0-9a-fA-F]{130}$/).optional(),
       },
     },
-    async ({ mandate_id, parent_agent_id, operator_address, share_percent }) => text(await daemon('POST', `/internal/workers/${encodeURIComponent(WORKER)}/spawn`, { mandate_id, parent_agent_id, operator_address, share_percent })),
+    async ({ mandate_id, parent_agent_id, operator_address, share_percent, signature }) => {
+      const current = await daemon('POST', `/internal/workers/${encodeURIComponent(WORKER)}/status`) as { mandate: { id: string } };
+      return text(await daemon('POST', `/internal/workers/${encodeURIComponent(WORKER)}/spawn`, { mandate_id: mandate_id ?? current.mandate.id, parent_agent_id: parent_agent_id ?? WORKER, operator_address, share_percent, signature }));
+    },
   );
 
   // --- Public entitlement tools (access clock). Mandate caps money; grants cap features. ---
@@ -134,7 +141,7 @@ function buildServer(): McpServer {
     {
       title: 'Live entitlement status',
       description:
-        'List living entitlements (Arkiv). Omit feature to list all SKUs (ocr, research_fetch, …). Expired grants disappear — that is the access clock.',
+        'Operator-wide living entitlement catalog. Use list_agent_entitlements for grants assigned to the bound agent. Omit feature to list all SKUs; expired grants are absent.',
       inputSchema: {
         holder: z.string().optional(),
         feature: z.string().optional().describe('Optional feature SKU filter; omit for all'),
@@ -149,55 +156,23 @@ function buildServer(): McpServer {
     },
   );
 
-  server.registerTool(
-    'mint_with_world',
-    {
-      title: 'Mint grant with World gate',
-      description:
-        'Mint a public Arkiv entitlement after World Agent Pass backend verify. Deny path: world_denied, outcome=cancelled|expired|invalid, or world:cancel:* proof — writes nothing.',
-      inputSchema: {
-        feature: z.string().min(1).default('ocr'),
-        holder: z.string().min(1),
-        human_id: z.string().optional(),
-        remaining: z.string().default('10'),
-        ttl_seconds: z.number().int().positive().default(120),
-        payment_tx: z.string().optional(),
-        settlement_network: z.enum(['whitechain', 'local']).default('whitechain'),
-        world_proof_id: z.string().optional().describe('world:ok:<id> or world:cancel|expire|deny:<id>'),
-        id_token: z.string().optional().describe('OIDC ID token in live World mode'),
-        world_denied: z.boolean().optional(),
-        outcome: z.enum(['ok', 'denied', 'expired', 'cancelled', 'invalid']).optional(),
-        renewal_enabled: z.boolean().default(true),
-      },
-    },
-    async (input) => text(await daemon('POST', '/internal/grants/mint', {
-      ...input,
-      mandate_id: undefined,
-      worker_id: WORKER,
-    })),
-  );
-
-  server.registerTool(
-    'buy_credits',
-    {
-      title: 'Buy / top up credits',
-      description: 'Whitechain USDT settle → explorer payment_tx on grant → extend Arkiv access clock.',
-      inputSchema: {
-        feature: z.string().min(1).default('ocr'),
-        holder: z.string().min(1),
-        remaining: z.string().default('10'),
-        ttl_seconds: z.number().int().positive().default(120),
-        payment_tx: z.string().optional().describe('Existing Whitechain tx hash; omit to settle via operator/demo'),
-        amount: z.string().default('1.00'),
-        human_id: z.string().optional(),
-        world_proof_id: z.string().optional(),
-      },
-    },
-    async (input) => text(await daemon('POST', '/internal/grants/buy-credits', {
-      ...input,
-      worker_id: WORKER,
-    })),
-  );
+  // Paid access is purchased through a provider checkout; agents never receive World credentials or wallet keys.
+  for (const name of ['mint_with_world', 'buy_credits']) {
+    server.registerTool(name, {
+      title: name === 'buy_credits' ? 'Buy entitlement credits' : 'Create paid entitlement',
+      description: 'Choose a provider plan and open a real wallet checkout. World consent is handled during OAuth; never paste World tokens or private keys. If no plan is selected, returns matching plans.',
+      inputSchema: { plan_id: z.string().optional(), feature: z.string().default('ocr'), holder: z.string().optional() },
+    }, async ({ plan_id, feature, holder }) => {
+      const plans = await daemon('GET', '/v1/plans') as { plans: Array<{ id: string; feature: string; active: boolean }> };
+      const matching = plans.plans.filter(plan => plan.active && plan.feature === feature);
+      if (!plan_id) return text({ requires_plan: true, plans: matching, next_step: 'Choose plan_id and call this tool again to open wallet checkout.' });
+      if (!matching.some(plan => plan.id === plan_id)) throw new Error('Choose an active provider plan for this feature');
+      const bound = await daemon('POST', `/internal/workers/${encodeURIComponent(WORKER)}/status`) as { mandate: { owner_address: string } };
+      const result = await daemon('POST', '/v1/checkout-sessions', { plan_id, holder: holder ?? `wallet:${bound.mandate.owner_address.toLowerCase()}`, worker_id: WORKER }) as { session: { id: string } };
+      const base = (process.env.NEXT_PUBLIC_CONSOLE_URL || 'http://localhost:3000').replace(/\/$/, '');
+      return text({ ...result, checkout_url: `${base}/checkout?session=${encodeURIComponent(result.session.id)}`, requires_wallet_payment: true });
+    });
+  }
 
   server.registerTool(
     'create_checkout_session',
@@ -206,13 +181,18 @@ function buildServer(): McpServer {
       description:
         'Open a thin Plan checkout session for a holder. Buyer pays USDT on Whitechain (WhiteWallet/EVM); confirm mints a living Arkiv grant. Not a payment-link product.',
       inputSchema: {
+        worker_id: z.string().uuid().optional().describe('Target agent; defaults to this MCP worker'),
         plan_id: z.string().min(1),
         holder: z.string().min(1),
         success_url: z.string().url().optional(),
         expires_in: z.number().int().positive().max(86_400).optional(),
       },
     },
-    async (input) => text(await daemon('POST', '/v1/checkout-sessions', input)),
+    async (input) => {
+      const result = await daemon('POST', '/v1/checkout-sessions', { ...input, worker_id: input.worker_id ?? WORKER }) as { session: { id: string } };
+      const consoleUrl = (process.env.NEXT_PUBLIC_CONSOLE_URL || 'http://localhost:3000').replace(/\/$/, '');
+      return text({ ...result, checkout_url: `${consoleUrl}/checkout?session=${encodeURIComponent(result.session.id)}` });
+    },
   );
 
   server.registerTool(
@@ -226,7 +206,7 @@ function buildServer(): McpServer {
       },
     },
     async ({ feature, holder }) => {
-      const params = new URLSearchParams({ feature });
+      const params = new URLSearchParams({ feature, worker_id: WORKER });
       if (holder) params.set('holder', holder);
       const live = (await daemon('GET', `/internal/grants/live?${params.toString()}`)) as { grants?: Array<{ remaining: string; enabled?: boolean; paid_through?: string; id: string; feature: string }> };
       const ranked = [...(live.grants ?? [])].sort((a, b) => Number(b.remaining) - Number(a.remaining));

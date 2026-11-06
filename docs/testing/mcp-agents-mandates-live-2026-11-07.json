@@ -1,0 +1,333 @@
+{
+  "scope": "Real trusted local MCP clients, PostgreSQL, public Whitechain 1874 and live Arkiv; OAuth tested separately",
+  "checks": [
+    "MCP protocol discovery exposes mandate, agent, payment and entitlement tools",
+    "MCP discovers the real owned mandate and bound root agent without pasted IDs",
+    "MCP prepared owner approval and deployed a real signed Whitechain mandate with its root agent",
+    "MCP funding draft transferred exactly 0.01 real USDT after wallet approval",
+    "MCP registered a child on-chain with an exact 0.001 USDT allocation",
+    "Real provider checkouts minted separate live Arkiv grants for root and child with exact 0.1% fees",
+    "Root and child MCP clients read only their own bound entitlements; unrelated OCR access is denied",
+    "MCP paid run passes both real gates and retries do not burn extra credits",
+    "Root MCP transferred real USDT to the provider; retry reused the same transaction",
+    "A separately bound child MCP client spent real USDT within its on-chain allocation",
+    "Overspending and cross-agent entitlement use were denied without moving funds or burning credits",
+    "Cancellation disabled renewal while preserving paid-through access; independent Arkiv reads confirm usage",
+    "Isolated test mandate was revoked on-chain and its 0.01 USDT recovered; the original mandate remains active"
+  ],
+  "provider": "0x2E9302Da9c2925b2b4e22C47E3c26C46220C46CC",
+  "root_worker": "110c3d3f-a158-4b12-bf91-2da6666fc44a",
+  "token": "0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7",
+  "tools": [
+    "list_mandates",
+    "get_mandate",
+    "list_agents",
+    "get_agent",
+    "prepare_mandate",
+    "create_mandate",
+    "prepare_mandate_funding",
+    "list_agent_entitlements",
+    "list_features",
+    "list_plans",
+    "create_plan",
+    "get_checkout_session",
+    "bagseven_status",
+    "bagseven_fetch",
+    "bagseven_spawn",
+    "grant_status",
+    "mint_with_world",
+    "buy_credits",
+    "create_checkout_session",
+    "check_entitlement",
+    "consume_entitlement",
+    "paid_run",
+    "cancel_renewal",
+    "explain_denial"
+  ],
+  "root_mandate": "b855cb8f-a5e2-43fc-a417-65f2ef223e8e",
+  "result": "PASS",
+  "initial_wallet_units": "49700000",
+  "gas_tx": "0xf1ea8618dffab9a15e091598f8bceacf18db0f896f4619e94af6aa4abf0e9178",
+  "created_mandate": {
+    "mandate_id": "7608c771-3dda-486b-83b9-91c753fa0611",
+    "root_agent_id": "aa0b80dc-cb75-45fe-bae8-59d5155e19e6",
+    "contract_address": "0xbef02cec96a01973de1818e223373f59544a0de2",
+    "status": "active"
+  },
+  "fund_tx": "0x397ebb4b84f2924318fef360cb2c102cf1d1982ae0ee0ece0718eb711ee610f8",
+  "child": {
+    "agent_id": "a33032ba-a856-426f-a3e7-d485a6423f14",
+    "depth": 1,
+    "share_percent": 1,
+    "parent_agent_id": "110c3d3f-a158-4b12-bf91-2da6666fc44a"
+  },
+  "plan": {
+    "id": "plan_a63c6069fe414c7b",
+    "provider_id": "legacy",
+    "feature": "research_fetch",
+    "name": "Real MCP research access",
+    "amount": "0.05",
+    "interval": "month",
+    "credits": "3",
+    "ttl_seconds": 86400,
+    "merchant_wallet": "0x2e9302da9c2925b2b4e22c47e3c26c46220c46cc",
+    "active": true,
+    "created_at": "2026-11-06T22:12:33.217Z"
+  },
+  "root_access": {
+    "checkout": {
+      "id": "cs_e38e59912cb84fafbbd5656ac31df5f8",
+      "plan_id": "plan_a63c6069fe414c7b",
+      "holder": "wallet:0x59f9f231d579d2780898ec9b6de7a1e6cd40f62f",
+      "worker_id": "110c3d3f-a158-4b12-bf91-2da6666fc44a",
+      "status": "PENDING",
+      "amount": "0.05",
+      "chain_id": 1874,
+      "platform_fee_bps": 10,
+      "platform_fee_amount": "0.00005",
+      "expires_at": "2026-11-06T23:12:33.542Z",
+      "created_at": "2026-11-06T22:12:33.542Z",
+      "plan": {
+        "id": "plan_a63c6069fe414c7b",
+        "provider_id": "legacy",
+        "feature": "research_fetch",
+        "name": "Real MCP research access",
+        "amount": "0.05",
+        "interval": "month",
+        "credits": "3",
+        "ttl_seconds": 86400,
+        "merchant_wallet": "0x2e9302da9c2925b2b4e22c47e3c26c46220c46cc",
+        "active": true,
+        "created_at": "2026-11-06T22:12:33.217Z"
+      }
+    },
+    "payment_tx": "0x7cbbda4046dc683ee43531241abacd97601274dc13ad21cb236ebaa67b33c4c9",
+    "grant": {
+      "id": "61c5102b-0c3e-45e2-a13a-3401319c22cc",
+      "feature": "research_fetch",
+      "holder": "wallet:0x59f9f231d579d2780898ec9b6de7a1e6cd40f62f",
+      "enabled": true,
+      "remaining": "3",
+      "renewal_enabled": true,
+      "paid_through": "2026-11-07T22:12:39.792Z",
+      "payment_tx": "0x7cbbda4046dc683ee43531241abacd97601274dc13ad21cb236ebaa67b33c4c9",
+      "settlement_network": "whitechain",
+      "world_proof_id": "world:checkout:cs_e38e59912cb84fafbbd5656ac31df5f8",
+      "worker_id": "110c3d3f-a158-4b12-bf91-2da6666fc44a",
+      "schema_version": 1,
+      "created_at": "2026-11-06T22:12:39.792Z",
+      "updated_at": "2026-11-06T22:12:39.792Z",
+      "arkiv_entity_key": "0xcee80fcf1b452b9d200322a22b5de5a1fa1c8e7e9486ba73c466f41ca1d57572"
+    }
+  },
+  "child_access": {
+    "checkout": {
+      "id": "cs_e82090b370634a7dba567e1abd1d7337",
+      "plan_id": "plan_a63c6069fe414c7b",
+      "holder": "wallet:0x59f9f231d579d2780898ec9b6de7a1e6cd40f62f",
+      "worker_id": "a33032ba-a856-426f-a3e7-d485a6423f14",
+      "status": "PENDING",
+      "amount": "0.05",
+      "chain_id": 1874,
+      "platform_fee_bps": 10,
+      "platform_fee_amount": "0.00005",
+      "expires_at": "2026-11-06T23:12:46.477Z",
+      "created_at": "2026-11-06T22:12:46.477Z",
+      "plan": {
+        "id": "plan_a63c6069fe414c7b",
+        "provider_id": "legacy",
+        "feature": "research_fetch",
+        "name": "Real MCP research access",
+        "amount": "0.05",
+        "interval": "month",
+        "credits": "3",
+        "ttl_seconds": 86400,
+        "merchant_wallet": "0x2e9302da9c2925b2b4e22c47e3c26c46220c46cc",
+        "active": true,
+        "created_at": "2026-11-06T22:12:33.217Z"
+      }
+    },
+    "payment_tx": "0xfbbb97c988aa79eda31517ff911f9028f459377377c07cf2596c2f400d5c30df",
+    "grant": {
+      "id": "11a8e324-8c22-4103-a3e6-c7c8da8177c2",
+      "feature": "research_fetch",
+      "holder": "wallet:0x59f9f231d579d2780898ec9b6de7a1e6cd40f62f",
+      "enabled": true,
+      "remaining": "3",
+      "renewal_enabled": true,
+      "paid_through": "2026-11-07T22:12:52.460Z",
+      "payment_tx": "0xfbbb97c988aa79eda31517ff911f9028f459377377c07cf2596c2f400d5c30df",
+      "settlement_network": "whitechain",
+      "world_proof_id": "world:checkout:cs_e38e59912cb84fafbbd5656ac31df5f8",
+      "worker_id": "a33032ba-a856-426f-a3e7-d485a6423f14",
+      "schema_version": 1,
+      "created_at": "2026-11-06T22:12:52.460Z",
+      "updated_at": "2026-11-06T22:12:52.460Z",
+      "arkiv_entity_key": "0x65e00b9084d101da5d31428727ac40edff5e8f92faf1d4a7d739e2ac832ba021"
+    }
+  },
+  "paid_run": {
+    "grant": {
+      "id": "8bdb9d2a-abab-4a16-88c6-583c62a2f6a2",
+      "feature": "ocr",
+      "holder": "wallet:0x59f9f231d579d2780898ec9b6de7a1e6cd40f62f",
+      "enabled": true,
+      "remaining": "1.98",
+      "renewal_enabled": false,
+      "paid_through": "2026-11-07T19:08:13.432Z",
+      "payment_tx": "0x6de5c464ffbd72404949b490dc673fe46b41f412d83f9626bfc916334547370f",
+      "settlement_network": "whitechain",
+      "world_proof_id": "world:checkout:cs_322e5fea282645d18ca8509de219cfab",
+      "worker_id": "110c3d3f-a158-4b12-bf91-2da6666fc44a",
+      "schema_version": 1,
+      "created_at": "2026-11-06T19:08:13.432Z",
+      "updated_at": "2026-11-06T22:13:01.015Z",
+      "arkiv_entity_key": "0x37381a2dad740f0951486cce2c85fefb96ed903c8945527acf38674206c5b629"
+    },
+    "work_echo": null,
+    "dual_gate": {
+      "mandate": "ok",
+      "grant": "ok"
+    },
+    "note": "Dual gate passed: mandate ceiling + living Arkiv grant"
+  },
+  "root_spend": {
+    "decision": "allow",
+    "reservation_id": "58651a3d-4e6c-41a1-94c5-fa67d20f0b81",
+    "authorization": {
+      "contract_address": "0xf3837d9e760640dcd5217135d104f19ccc6f69a2",
+      "worker_id": "0x33fb70fbc813909adb29b55e09f6422c89214ddf2981ecad9cca90f823fb7ed7",
+      "amount": "0.01",
+      "recipient": "0x2E9302Da9c2925b2b4e22C47E3c26C46220C46CC",
+      "chain_id": 1874
+    },
+    "remaining_window": "0.09",
+    "remaining_lifetime": "0.09",
+    "tx_hash": "0x7f00c616f41829de0d6e98a58df4b6e006896a19fba7eeb5b356af36a23c4779",
+    "worker": {
+      "id": "110c3d3f-a158-4b12-bf91-2da6666fc44a",
+      "operator_address": "0xbf3b1ab3e428efb00d82351883537f219d184076",
+      "allocation": "0.100000000000000000",
+      "remaining_allocation": "0.1",
+      "onchain_active": true,
+      "depth": 0,
+      "share_percent": "100.00",
+      "status": "active",
+      "name": null,
+      "mcp_endpoint": null
+    },
+    "mandate": {
+      "id": "b855cb8f-a5e2-43fc-a417-65f2ef223e8e",
+      "owner_address": "0x59f9f231d579d2780898ec9b6de7a1e6cd40f62f",
+      "operator_address": "0xbf3b1ab3e428efb00d82351883537f219d184076",
+      "contract_address": "0xf3837d9e760640dcd5217135d104f19ccc6f69a2",
+      "status": "active",
+      "onchain_revoked": false,
+      "budget_per_window": "0.100000000000000000",
+      "lifetime_cap": "0.100000000000000000",
+      "per_purchase_cap": "0.100000000000000000",
+      "per_seller_pct": 10000,
+      "max_depth": 1
+    },
+    "entitlement": {
+      "grant": {
+        "id": "61c5102b-0c3e-45e2-a13a-3401319c22cc",
+        "feature": "research_fetch",
+        "holder": "wallet:0x59f9f231d579d2780898ec9b6de7a1e6cd40f62f",
+        "enabled": true,
+        "remaining": "2",
+        "renewal_enabled": true,
+        "paid_through": "2026-11-07T22:12:39.792Z",
+        "payment_tx": "0x7cbbda4046dc683ee43531241abacd97601274dc13ad21cb236ebaa67b33c4c9",
+        "settlement_network": "whitechain",
+        "world_proof_id": "world:checkout:cs_e38e59912cb84fafbbd5656ac31df5f8",
+        "worker_id": "110c3d3f-a158-4b12-bf91-2da6666fc44a",
+        "schema_version": 1,
+        "created_at": "2026-11-06T22:12:39.792Z",
+        "updated_at": "2026-11-06T22:13:12.390Z",
+        "arkiv_entity_key": "0xcee80fcf1b452b9d200322a22b5de5a1fa1c8e7e9486ba73c466f41ca1d57572"
+      },
+      "settlement": {
+        "payment_tx": "0x7f00c616f41829de0d6e98a58df4b6e006896a19fba7eeb5b356af36a23c4779",
+        "settlement_network": "whitechain"
+      },
+      "dual_gate": {
+        "mandate": "ok",
+        "grant": "ok"
+      }
+    }
+  },
+  "child_spend": {
+    "decision": "allow",
+    "reservation_id": "abef9f3c-bb08-4ea5-9880-b0e2ce4780a0",
+    "authorization": {
+      "contract_address": "0xf3837d9e760640dcd5217135d104f19ccc6f69a2",
+      "worker_id": "0x7574eb9d4fa19353a32883ec5e2cfe7dcfc9a0787dac6ed9c12f55b03645cfb9",
+      "amount": "0.0001",
+      "recipient": "0x2E9302Da9c2925b2b4e22C47E3c26C46220C46CC",
+      "chain_id": 1874
+    },
+    "remaining_window": "0.0899",
+    "remaining_lifetime": "0.0899",
+    "tx_hash": "0x472886c816f95b04abbe99841adf7068f7667da8fd21267d9daedb76d8b9b6bf",
+    "worker": {
+      "id": "a33032ba-a856-426f-a3e7-d485a6423f14",
+      "operator_address": "0xbf3b1ab3e428efb00d82351883537f219d184076",
+      "allocation": "0.001000000000000000",
+      "remaining_allocation": "0.001",
+      "onchain_active": true,
+      "depth": 1,
+      "share_percent": "1.00",
+      "status": "active",
+      "name": null,
+      "mcp_endpoint": null
+    },
+    "mandate": {
+      "id": "b855cb8f-a5e2-43fc-a417-65f2ef223e8e",
+      "owner_address": "0x59f9f231d579d2780898ec9b6de7a1e6cd40f62f",
+      "operator_address": "0xbf3b1ab3e428efb00d82351883537f219d184076",
+      "contract_address": "0xf3837d9e760640dcd5217135d104f19ccc6f69a2",
+      "status": "active",
+      "onchain_revoked": false,
+      "budget_per_window": "0.100000000000000000",
+      "lifetime_cap": "0.100000000000000000",
+      "per_purchase_cap": "0.100000000000000000",
+      "per_seller_pct": 10000,
+      "max_depth": 1
+    },
+    "entitlement": {
+      "grant": {
+        "id": "11a8e324-8c22-4103-a3e6-c7c8da8177c2",
+        "feature": "research_fetch",
+        "holder": "wallet:0x59f9f231d579d2780898ec9b6de7a1e6cd40f62f",
+        "enabled": true,
+        "remaining": "2",
+        "renewal_enabled": true,
+        "paid_through": "2026-11-07T22:12:52.460Z",
+        "payment_tx": "0xfbbb97c988aa79eda31517ff911f9028f459377377c07cf2596c2f400d5c30df",
+        "settlement_network": "whitechain",
+        "world_proof_id": "world:checkout:cs_e38e59912cb84fafbbd5656ac31df5f8",
+        "worker_id": "a33032ba-a856-426f-a3e7-d485a6423f14",
+        "schema_version": 1,
+        "created_at": "2026-11-06T22:12:52.460Z",
+        "updated_at": "2026-11-06T22:13:22.971Z",
+        "arkiv_entity_key": "0x65e00b9084d101da5d31428727ac40edff5e8f92faf1d4a7d739e2ac832ba021"
+      },
+      "settlement": {
+        "payment_tx": "0x472886c816f95b04abbe99841adf7068f7667da8fd21267d9daedb76d8b9b6bf",
+        "settlement_network": "whitechain"
+      },
+      "dual_gate": {
+        "mandate": "ok",
+        "grant": "ok"
+      }
+    }
+  },
+  "revoke_tx": "0xf550d0b4800f966b340895546a6f27a1fec4a51f39df53a1c584ed1fb53baaf5",
+  "recover_tx": "0xb68526bfdff305027479260625e9b8d044d89c43db2c988193d413349ff813d5",
+  "revoked": true,
+  "cumulative_usdt_used": "0.3",
+  "root_vault_usdt": "0.0899",
+  "finished_at": "2026-11-06T22:13:54.105Z",
+  "chatgpt_ui_confirmation": "User confirmed that reconnecting Bagseven and listing mandates/agents shows the active mandate, root agent and child agent"
+}

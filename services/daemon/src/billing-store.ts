@@ -26,6 +26,7 @@ export type Plan = z.infer<typeof PlanSchema>;
 export const CheckoutSessionSchema = z.object({
   id: z.string().min(1),
   plan_id: z.string().min(1),
+  worker_id: z.string().uuid().optional(),
   holder: z.string().min(1),
   status: z.enum(['PENDING', 'PAID', 'EXPIRED', 'CANCELLED', 'FAILED']),
   amount: z.string().min(1),
@@ -57,6 +58,7 @@ export const CreatePlanInput = z.object({
 
 export const CreateCheckoutInput = z.object({
   plan_id: z.string().min(1),
+  worker_id: z.string().uuid().optional(),
   holder: z.string().min(1),
   success_url: z.string().url().optional(),
   expires_in: z.number().int().positive().max(86_400).default(3600),
@@ -123,6 +125,7 @@ export class MemoryBillingStore {
       id,
       plan_id: plan.id,
       holder: input.holder,
+      worker_id: input.worker_id,
       status: 'PENDING',
       amount: plan.amount,
       chain_id: whitechainConfig().chainId,
@@ -208,15 +211,15 @@ export class PostgresBillingStore implements BillingStore {
     const input = CreateCheckoutInput.parse(raw);
     const plan = await this.getPlan(input.plan_id);
     if (!plan?.active) throw new Error('PLAN_NOT_FOUND');
-    const session: CheckoutSession = { id: `cs_${randomUUID().replace(/-/g, '')}`, plan_id: plan.id, holder: input.holder, status: 'PENDING', amount: plan.amount, chain_id: whitechainConfig().chainId, platform_fee_bps: 10, platform_fee_amount: platformFee(plan.amount), success_url: input.success_url, expires_at: new Date(Date.now() + input.expires_in * 1000).toISOString(), created_at: nowIso(), plan };
-    await this.db.insert(checkoutSessions).values({ id: session.id, planId: plan.id, holder: session.holder, status: session.status, amount: session.amount, chainId: session.chain_id, platformFeeBps: session.platform_fee_bps, platformFeeAmount: session.platform_fee_amount, successUrl: session.success_url, expiresAt: new Date(session.expires_at) });
+    const session: CheckoutSession = { id: `cs_${randomUUID().replace(/-/g, '')}`, plan_id: plan.id, holder: input.holder, worker_id: input.worker_id, status: 'PENDING', amount: plan.amount, chain_id: whitechainConfig().chainId, platform_fee_bps: 10, platform_fee_amount: platformFee(plan.amount), success_url: input.success_url, expires_at: new Date(Date.now() + input.expires_in * 1000).toISOString(), created_at: nowIso(), plan };
+    await this.db.insert(checkoutSessions).values({ id: session.id, planId: plan.id, holder: session.holder, workerId: session.worker_id, status: session.status, amount: session.amount, chainId: session.chain_id, platformFeeBps: session.platform_fee_bps, platformFeeAmount: session.platform_fee_amount, successUrl: session.success_url, expiresAt: new Date(session.expires_at) });
     return session;
   }
   async getCheckout(id: string): Promise<CheckoutSession | null> {
     const [s] = await this.db.select().from(checkoutSessions).where(eq(checkoutSessions.id, id));
     if (!s) return null;
     const status = s.status === 'PENDING' && s.expiresAt.getTime() <= Date.now() ? 'EXPIRED' : s.status;
-    return CheckoutSessionSchema.parse({ ...s, status, plan_id: s.planId, chain_id: s.chainId, platform_fee_bps: s.platformFeeBps, platform_fee_amount: s.platformFeeAmount, customer_wallet: s.customerWallet || undefined, payment_tx: s.paymentTx || undefined, grant_id: s.grantId || undefined, success_url: s.successUrl || undefined, expires_at: s.expiresAt.toISOString(), created_at: s.createdAt.toISOString(), plan: await this.getPlan(s.planId) });
+    return CheckoutSessionSchema.parse({ ...s, status, plan_id: s.planId, worker_id: s.workerId || undefined, chain_id: s.chainId, platform_fee_bps: s.platformFeeBps, platform_fee_amount: s.platformFeeAmount, customer_wallet: s.customerWallet || undefined, payment_tx: s.paymentTx || undefined, grant_id: s.grantId || undefined, success_url: s.successUrl || undefined, expires_at: s.expiresAt.toISOString(), created_at: s.createdAt.toISOString(), plan: await this.getPlan(s.planId) });
   }
   async listCheckouts(opts?: { holder?: string; plan_id?: string }): Promise<CheckoutSession[]> {
     const rows = await this.db.select().from(checkoutSessions).orderBy(desc(checkoutSessions.createdAt));

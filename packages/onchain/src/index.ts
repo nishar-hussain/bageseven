@@ -163,6 +163,12 @@ export class MandateClient {
     return receipt.contractAddress;
   }
 
+  async token(contract: Address): Promise<Address> { return this.read('usdc', [], contract) as Promise<Address>; }
+  async isRevoked(contract: Address): Promise<boolean> { return this.read('revoked', [], contract) as Promise<boolean>; }
+  async workerState(contract: Address, worker: Hex): Promise<readonly [Address, Hex, bigint, bigint, number, boolean]> {
+    return this.read('workers', [worker], contract) as Promise<readonly [Address, Hex, bigint, bigint, number, boolean]>;
+  }
+
   async vaultBalance(contract: Address): Promise<bigint> {
     return this.read('vaultBalance', [], contract) as Promise<bigint>;
   }

@@ -548,6 +548,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
       const rawBody = (req.body ?? {}) as Record<string, unknown>;
       const idkitResponse = rawBody.idkit_response;
       const body = MintGrantInputSchema.parse(req.body);
+      if (body.settlement_network === 'local' && !worldMocksAllowed()) throw new ApiError(403, 'LIVE_PAYMENT_REQUIRED', 'Live entitlements require a verified Whitechain payment');
       try {
         assertKnownFeature(body.feature);
       } catch (e) {
@@ -764,6 +765,8 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
       if (valueType === 'numeric' && !gte(grant.remaining, body.amount)) {
         throw new ApiError(403, 'DUAL_GATE', 'GRANT_EMPTY: remaining credits insufficient');
       }
+
+      if (grant.worker_id && body.worker_id && grant.worker_id !== body.worker_id) throw new ApiError(403, 'GRANT_WORKER_MISMATCH', 'This entitlement is bound to another agent');
 
       // Dual-gate money side — always required (skip_mandate_gate is intentionally ignored).
       const worker = resolveWorkerId(body.worker_id, grant.worker_id);

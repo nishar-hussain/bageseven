@@ -157,6 +157,7 @@ export const checkoutSessions = pgTable(
     status: text('status').notNull().default('PENDING'),
     amount: text('amount').notNull(),
     chainId: integer('chain_id').notNull().default(1874),
+    workerId: text('worker_id'),
     platformFeeBps: integer('platform_fee_bps').notNull().default(0),
     platformFeeAmount: text('platform_fee_amount').notNull().default('0'),
     customerWallet: text('customer_wallet'),

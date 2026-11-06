@@ -12,9 +12,10 @@ import { FETCH_FEATURE_ID, featureForAction, getGrantStore } from '@bagseven/ent
 import { gte } from '@bagseven/money';
 import { decodeX402PaymentRequired, selectX402Requirements, validateX402AgainstPolicy, type X402Requirements } from './x402.js';
 import { x402PayerFromEnv, type X402Payer } from './x402-payer.js';
+import { beginWorkerRequest } from './worker-request-ledger.js';
+import { registerWorkerManagement } from './worker-management.js';
 import { registerGrantRoutes } from './grants.js';
 import { WHITECHAIN_CHAIN_ID, whitechainConfig } from '@bagseven/onchain';
-import { settleWhitechainUsdt } from './whitechain-settle.js';
 import { isPublicEntitlementPath, registerPublicEntitlementRoutes } from './public-entitlements.js';
 import { registerBillingRoutes } from './billing.js';
 
@@ -31,6 +32,7 @@ const fetchSchema = z.object({
   amount: z.string().min(1).optional(),
   recipient: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional(),
   reason: z.string().max(500).optional(),
+  idempotency_key: z.string().min(1).max(200).optional(),
 }).superRefine((value, ctx) => {
   if (!value.url && (!value.amount || !value.recipient)) {
     ctx.addIssue({ code: 'custom', message: 'provide url or both amount and recipient', path: ['url'] });
@@ -56,6 +58,7 @@ const spawnSchema = z.object({
   parent_agent_id: z.string().uuid(),
   operator_address: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
   share_percent: z.number().int().min(1).max(100),
+  signature: z.string().regex(/^0x[0-9a-fA-F]{130}$/).optional(),
 });
 
 interface WorkerRecord {
@@ -80,16 +83,22 @@ interface SpendResult {
   remaining_lifetime?: string;
 }
 
-function accountFromEnv(config: NodeJS.ProcessEnv): PrivateKeyAccount {
-  const key = config.DAEMON_OPERATOR_KEY ?? config.OPERATOR_DEV_KEY;
-  if (!key) throw new ApiError(503, 'DAEMON_OPERATOR_UNCONFIGURED', 'DAEMON_OPERATOR_KEY is not configured');
-  return privateKeyToAccount(key as `0x${string}`);
+function accountFromEnv(config: NodeJS.ProcessEnv, expected: string): PrivateKeyAccount {
+  for (const key of [config.DAEMON_OPERATOR_KEY, config.OPERATOR_DEV_KEY, config.DAEMON_EXECUTOR_KEY]) {
+    if (!key) continue;
+    const account = privateKeyToAccount(key as `0x${string}`);
+    if (account.address.toLowerCase() === expected.toLowerCase()) return account;
+  }
+  throw new ApiError(403, 'DAEMON_OPERATOR_MISMATCH', 'No configured signer matches this agent operator');
 }
 
-function ownerFromEnv(config: NodeJS.ProcessEnv): PrivateKeyAccount {
-  const key = config.DAEMON_OWNER_KEY ?? config.OWNER_DEV_KEY;
-  if (!key) throw new ApiError(503, 'DAEMON_OWNER_UNCONFIGURED', 'DAEMON_OWNER_KEY is not configured');
-  return privateKeyToAccount(key as `0x${string}`);
+function ownerFromEnv(config: NodeJS.ProcessEnv, expected: string): PrivateKeyAccount {
+  for (const key of [config.DAEMON_OWNER_KEY, config.OWNER_DEV_KEY, config.WHITECHAIN_PRIVATE_KEY]) {
+    if (!key) continue;
+    const account = privateKeyToAccount(key as `0x${string}`);
+    if (account.address.toLowerCase() === expected.toLowerCase()) return account;
+  }
+  throw new ApiError(403, 'OWNER_SIGNATURE_REQUIRED', 'Provide an owner signature; no configured owner signer matches this mandate');
 }
 
 async function daemonApi(config: NodeJS.ProcessEnv, method: string, path: string, body?: unknown): Promise<unknown> {
@@ -152,7 +161,7 @@ async function verifyChallenge(config: NodeJS.ProcessEnv, url: URL, challenge: z
 }
 
 async function executeSpend(config: NodeJS.ProcessEnv, resolved: ResolvedWorker, amount: string, recipient: string, reason?: string, executionRecipient = recipient): Promise<SpendResult> {
-  const signer = accountFromEnv(config);
+  const signer = accountFromEnv(config, resolved.agent.operator_address);
   if (signer.address.toLowerCase() !== resolved.agent.operator_address.toLowerCase()) {
     throw new ApiError(403, 'DAEMON_OPERATOR_MISMATCH', 'daemon signer is not the worker operator');
   }
@@ -208,6 +217,9 @@ function buildRoutes(app: FastifyInstance, { config, redis, db }: ServiceDeps): 
   app.post('/internal/workers/:worker/fetch', async (req) => {
     const { worker } = req.params as { worker: string };
     const body = fetchSchema.parse({ ...(req.body as object), worker });
+    const operation = await beginWorkerRequest(redis, worker, body);
+    if (operation.replay) return operation.result;
+    const perform = async () => {
     const resolved = await resolveWorker(config, worker);
     if (resolved.agent.status !== 'active' || resolved.mandate.status !== 'active') {
       throw new ApiError(403, 'WORKER_INACTIVE', 'worker or mandate is not active');
@@ -216,7 +228,7 @@ function buildRoutes(app: FastifyInstance, { config, redis, db }: ServiceDeps): 
     // Dual gate: mandate spend + living entitlement for fetch feature (research_fetch).
     const requireGrant = (config.BAGSEVEN_REQUIRE_GRANT ?? 'true').toLowerCase() !== 'false';
     const grantFeature =
-      featureForAction('fetch', config.BAGSEVEN_GRANT_FEATURE) ?? FETCH_FEATURE_ID;
+      featureForAction('fetch', config.BAGSEVEN_FETCH_FEATURE) ?? FETCH_FEATURE_ID;
     let grantConsume: { grant_id: string; idempotency_key: string } | undefined;
     if (requireGrant) {
       const store = getGrantStore(config);
@@ -313,6 +325,7 @@ function buildRoutes(app: FastifyInstance, { config, redis, db }: ServiceDeps): 
 
     if (!amount || !recipient) throw new ApiError(400, 'PAYMENT_INPUT_REQUIRED', 'amount and recipient are required');
     const payerAddress = x402Payment?.payer.account.address;
+    await operation.checkpoint();
     const result = await executeSpend(config, resolved, amount, recipient, body.reason, payerAddress ?? recipient);
     if (body.url && result.decision === 'allow') {
       const providerUrl = validateProviderUrl(config, body.url);
@@ -347,29 +360,26 @@ function buildRoutes(app: FastifyInstance, { config, redis, db }: ServiceDeps): 
     if (grantConsume && result.decision === 'allow') {
       const store = getGrantStore(config);
       const grant = await store.consume(grantConsume.grant_id, '1', grantConsume.idempotency_key);
-      const settleNote = grant.payment_tx
-        ? await settleWhitechainUsdt({
-            amount: amount ?? '0',
-            feature: grantFeature,
-            holder: grant.holder,
-            grant_id: grant.id,
-            payment_tx: grant.payment_tx,
-            reason: 'fetch_audit',
-          }).catch(() => null)
-        : null;
+      const settleNote = result.tx_hash ? { payment_tx: result.tx_hash, settlement_network: 'whitechain' } : null;
       entitlement = { grant, settlement: settleNote, dual_gate: { mandate: 'ok', grant: 'ok' } };
     }
 
     return { ...result, worker: resolved.agent, mandate: resolved.mandate, provider, entitlement };
+    };
+    try { const result = await perform(); await operation.complete(result); return result; }
+    catch (error) { await operation.fail(); throw error; }
   });
 
   app.post('/internal/workers/:worker/spawn', async (req) => {
     const body = spawnSchema.parse(req.body);
-    const resolved = await resolveWorker(config, body.parent_agent_id);
-    const owner = ownerFromEnv(config);
-    if (owner.address.toLowerCase() !== resolved.mandate.owner_address.toLowerCase()) {
-      throw new ApiError(403, 'DAEMON_OWNER_MISMATCH', 'daemon owner signer is not authorized for this mandate');
-    }
+    const { worker } = req.params as { worker: string };
+    const [bound, resolved] = await Promise.all([resolveWorker(config, worker), resolveWorker(config, body.parent_agent_id)]);
+    if (resolved.mandate.id !== bound.mandate.id || body.mandate_id !== bound.mandate.id) throw new ApiError(403, 'MANDATE_SCOPE', 'Child agents must stay inside the bound mandate');
+    const tree = await daemonApi(config, 'GET', `/v1/mandates/${bound.mandate.id}`) as { agents: Array<{ id: string; parentAgentId?: string | null }> };
+    const allowed = new Set([worker]);
+    let changed = true;
+    while (changed) { changed = false; for (const agent of tree.agents) if (agent.parentAgentId && allowed.has(agent.parentAgentId) && !allowed.has(agent.id)) { allowed.add(agent.id); changed = true; } }
+    if (!allowed.has(body.parent_agent_id)) throw new ApiError(403, 'AGENT_SCOPE', 'Parent must be the bound worker or its descendant');
     const canonical = canonicalSpawn({
       mandateId: body.mandate_id,
       parentAgentId: body.parent_agent_id,
@@ -377,7 +387,7 @@ function buildRoutes(app: FastifyInstance, { config, redis, db }: ServiceDeps): 
       sharePercent: body.share_percent,
       chainId: Number(config.CHAIN_ID ?? WHITECHAIN_CHAIN_ID),
     });
-    const signature = await owner.signMessage({ message: canonical });
+    const signature = body.signature ?? await ownerFromEnv(config, resolved.mandate.owner_address).signMessage({ message: canonical });
     return daemonApi(config, 'POST', `/v1/mandates/${body.mandate_id}/spawn-agent`, { ...body, chain_id: Number(config.CHAIN_ID ?? WHITECHAIN_CHAIN_ID), signature });
   });
 
@@ -416,9 +426,13 @@ function buildRoutes(app: FastifyInstance, { config, redis, db }: ServiceDeps): 
       }
     },
   };
+  registerWorkerManagement(app, { config, resolve: worker => resolveWorker(config, worker), policy: (method, path, body) => daemonApi(config, method, path, body) });
   registerGrantRoutes(app, grantDeps);
   registerPublicEntitlementRoutes(app, grantDeps);
-  registerBillingRoutes(app, { redis, db });
+  registerBillingRoutes(app, { redis, db, validateWorker: async worker => {
+    const resolved = await resolveWorker(config, worker);
+    if (resolved.agent.status !== 'active' || resolved.mandate.status !== 'active') throw new ApiError(403, 'WORKER_INACTIVE', 'Choose an active agent for this checkout');
+  } });
 }
 
 function validateEnvContract(): void {

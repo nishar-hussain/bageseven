@@ -45,7 +45,7 @@ function providerScope(req: { headers: { authorization?: string; [key: string]: 
   return provider;
 }
 
-export function registerBillingRoutes(app: FastifyInstance, deps: { redis?: Redis; db?: Database } = {}): void {
+export function registerBillingRoutes(app: FastifyInstance, deps: { redis?: Redis; db?: Database; validateWorker?: (worker: string) => Promise<void> } = {}): void {
   const store = getBillingStore(deps.db);
   const grants = getGrantStore(process.env);
   const confirmations = new Map<string, Promise<unknown>>();
@@ -89,7 +89,9 @@ export function registerBillingRoutes(app: FastifyInstance, deps: { redis?: Redi
       const plan = await store.getPlan(body.plan_id);
       const provider = providerScope(req);
       if (provider && plan?.provider_id !== provider) throw new ApiError(404, 'PLAN_NOT_FOUND', 'plan not found');
-      const session = await store.createCheckout(body);
+      const worker = (body.worker_id ?? process.env.BAGSEVEN_MCP_WORKER?.trim()) || undefined;
+      if (worker && deps.validateWorker) await deps.validateWorker(worker);
+      const session = await store.createCheckout({ ...body, worker_id: worker });
       return { session, checkout_session: session };
     } catch (e) {
       if (e instanceof ApiError) throw e;
@@ -130,6 +132,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: { redis?: Redi
         status: session.status,
         amount: session.amount,
         chain_id: session.chain_id,
+        worker_id: session.worker_id,
         payment: { chain_id: session.chain_id, usdt: whitechainConfig().usdt, rpc_url: whitechainConfig().rpcUrl, explorer: whitechainConfig().explorer },
         holder: session.holder,
         expires_at: session.expires_at,
@@ -202,7 +205,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: { redis?: Redi
         settlement_network: 'whitechain',
         human_id: prior?.human_id,
         world_proof_id: prior?.world_proof_id ?? `world:checkout:${session.id}`,
-        worker_id: prior?.worker_id || process.env.BAGSEVEN_MCP_WORKER?.trim(),
+        worker_id: session.worker_id || prior?.worker_id || process.env.BAGSEVEN_MCP_WORKER?.trim(),
         renewal_enabled: plan.interval === 'month',
       });
 

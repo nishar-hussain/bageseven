@@ -1,9 +1,10 @@
+import { toUnits, fromUnits } from './usdt-units.js';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { desc, eq } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { agents, mandates, providers, refusals, reservations, transactions, vaults } from '@bagseven/db';
-import { validateMoney, sub } from '@bagseven/money';
+import { validateMoney, sub, min, max } from '@bagseven/money';
 import { ApiError, idempotencyOnSend, idempotencyPreHandler, type ServiceDeps } from '@bagseven/server';
 import { canonicalMandate, canonicalSpawn, canonicalWithdraw, MandateClient, whitechainConfig, recoverEip191, recoverSpendIntentSigner, workerKey } from '@bagseven/onchain';
 import { recoverMessageAddress, type Address } from 'viem';
@@ -19,15 +20,6 @@ const BOUNDS: Record<number, string> = {
   8: 'WorkerInactive',
   9: 'WorkerAllocationExceeded',
 };
-
-function toUnits(amount: string): bigint {
-  const [int = '0', frac = ''] = amount.split('.');
-  return BigInt(int) * 1_000_000n + BigInt(`${frac}000000`.slice(0, 6));
-}
-function fromUnits(units: bigint): string {
-  const n = Number(units) / 1e6;
-  return n.toFixed(2);
-}
 
 const createMandateSchema = z.object({
   owner_address: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
@@ -237,7 +229,7 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
       orderBy: desc(mandates.createdAt),
     });
     return {
-      mandates: rows.map((mandate) => ({
+      mandates: await Promise.all(rows.map(async (mandate) => ({
         id: mandate.id,
         owner_address: mandate.ownerAddress,
         operator_address: mandate.operatorAddress,
@@ -248,9 +240,9 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
         per_purchase_cap: mandate.perPurchaseCap,
         per_seller_pct: mandate.perSellerPct,
         max_depth: mandate.maxDepth,
-        status: mandate.status,
+        status: mandate.contractAddress && await mandateClient(config).isRevoked(mandate.contractAddress as Address) ? 'revoked' : mandate.status,
         created_at: mandate.createdAt,
-      })),
+      }))),
     };
   });
 
@@ -271,8 +263,10 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
         per_purchase_cap: mandate.perPurchaseCap,
         per_seller_pct: mandate.perSellerPct,
         max_depth: mandate.maxDepth,
-        status: mandate.status,
+        status: mandate.contractAddress && await client.isRevoked(mandate.contractAddress as Address) ? 'revoked' : mandate.status,
       },
+      token_address: mandate.contractAddress ? await client.token(mandate.contractAddress as Address) : null,
+      onchain_revoked: mandate.contractAddress ? await client.isRevoked(mandate.contractAddress as Address) : false,
       vault_balance: mandate.contractAddress ? fromUnits(await client.vaultBalance(mandate.contractAddress as Address)) : '0.00',
       agents: tree,
     };
@@ -286,13 +280,15 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
     let vault = 0n;
     let windowSpent = 0n;
     let lifetimeSpent = 0n;
+    let revoked = false;
     let chainState: { status: 'available' } | { status: 'unavailable'; message: string } = { status: 'available' };
     if (contract) {
       try {
-        [vault, windowSpent, lifetimeSpent] = await Promise.all([
+        [vault, windowSpent, lifetimeSpent, revoked] = await Promise.all([
           client.vaultBalance(contract),
           client.spendState(contract),
           client.lifetimeSpent(contract),
+          client.isRevoked(contract),
         ]);
       } catch {
         // The overview is also the dashboard's recovery surface. An RPC outage,
@@ -305,8 +301,8 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
 
     const windowLeft = sub(mandate.budgetPerWindow, fromUnits(windowSpent));
     const lifetimeLeft = sub(mandate.lifetimeCap, fromUnits(lifetimeSpent));
-    const canDraw = chainState.status === 'available'
-      ? Math.max(0, Math.min(Number(fromUnits(vault)), Number(windowLeft), Number(lifetimeLeft))).toFixed(2)
+    const canDraw = chainState.status === 'available' && !revoked
+      ? max('0', min(fromUnits(vault), min(windowLeft, lifetimeLeft)))
       : '0.00';
 
     const tree = await db.query.agents.findMany({ where: eq(agents.mandateId, id) });
@@ -325,7 +321,8 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
       vault_available: fromUnits(vault),
       can_be_drawn_now: canDraw,
       onchain_state: chainState,
-      agents: tree.map((a) => ({ id: a.id, operator_address: a.operatorAddress, share_percent: a.sharePercent, depth: a.depth, status: a.status, parent_agent_id: a.parentAgentId, name: a.name, mcp_endpoint: a.mcpEndpoint })),
+      onchain_revoked: revoked,
+      agents: tree.map((a) => ({ id: a.id, operator_address: a.operatorAddress, share_percent: a.sharePercent, allocation: a.allocation, depth: a.depth, status: a.status, parent_agent_id: a.parentAgentId, name: a.name, mcp_endpoint: a.mcpEndpoint })),
       recent_refusals: recentRefusals,
       terms: {
         owner_address: mandate.ownerAddress,
@@ -364,6 +361,7 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
       const client = mandateClient(config);
       await client.registerWorker(mandate.contractAddress as Address, workerKey(agent.id), workerKey(parent.id), agent.operatorAddress as Address, toUnits(allocation), depth);
     } catch (error) {
+      await db.update(agents).set({ status: 'suspended' }).where(eq(agents.id, agent.id));
       throw new ApiError(502, 'WORKER_CHAIN_REGISTRATION_FAILED', (error as Error).message);
     }
     return { agent_id: agent.id, depth, share_percent: body.share_percent, parent_agent_id: body.parent_agent_id };
@@ -521,15 +519,16 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
     const mandate = await getMandate(agent.mandateId);
     const client = mandateClient(config);
     const contract = mandate.contractAddress as Address | null;
-    const [vault, w, l] = contract ? await Promise.all([client.vaultBalance(contract), client.spendState(contract), client.lifetimeSpent(contract)]) : [0n, 0n, 0n];
+    const [vault, w, l, revoked, state] = contract ? await Promise.all([client.vaultBalance(contract), client.spendState(contract), client.lifetimeSpent(contract), client.isRevoked(contract), client.workerState(contract, workerKey(agent.id))]) : [0n, 0n, 0n, true, null] as const;
+    const allocationLeft = state ? fromUnits(state[2] > state[3] ? state[2] - state[3] : 0n) : '0';
     return {
-      agent: { id: agent.id, operator_address: agent.operatorAddress, depth: agent.depth, share_percent: agent.sharePercent, status: agent.status, name: agent.name, mcp_endpoint: agent.mcpEndpoint },
-      mandate: { id: mandate.id, owner_address: mandate.ownerAddress, operator_address: mandate.operatorAddress, contract_address: mandate.contractAddress, status: mandate.status, budget_per_window: mandate.budgetPerWindow, lifetime_cap: mandate.lifetimeCap, per_purchase_cap: mandate.perPurchaseCap, per_seller_pct: mandate.perSellerPct, max_depth: mandate.maxDepth },
+      agent: { id: agent.id, operator_address: agent.operatorAddress, allocation: agent.allocation, remaining_allocation: allocationLeft, onchain_active: state?.[5] ?? false, depth: agent.depth, share_percent: agent.sharePercent, status: agent.status, name: agent.name, mcp_endpoint: agent.mcpEndpoint },
+      mandate: { id: mandate.id, owner_address: mandate.ownerAddress, operator_address: mandate.operatorAddress, contract_address: mandate.contractAddress, status: revoked ? 'revoked' : mandate.status, onchain_revoked: revoked, budget_per_window: mandate.budgetPerWindow, lifetime_cap: mandate.lifetimeCap, per_purchase_cap: mandate.perPurchaseCap, per_seller_pct: mandate.perSellerPct, max_depth: mandate.maxDepth },
       remaining: {
         vault_available: fromUnits(vault),
         remaining_window: sub(mandate.budgetPerWindow, fromUnits(w)),
         remaining_lifetime: sub(mandate.lifetimeCap, fromUnits(l)),
-        can_draw: Math.min(Number(fromUnits(vault)), Number(sub(mandate.budgetPerWindow, fromUnits(w))), Number(sub(mandate.lifetimeCap, fromUnits(l)))).toFixed(2),
+        can_draw: revoked || !state?.[5] ? '0' : max('0', min(allocationLeft, min(mandate.perPurchaseCap, min(fromUnits(vault), min(sub(mandate.budgetPerWindow, fromUnits(w)), sub(mandate.lifetimeCap, fromUnits(l))))))),
       },
     };
   });

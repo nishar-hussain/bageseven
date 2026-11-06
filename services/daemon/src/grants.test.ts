@@ -35,6 +35,24 @@ async function fixture(deps: GrantRouteDeps = {}) {
   return { app, store, grant };
 }
 
+describe('live payment and worker binding', () => {
+  it('cannot use a paid grant assigned to another worker', async () => {
+    const { app, store } = await fixture({ resolveMandateCapacity: async () => ({ ok: true }) });
+    try {
+      const grant = await store.mint({ holder: 'owner', feature: 'ocr', remaining: '3', ttl_seconds: 300, worker_id: 'other-worker' });
+      const res = await app.inject({ method: 'POST', url: '/internal/grants/paid-run', payload: { grant_id: grant.id, worker_id: 'own-worker', amount: '1' } });
+      expect(res.statusCode).toBe(403); expect(res.json().error.code).toBe('GRANT_WORKER_MISMATCH'); expect((await store.get(grant.id))?.remaining).toBe('3');
+    } finally { await app.close(); }
+  });
+  it('cannot mint unpaid local grants with live World verification enabled', async () => {
+    const { app } = await fixture(); vi.stubEnv('WORLD_MOCK_PROOFS', 'false');
+    try {
+      const res = await app.inject({ method: 'POST', url: '/internal/grants/mint', payload: { holder: 'owner', feature: 'ocr', remaining: '3', ttl_seconds: 300, settlement_network: 'local' } });
+      expect(res.statusCode).toBe(403); expect(res.json().error.code).toBe('LIVE_PAYMENT_REQUIRED');
+    } finally { await app.close(); }
+  });
+});
+
 describe('paid work dual gate', () => {
   it.each(['mint', 'buy-credits'])('binds dashboard %s grants to the configured worker and runs without a worker payload', async (route) => {
     vi.stubEnv('BAGSEVEN_MCP_WORKER', 'configured-worker');

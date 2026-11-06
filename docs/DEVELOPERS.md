@@ -172,3 +172,11 @@ pnpm --filter @bagseven/daemon typecheck
 SDK loop against a running daemon: `pnpm sdk:demo`.
 
 For full HTTP and MCP checks, run `NOTIFY_MODE=log pnpm start:local`, then `NOTIFY_MODE=log pnpm smoke:e2e` in another terminal. This checks authentication, dashboard routes, World mint/deny, Whitechain demo credits, funded worker resolution, paid work under both gates, a local token payment, renewal cancellation, and expiry. `NOTIFY_MODE=log` preserves Resend configuration while suppressing delivery. Restart normally to resume email delivery. Browser automation is separate from these HTTP checks.
+
+### MCP mandate and agent tools
+
+The MCP catalog includes owner-scoped `list_mandates`, `get_mandate`, `list_agents`, `get_agent`, owner-signed `prepare_mandate` / `create_mandate`, `prepare_mandate_funding`, and `list_agent_entitlements`. Use `list_features` and `list_plans` to choose a capability and provider plan, then `create_checkout_session` with the intended `worker_id` for a root or child. Checkout returns the existing hosted wallet URL; payment creates the worker-bound Arkiv grant. `mint_with_world` and `buy_credits` now guide callers to provider checkout rather than asking agents for World credentials or producing unpaid grants.
+
+`bagseven_spawn` defaults to the bound root and mandate. A configured signer must match the actual owner/operator, or an owner signature must be supplied. Direct payments accept `idempotency_key`; reuse the same inputs and key for retries. Uncertain attempted payments remain held for reconciliation.
+
+See [the real MCP verification](testing/mcp-agents-mandates-live-2026-11-07.md) for scope, evidence and operational limits.
