@@ -122,25 +122,14 @@ function mapGrantError(error: unknown): never {
 /** Public entitlement routes — access clock beside mandate spend. */
 export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps = {}): void {
   const store = getGrantStore(process.env);
-  const challenges = new Map<string, { action: string; purpose: 'login' | 'mint'; expires: number }>();
+  const challenges = new Map<string, { action: string; purpose: 'login' | 'mint' | 'session'; expires: number; sessionId?: string }>();
 
-  function takeChallenge(response: unknown, purpose: 'login' | 'mint'): string {
+  function takeChallenge(response: unknown, purpose: 'login' | 'mint' | 'session'): string {
     const nonce = (response as { nonce?: unknown } | null)?.nonce;
     const challenge = typeof nonce === 'string' ? challenges.get(nonce) : undefined;
     if (challenge && challenge.purpose === purpose && challenge.expires > Date.now()) {
       challenges.delete(nonce as string);
       return challenge.action;
-    }
-    // Login returning-user path: in-memory challenge can be lost (daemon restart) or
-    // already consumed while World still returns a valid uniqueness proof / nullifier_replayed.
-    // Console already binds the proof nonce via bagseven_world_nonce cookie.
-    if (purpose === 'login') {
-      const cfg = worldIdKitConfig();
-      const action = (response as { action?: unknown } | null)?.action;
-      if (typeof action === 'string' && action === cfg.login_action) {
-        if (typeof nonce === 'string') challenges.delete(nonce);
-        return action;
-      }
     }
     throw new ApiError(403, 'WORLD_CHALLENGE_INVALID', 'Start a new World ID verification; the request is missing, expired, or already used');
   }
@@ -341,6 +330,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
       .object({
         action: z.string().min(1).optional(),
         purpose: z.enum(['login', 'mint', 'session']).default('mint'),
+        existing_session_id: z.string().regex(/^session_[a-zA-Z0-9_-]+$/).optional(),
       })
       .parse(req.body ?? {});
     const signingKey = process.env.WORLD_RP_SIGNING_KEY?.trim();
@@ -361,8 +351,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
     });
     for (const [nonce, challenge] of challenges) if (challenge.expires <= Date.now()) challenges.delete(nonce);
     if (challenges.size >= 5000) throw new ApiError(429, 'WORLD_BUSY', 'Too many pending World verifications; try again shortly');
-    const purpose = body.purpose === 'session' ? 'login' : body.purpose;
-    challenges.set(sig.nonce, { action: action ?? config.login_action, purpose, expires: sig.expires_at * 1000 });
+    challenges.set(sig.nonce, { action: action ?? '', purpose: body.purpose, expires: sig.expires_at * 1000, sessionId: body.existing_session_id });
     return {
       ...sig,
       action: action ?? null,
@@ -374,7 +363,22 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
     };
   });
 
-  /** Verify IDKit login proof. Returning users may hit nullifier_replayed — that is OK for login. */
+  /** Session proofs authorize repeat sign-in without replaying a one-time action. */
+  app.post('/internal/world/verify-idkit-session', async (req) => {
+    const body = z.object({ idkit_response: z.unknown() }).parse(req.body);
+    const nonce = (body.idkit_response as { nonce?: string })?.nonce;
+    const existingSession = nonce ? challenges.get(nonce)?.sessionId : undefined;
+    takeChallenge(body.idkit_response, 'session');
+    const verified = await verifyWorldIdKitProof({
+      rpId: worldIdKitConfig().rp_id, idkitResponse: body.idkit_response,
+      expectedEnvironment: worldIdKitConfig().environment,
+      sessionProof: true, expectedSessionId: existingSession,
+    });
+    if (!verified.ok) throw new ApiError(403, verified.code, verified.detail);
+    return { ...verified, returning: Boolean(existingSession), mode: 'idkit' };
+  });
+
+  /** Verify a one-time IDKit proof. World must explicitly accept the proof. */
   app.post('/internal/world/verify-idkit', async (req) => {
     const body = z
       .object({
@@ -390,7 +394,6 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
       idkitResponse: body.idkit_response,
       expectedEnvironment: process.env.WORLD_IDKIT_ENVIRONMENT || 'production',
       expectedAction: action,
-      allowReturningUser: true,
     });
     if (!verified.ok) {
       throw new ApiError(403, verified.code, verified.detail);

@@ -283,6 +283,21 @@ describe('World IDKit challenge lifecycle', () => {
       responses: [{ identifier: 'proof_of_human', nullifier: '0x123456', proof: 'verified-by-portal-in-this-unit-test' }],
     };
   }
+  it('uses action-free session challenges and binds returning proofs to the saved World session', async () => {
+    const { app } = await idkitFixture();
+    try {
+      const signed = await app.inject({ method: 'POST', url: '/internal/world/rp-signature', payload: { purpose: 'session', existing_session_id: 'session_saved' } });
+      expect(signed.json().action).toBeNull();
+      const payload = { idkit_response: { protocol_version: '4.0', nonce: signed.json().nonce, session_id: 'session_saved', responses: [{ identifier: 'proof_of_human', session_nullifier: ['0x123456', 'action'], proof: [] }] } };
+      const verified = await app.inject({ method: 'POST', url: '/internal/world/verify-idkit-session', payload });
+      expect(verified.statusCode).toBe(200);
+      expect(verified.json()).toMatchObject({ human_id: 'world:session:session_saved', returning: true });
+      expect((await app.inject({ method: 'POST', url: '/internal/world/verify-idkit-session', payload })).statusCode).toBe(403);
+      const wrong = await app.inject({ method: 'POST', url: '/internal/world/rp-signature', payload: { purpose: 'session', existing_session_id: 'session_saved' } });
+      payload.idkit_response.nonce = wrong.json().nonce; payload.idkit_response.session_id = 'session_attacker';
+      expect((await app.inject({ method: 'POST', url: '/internal/world/verify-idkit-session', payload })).statusCode).toBe(403);
+    } finally { await app.close(); vi.unstubAllGlobals(); }
+  });
   it('rejects an unissued nonce before remote verification', async () => {
     const { app } = await idkitFixture();
     try {

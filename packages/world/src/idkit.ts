@@ -84,17 +84,14 @@ function extractNullifier(result: IdKitResult): string | null {
  * Forward IDKit result to Developer Portal verify API and require success.
  * Caller must enforce nullifier uniqueness for one-time mint actions.
  *
- * Login may set `allowReturningUser`: World ID 4.0 uniqueness nullifiers are
- * one-shot per action. A second login yields `nullifier_replayed` — docs say
- * treat that as already-verified for returning users (docs.world.org error codes).
  */
 export async function verifyWorldIdKitProof(input: {
   rpId: string;
   idkitResponse: unknown;
   expectedEnvironment?: string;
   expectedAction?: string;
-  /** When true, nullifier_replayed / max_verifications_reached still signs the human in. */
-  allowReturningUser?: boolean;
+  sessionProof?: boolean;
+  expectedSessionId?: string;
 }): Promise<IdKitVerifyOk | IdKitVerifyFail> {
   const expectedEnvironment = input.expectedEnvironment ?? 'production';
   let parsed: IdKitResult;
@@ -104,6 +101,17 @@ export async function verifyWorldIdKitProof(input: {
     return { ok: false, code: 'WORLD_IDKIT_FAILED', detail: 'Invalid IDKit payload' };
   }
 
+  if (input.sessionProof) {
+    if (parsed.protocol_version !== '4.0' || parsed.action || !/^session_[a-zA-Z0-9_-]+$/.test(parsed.session_id ?? '')) {
+      return { ok: false, code: 'WORLD_IDKIT_FAILED', detail: 'A World ID session proof is required for sign-in' };
+    }
+    if (input.expectedSessionId && parsed.session_id !== input.expectedSessionId) {
+      return { ok: false, code: 'WORLD_IDKIT_FAILED', detail: 'World session does not match this account' };
+    }
+    if (parsed.responses.some(row => row.identifier !== 'proof_of_human' || !Array.isArray(row.session_nullifier) || row.session_nullifier.length !== 2)) {
+      return { ok: false, code: 'WORLD_IDKIT_FAILED', detail: 'A Proof of Human session credential is required' };
+    }
+  }
   if (parsed.environment && parsed.environment !== expectedEnvironment) {
     return {
       ok: false,
@@ -111,7 +119,7 @@ export async function verifyWorldIdKitProof(input: {
       detail: `IDKit environment mismatch (got ${parsed.environment}, want ${expectedEnvironment})`,
     };
   }
-  if (input.expectedAction && parsed.action && parsed.action !== input.expectedAction) {
+  if (input.expectedAction && parsed.action !== input.expectedAction) {
     return {
       ok: false,
       code: 'WORLD_IDKIT_FAILED',
@@ -134,29 +142,6 @@ export async function verifyWorldIdKitProof(input: {
   }
 
   const portalCode = typeof verification.code === 'string' ? verification.code : '';
-  const returningCodes = new Set(['nullifier_replayed', 'max_verifications_reached']);
-
-  if ((!response.ok || verification.success !== true) && input.allowReturningUser && returningCodes.has(portalCode)) {
-    const nullifier = extractNullifier(parsed);
-    if (!nullifier) {
-      return { ok: false, code: 'WORLD_DENIED', detail: portalCode };
-    }
-    // Portal already recognized this nullifier for the action — proof was accepted before uniqueness reject.
-    const action = parsed.action || input.expectedAction || 'login';
-    const session_id = typeof parsed.session_id === 'string' ? parsed.session_id : undefined;
-    return {
-      ok: true,
-      returning: true,
-      nullifier,
-      action,
-      human_id: `world:nullifier:${nullifier}`,
-      world_proof_id: `world:idkit:${action}:${nullifier}`,
-      environment: expectedEnvironment,
-      verification,
-      session_id,
-    };
-  }
-
   if (!response.ok || verification.success !== true) {
     const detail =
       typeof verification.detail === 'string'
@@ -171,6 +156,8 @@ export async function verifyWorldIdKitProof(input: {
     return { ok: false, code: 'WORLD_IDKIT_FAILED', detail: 'Verify response action mismatch' };
   }
 
+  if (verification.session_id && verification.session_id !== parsed.session_id) return { ok: false, code: 'WORLD_IDKIT_FAILED', detail: 'Verify response session mismatch' };
+
   const nullifier = extractNullifier(parsed);
   if (!nullifier) {
     return { ok: false, code: 'WORLD_IDKIT_FAILED', detail: 'Verified payload missing nullifier' };
@@ -178,7 +165,7 @@ export async function verifyWorldIdKitProof(input: {
   if (typeof verification.nullifier === 'string' && verification.nullifier !== nullifier) {
     return { ok: false, code: 'WORLD_IDKIT_FAILED', detail: 'Verify response nullifier mismatch' };
   }
-  const action = parsed.action || input.expectedAction || 'unknown';
+  const action = parsed.action || input.expectedAction || (input.sessionProof ? 'session' : 'unknown');
   const session_id =
     typeof verification.session_id === 'string'
       ? verification.session_id
@@ -189,7 +176,7 @@ export async function verifyWorldIdKitProof(input: {
     ok: true,
     nullifier,
     action,
-    human_id: `world:nullifier:${nullifier}`,
+    human_id: input.sessionProof ? `world:session:${parsed.session_id}` : `world:nullifier:${nullifier}`,
     world_proof_id: `world:idkit:${action}:${nullifier}`,
     environment: expectedEnvironment,
     verification,

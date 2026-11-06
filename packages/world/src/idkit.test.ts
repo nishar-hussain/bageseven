@@ -37,24 +37,28 @@ describe('live World verification', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ success: false }), { status: 403 })));
     expect((await verifyWorldIdKitProof({ rpId: 'rp_test', idkitResponse: proof, expectedAction: proof.action })).ok).toBe(false);
   });
-  it('treats nullifier_replayed as returning-user success when allowReturningUser is set', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(
-        async () =>
-          new Response(JSON.stringify({ success: false, code: 'nullifier_replayed', detail: 'already used' }), {
-            status: 400,
-          }),
-      ),
-    );
-    const denied = await verifyWorldIdKitProof({ rpId: 'rp_test', idkitResponse: proof, expectedAction: proof.action });
-    expect(denied.ok).toBe(false);
-    const returning = await verifyWorldIdKitProof({
-      rpId: 'rp_test',
-      idkitResponse: proof,
-      expectedAction: proof.action,
-      allowReturningUser: true,
-    });
-    expect(returning).toMatchObject({ ok: true, returning: true, nullifier: '0x123456' });
+  it('never turns a replay rejection into an authenticated returning user', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ success: false, code: 'nullifier_replayed' }), { status: 400 })));
+    expect((await verifyWorldIdKitProof({ rpId: 'rp_test', idkitResponse: proof, expectedAction: proof.action })).ok).toBe(false);
+  });
+  it('keeps the verified session as account identity when per-proof nullifiers change', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ success: true }))));
+    const results = [];
+    for (const nullifier of ['first', 'second']) {
+      results.push(await verifyWorldIdKitProof({ rpId: 'rp_test', sessionProof: true, expectedSessionId: 'session_account', idkitResponse: {
+        protocol_version: '4.0', nonce: `nonce-${nullifier}`, session_id: 'session_account', responses: [{ identifier: 'proof_of_human', session_nullifier: [nullifier, 'action'], proof: [] }],
+      } }));
+    }
+    for (const result of results) expect(result).toMatchObject({ ok: true, human_id: 'world:session:session_account', session_id: 'session_account' });
+  });
+  it('rejects a different saved session or weaker credential before calling World', async () => {
+    const fetcher = vi.fn(); vi.stubGlobal('fetch', fetcher);
+    for (const response of [
+      { session_id: 'session_wrong', responses: [{ identifier: 'proof_of_human', session_nullifier: ['n', 'a'] }] },
+      { session_id: 'session_saved', responses: [{ identifier: 'selfie', session_nullifier: ['n', 'a'] }] },
+    ]) {
+      expect((await verifyWorldIdKitProof({ rpId: 'rp_test', sessionProof: true, expectedSessionId: 'session_saved', idkitResponse: { protocol_version: '4.0', nonce: 'nonce', ...response } })).ok).toBe(false);
+    }
+    expect(fetcher).not.toHaveBeenCalled();
   });
 });

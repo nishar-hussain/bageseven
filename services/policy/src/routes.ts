@@ -233,7 +233,7 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
       throw new ApiError(400, 'OWNER_REQUIRED', 'owner_address is required for owner-scoped mandate discovery');
     }
     const rows = await db.query.mandates.findMany({
-      where: query.scope === 'all' ? undefined : eq(mandates.ownerAddress, query.owner_address!.toLowerCase()),
+      where: eq(mandates.ownerAddress, query.owner_address!.toLowerCase()),
       orderBy: desc(mandates.createdAt),
     });
     return {

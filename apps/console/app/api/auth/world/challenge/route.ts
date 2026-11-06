@@ -1,8 +1,10 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { readWorldContinuity, WORLD_CONTINUITY_COOKIE } from '../../../../../lib/world-continuity';
 import { daemonJson } from '../../../../../lib/daemon-bff';
 
 /** Login must be able to request a signed challenge before a session exists. */
-export async function POST() {
+export async function POST(req: NextRequest) {
+  const existingSession = readWorldContinuity(req.cookies.get(WORLD_CONTINUITY_COOKIE)?.value);
   try {
     const result = await daemonJson<{
       nonce?: string;
@@ -12,11 +14,12 @@ export async function POST() {
       rp_id?: string;
       app_id?: string;
       action?: string;
+      existing_session_id?: string;
       environment?: string;
       error?: { message?: string; code?: string };
     }>('/internal/world/rp-signature', {
       method: 'POST',
-      body: JSON.stringify({ purpose: 'login' }),
+      body: JSON.stringify({ purpose: 'session', ...(existingSession ? { existing_session_id: existingSession } : {}) }),
     });
     if (!result.ok) {
       return NextResponse.json(
@@ -29,7 +32,7 @@ export async function POST() {
         { status: result.status || 502 },
       );
     }
-    const res = NextResponse.json(result.body, { status: 200, headers: { 'cache-control': 'no-store' } });
+    const res = NextResponse.json({ ...result.body, existing_session_id: existingSession }, { status: 200, headers: { 'cache-control': 'no-store' } });
     if (result.body.nonce) {
       // Path `/` so the cookie is sent on POST /api/auth/world after IDKit completes.
       res.cookies.set('bagseven_world_nonce', result.body.nonce, {

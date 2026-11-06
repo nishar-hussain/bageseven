@@ -2,7 +2,8 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { IDKitRequestWidget, proofOfHuman, type RpContext } from '@worldcoin/idkit';
+import { worldLoginError } from '../../../lib/world-login-errors';
+import { IDKitSessionWidget, CredentialRequest, type RpContext } from '@worldcoin/idkit';
 
 type WorldStatus = {
   mock_proofs: boolean;
@@ -17,29 +18,6 @@ type WorldStatus = {
   device_resume?: boolean;
 };
 
-/** Pull the IDKit result out of an onError debug report so returning users can finish sign-in. */
-function extractIdkitResult(debugReport: unknown): Record<string, unknown> | null {
-  if (!debugReport || typeof debugReport !== 'object') return null;
-  const report = debugReport as { response_payload?: unknown; request_payload?: unknown };
-  let payload: unknown = report.response_payload;
-  if (typeof payload === 'string') {
-    try {
-      payload = JSON.parse(payload);
-    } catch {
-      return null;
-    }
-  }
-  if (!payload || typeof payload !== 'object') return null;
-  const obj = payload as Record<string, unknown>;
-  const candidates = [obj, obj.result, obj.idkit_response, obj.proof, obj.response];
-  for (const c of candidates) {
-    if (!c || typeof c !== 'object') continue;
-    const row = c as Record<string, unknown>;
-    if (Array.isArray(row.responses) && typeof row.nonce === 'string') return row;
-  }
-  return null;
-}
-
 function LoginForm() {
   const params = useSearchParams();
   const router = useRouter();
@@ -52,8 +30,11 @@ function LoginForm() {
         ? 'Auth is misconfigured on the server (AUTH_SECRET).'
         : '',
   );
+  const verificationError = useRef<string | null>(null);
+  const verificationAttempted = useRef(false);
   const [busy, setBusy] = useState(false);
   const [idkitOpen, setIdkitOpen] = useState(false);
+  const [existingSessionId, setExistingSessionId] = useState<`session_${string}` | undefined>();
   const [rpContext, setRpContext] = useState<RpContext | null>(null);
   const [challengeNonce, setChallengeNonce] = useState<string | null>(null);
   const [recoveryEmail, setRecoveryEmail] = useState('');
@@ -91,7 +72,8 @@ function LoginForm() {
           needs_onboarding?: boolean;
         };
         if (!res.ok) {
-          setMsg(json.error ?? 'World sign-in failed');
+          verificationError.current = typeof json.error === 'string' ? json.error : 'World sign-in failed';
+          setMsg(verificationError.current);
           return false;
         }
         setMsg(json.returning ? 'Welcome back…' : 'Signed in…');
@@ -103,7 +85,8 @@ function LoginForm() {
         router.replace(dest);
         return true;
       } catch (e) {
-        setMsg(e instanceof Error ? e.message : String(e));
+        verificationError.current = e instanceof Error ? e.message : String(e);
+        setMsg(verificationError.current);
         return false;
       } finally {
         finishing.current = false;
@@ -115,6 +98,8 @@ function LoginForm() {
 
   const beginIdKit = async () => {
     setBusy(true);
+    verificationError.current = null;
+    verificationAttempted.current = false;
     setMsg('Opening World ID…');
     setIdkitOpen(false);
     setRpContext(null);
@@ -124,6 +109,7 @@ function LoginForm() {
       const sig = await response.json();
       if (!response.ok) throw new Error(sig.error?.message || 'Could not start World verification');
       if (!sig.nonce || !sig.sig || !sig.rp_id) throw new Error('World challenge response incomplete');
+      setExistingSessionId(sig.existing_session_id);
       setChallengeNonce(sig.nonce as string);
       setRpContext({
         rp_id: sig.rp_id as `rp_${string}`,
@@ -158,9 +144,7 @@ function LoginForm() {
   };
 
   const idkitReady = Boolean(status?.app_id && status.rp_id && status.idkit);
-  const loginAction = status?.login_action || 'bagseven-login';
-  const loginSignal = status?.login_signal || 'bagseven-login';
-  const preset = useMemo(() => proofOfHuman({ signal: loginSignal }), [loginSignal]);
+  const constraints = useMemo(() => CredentialRequest('proof_of_human'), []);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-[#f2f2f2] px-4">
@@ -229,65 +213,32 @@ function LoginForm() {
       </div>
 
       {idkitReady && rpContext ? (
-        <IDKitRequestWidget
+        <IDKitSessionWidget
           key={challengeNonce ?? 'idle'}
           open={idkitOpen}
           onOpenChange={setIdkitOpen}
           app_id={status!.app_id as `app_${string}`}
-          action={loginAction}
           rp_context={rpContext}
-          allow_legacy_proofs={true}
-          environment={status!.environment === 'sandbox' ? 'staging' : status!.environment}
-          preset={preset}
+          environment={status!.environment}
+          constraints={constraints}
+          existing_session_id={existingSessionId}
           handleVerify={async (result) => {
+            verificationAttempted.current = true;
             const ok = await finish({
               idkit_response: result,
               challenge_nonce: challengeNonce ?? undefined,
               returning_ok: true,
             });
-            if (!ok) throw new Error('World sign-in verification failed');
+            if (!ok) throw new Error(verificationError.current ?? 'World sign-in verification failed');
           }}
           onSuccess={() => setIdkitOpen(false)}
-          onError={(code, debugReport) => {
+          onError={(code) => {
             setIdkitOpen(false);
-            const c = String(code);
-            // World uniqueness is one-shot. Returning users hit nullifier_replayed —
-            // that means already verified; complete sign-in with the proof if present.
-            if (c === 'nullifier_replayed' || c === 'max_verifications_reached') {
-              const proof = extractIdkitResult(debugReport);
-              if (proof) {
-                setMsg('Welcome back — finishing sign-in…');
-                void finish({
-                  idkit_response: proof,
-                  challenge_nonce: challengeNonce ?? (typeof proof.nonce === 'string' ? proof.nonce : undefined),
-                  returning_ok: true,
-                });
-                return;
-              }
-              // Same browser already verified this World ID once — resume from signed identity cookie.
-              setMsg('Welcome back — signing you in…');
-              void finish({ device_resume: true }).then((ok) => {
-                if (!ok) {
-                  setMsg(
-                    'This World ID already verified once. Tap Continue again — if it still fails, use Email recovery or clear site cookies and contact support.',
-                  );
-                }
-              });
-              return;
-            }
-            if (c === 'invalid_rp_signature' || c === 'unknown_rp' || c === 'inactive_rp') {
-              setMsg(`World RP config error (${c}). Check WORLD_RP_ID / WORLD_RP_SIGNING_KEY.`);
-              return;
-            }
-            if (c === 'user_rejected' || c === 'cancelled') {
-              setMsg('Sign-in cancelled.');
-              return;
-            }
-            if (c === 'malformed_request' || c === 'generic_error') {
-              setMsg(`World ID failed (${c}). Ensure action "${loginAction}" exists in the Developer Portal.`);
-              return;
-            }
-            setMsg(`World ID failed (${c}). Try again.`);
+            setMsg(worldLoginError(String(code), verificationError.current));
+            void fetch('/api/auth/world/error', {
+              method: 'POST', headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ code, stage: verificationAttempted.current ? 'backend' : 'world_app' }),
+            }).catch(() => undefined);
           }}
         />
       ) : null}

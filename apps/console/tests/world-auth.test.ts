@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest, NextResponse } from 'next/server';
 import { GET, POST } from '../app/api/auth/world/route';
+import { signWorldContinuity, WORLD_CONTINUITY_COOKIE, readWorldContinuity } from '../lib/world-continuity';
 import { POST as challenge } from '../app/api/auth/world/challenge/route';
 const daemon = vi.hoisted(() => vi.fn());
 vi.mock('../lib/daemon-bff', () => ({ daemonJson: daemon }));
@@ -43,12 +44,12 @@ describe('public World sign-in', () => {
   });
   it('issues a browser-bound challenge without an existing operator session', async () => {
     daemon.mockResolvedValue({ ok: true, status: 200, body: { nonce: 'nonce', sig: 'signature' } });
-    const res = await challenge();
+    const res = await challenge(new NextRequest('http://localhost:3000/api/auth/world/challenge', { method: 'POST' }));
     expect(res.status).toBe(200);
     const setCookie = res.headers.get('set-cookie') ?? '';
     expect(setCookie).toContain('bagseven_world_nonce=nonce');
     expect(setCookie.toLowerCase()).toContain('path=/');
-    expect(daemon).toHaveBeenCalledWith('/internal/world/rp-signature', expect.objectContaining({ body: JSON.stringify({ purpose: 'login' }) }));
+    expect(daemon).toHaveBeenCalledWith('/internal/world/rp-signature', expect.objectContaining({ body: JSON.stringify({ purpose: 'session' }) }));
   });
   it.each([{ mock: true }, {}])('does not create a live session from mock or missing credentials', async (body) => {
     const res = await POST(request(body));
@@ -74,6 +75,32 @@ describe('public World sign-in', () => {
     const res = await POST(request({ idkit_response: { nonce: 'nonce' } }, 'bagseven_world_nonce=nonce'));
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ needs_onboarding: false, returning: true });
+  });
+  it('remembers a verified World session without using its per-proof nullifier as the account', async () => {
+    daemon.mockResolvedValue({ ok: true, status: 200, body: { ok: true, session_id: 'session_account', nullifier: 'proof-nullifier', human_id: 'world:session:session_account' } });
+    const res = await POST(request({ idkit_response: { nonce: 'nonce', session_id: 'session_account' } }, 'bagseven_world_nonce=nonce'));
+    expect(res.status).toBe(200);
+    expect((await res.json()).world_human_id).toBe('world:session:session_account');
+    expect(res.headers.get('set-cookie')).toContain(WORLD_CONTINUITY_COOKIE);
+    expect(daemon).toHaveBeenCalledWith('/internal/world/verify-idkit-session', expect.anything());
+  });
+  it('binds the next challenge to a signed saved session, and rejects tampering', async () => {
+    const token = signWorldContinuity('session_saved');
+    expect(readWorldContinuity(token)).toBe('session_saved');
+    expect(readWorldContinuity(token + 'tampered')).toBeUndefined();
+    daemon.mockResolvedValue({ ok: true, status: 200, body: { nonce: 'nonce', sig: 'signature' } });
+    await challenge(new NextRequest('http://localhost:3000/api/auth/world/challenge', { method: 'POST', headers: { cookie: `${WORLD_CONTINUITY_COOKIE}=${token}` } }));
+    expect(daemon).toHaveBeenCalledWith('/internal/world/rp-signature', expect.objectContaining({ body: JSON.stringify({ purpose: 'session', existing_session_id: 'session_saved' }) }));
+  });
+  it('does not accept a different World session for an existing account', async () => {
+    daemon.mockResolvedValue({ ok: true, status: 200, body: { ok: true, session_id: 'session_other', human_id: 'world:session:session_other' } });
+    const res = await POST(request({ idkit_response: { nonce: 'nonce', session_id: 'session_other' } }, `bagseven_world_nonce=nonce; ${WORLD_CONTINUITY_COOKIE}=${signWorldContinuity('session_saved')}`));
+    expect(res.status).toBe(403);
+    expect(res.headers.get('set-cookie')).toBeNull();
+  });
+  it('requires the browser nonce cookie even when the client supplies its own nonce', async () => {
+    const res = await POST(request({ idkit_response: { nonce: 'nonce' }, challenge_nonce: 'nonce' }));
+    expect(res.status).toBe(403); expect(daemon).not.toHaveBeenCalled();
   });
   it('does not fabricate an identity when Agent Pass verification is unavailable', async () => {
     vi.stubEnv('WORLD_MOCK_PROOFS', 'true');

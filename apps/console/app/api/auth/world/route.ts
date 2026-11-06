@@ -6,6 +6,7 @@ import {
   attachSessionCookie,
   readWorldIdentityCookie,
 } from '../../../../lib/auth';
+import { readWorldContinuity, signWorldContinuity, WORLD_CONTINUITY_COOKIE, WORLD_CONTINUITY_AGE } from '../../../../lib/world-continuity';
 import { daemonJson } from '../../../../lib/daemon-bff';
 
 /** Public configuration contains IDs and readiness only, never signing keys. */
@@ -73,11 +74,10 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const idkit = body.idkit_response as { nonce?: unknown } | undefined;
+  const idkit = body.idkit_response as { nonce?: unknown; session_id?: string; action?: string } | undefined;
   if (idkit) {
     const cookieNonce = req.cookies.get('bagseven_world_nonce')?.value;
-    const clientNonce = typeof body.challenge_nonce === 'string' ? body.challenge_nonce : undefined;
-    const expected = cookieNonce || clientNonce;
+    const expected = cookieNonce;
     if (!expected || idkit.nonce !== expected) {
       return NextResponse.json(
         { error: 'Start World ID sign-in again; this proof does not match your sign-in request' },
@@ -98,7 +98,7 @@ export async function POST(req: NextRequest) {
       session_id?: string | null;
       returning?: boolean;
       error?: { message?: string; code?: string; detail?: string };
-    }>(idkit ? '/internal/world/verify-idkit' : '/internal/world/verify-session', {
+    }>(idkit ? (idkit.session_id && !idkit.action ? '/internal/world/verify-idkit-session' : '/internal/world/verify-idkit') : '/internal/world/verify-session', {
       method: 'POST',
       body: JSON.stringify(idkit ? { idkit_response: idkit } : { id_token: body.id_token }),
     });
@@ -109,7 +109,11 @@ export async function POST(req: NextRequest) {
         'World verification failed';
       return NextResponse.json({ error: detail }, { status: result.ok ? 403 : result.status });
     }
-    const human = result.body.nullifier || result.body.human_id;
+    const savedSession = readWorldContinuity(req.cookies.get(WORLD_CONTINUITY_COOKIE)?.value);
+    if (idkit?.session_id && (result.body.session_id !== idkit.session_id || (savedSession && result.body.session_id !== savedSession))) {
+      return NextResponse.json({ error: 'World session does not match this account' }, { status: 403 });
+    }
+    const human = idkit?.session_id ? result.body.human_id : result.body.nullifier || result.body.human_id;
     const returning = Boolean(result.body.returning);
     const onboardingDoneAt = returning ? Math.floor(Date.now() / 1000) : null;
     const res = attachSessionCookie(
@@ -128,6 +132,7 @@ export async function POST(req: NextRequest) {
         onboarding_done_at: onboardingDoneAt,
       },
     );
+    if (result.body.session_id) res.cookies.set(WORLD_CONTINUITY_COOKIE, signWorldContinuity(result.body.session_id), { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/', maxAge: WORLD_CONTINUITY_AGE });
     res.cookies.set('bagseven_world_nonce', '', {
       httpOnly: true,
       sameSite: 'lax',
