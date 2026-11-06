@@ -1,0 +1,26 @@
+{
+  "name": "@bagseven/entitlements",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src --max-warnings=0",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@arkiv-network/sdk": "^1.0.1",
+    "@bagseven/money": "workspace:*",
+    "viem": "^2.56.8",
+    "zod": "^4.6.5"
+  }
+}

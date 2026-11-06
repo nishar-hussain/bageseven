@@ -1,0 +1,30 @@
+{
+  "name": "@bagseven/daemon",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src --max-warnings=0",
+    "test": "vitest run --passWithNoTests",
+    "dev": "node --env-file-if-exists=../../.env --import tsx --watch src/index.ts",
+    "start": "node --env-file-if-exists=../../.env dist/index.js"
+  },
+  "dependencies": {
+    "@bagseven/db": "workspace:*",
+    "@bagseven/entitlements": "workspace:*",
+    "@bagseven/money": "workspace:*",
+    "@bagseven/notify": "workspace:*",
+    "@bagseven/onchain": "workspace:*",
+    "@bagseven/server": "workspace:*",
+    "@bagseven/world": "workspace:*",
+    "@x402/core": "2.28.0",
+    "fastify": "^5.12.5",
+    "ioredis": "^6.0.0",
+    "viem": "^2.56.8",
+    "zod": "^4.6.5"
+  }
+}

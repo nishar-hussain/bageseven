@@ -1,0 +1,6 @@
+---
+description: Bagseven product path — two surfaces, dual-gate, no leftover UIs
+alwaysApply: true
+---
+
+Bagseven has two product UIs: `apps/landing` (:3001) and `apps/console` `/app` (:3000). Keep them separate. Follow `docs/design.md`. Dual-gate paid calls (mandate + living Arkiv grant). No operator secrets in the browser. Optional research demo is not the product. Read `AGENTS.md` and `llms.txt` before expanding scope.

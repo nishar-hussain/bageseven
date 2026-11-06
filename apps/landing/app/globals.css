@@ -1,0 +1,96 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+:root {
+  --ink: #0e0e10;
+  --paper: #ffffff;
+  --hero: #0c0a0b;
+  --muted: #63636d;
+  --line: #ececf0;
+  --blue: #0002f8;
+  --blue-d: #0001c8;
+  --soft: #f7f6f3;
+  --wrap: 1200px;
+  --navh: 72px;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: Switzer, "Space Grotesk", system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.fi-wrap {
+  width: min(100% - 3rem, var(--wrap));
+  margin-inline: auto;
+}
+
+.fi-display {
+  font-family: "Space Grotesk", Switzer, system-ui, sans-serif;
+  font-weight: 500;
+  letter-spacing: -0.04em;
+  line-height: 1.05;
+}
+
+.fi-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0.7rem 1.25rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-decoration: none;
+  border: 1px solid transparent;
+}
+
+.fi-btn-light {
+  background: #fff;
+  color: var(--ink);
+}
+.fi-btn-ghost {
+  background: transparent;
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.fi-band-hero {
+  background: var(--hero);
+  color: #fff;
+}
+.fi-band-blue {
+  background: var(--blue);
+  color: #fff;
+}
+.fi-band-soft {
+  background: var(--soft);
+  color: var(--ink);
+}
+
+.hero h1 {
+  letter-spacing: -0.045em;
+}
+
+.stmt .fi-display {
+  letter-spacing: -0.035em;
+}
+
+@keyframes fi-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-fi-up {
+  animation: fi-fade-up 0.7s ease-out both;
+}

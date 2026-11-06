@@ -1,0 +1,349 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+  Fianto.xyz visual system (extracted live):
+  hero/night #0c0a0b · ink #0e0e10 · soft #f7f6f3/#f6f6f8
+  signature blue #0002f8 · line #ececf0 · gray #63636d
+  brand: Space Grotesk / Switzer · mono: Chivo Mono
+*/
+
+:root {
+  --hero: #0c0a0b;
+  --night: #04041a;
+  --night2: #0a0a2e;
+  --ink: #0e0e10;
+  --ink2: #3a3a40;
+  --paper: #ffffff;
+  --soft: #f6f6f8;
+  --soft2: #f7f6f3;
+  --dash-bg: #f2f2f2;
+  --muted: #63636d;
+  --faint: #6f6f78;
+  --line: #ececf0;
+  --line2: #f3f3f6;
+  --blue: #0002f8;
+  --blue-d: #0001c8;
+  --blue-t: #eef;
+  --lilac: #e3e4ff;
+  --tint: #f2f3ff;
+  --good: #1a7a45;
+  --good-t: #e6f6ec;
+  --warn: #a8480f;
+  --warn-t: #fff1e4;
+  --deny: #8b1e1e;
+  --on-night: #ffffff;
+  --on-night-2: rgba(255, 255, 255, 0.72);
+  --on-night-3: rgba(255, 255, 255, 0.5);
+  --wrap: 1200px;
+  --navh: 72px;
+  --r-s: 10px;
+  --r-m: 16px;
+  --r-l: 28px;
+  --sh: 0 1px 2px #0e0e100d, 0 18px 40px -18px #0e0e102e;
+
+  /* shadcn bridge → Fianto */
+  --background: var(--soft);
+  --foreground: var(--ink);
+  --card: var(--paper);
+  --card-foreground: var(--ink);
+  --popover: var(--paper);
+  --popover-foreground: var(--ink);
+  --primary: var(--ink);
+  --primary-foreground: var(--paper);
+  --secondary: var(--soft2);
+  --secondary-foreground: var(--ink);
+  --muted-bg: var(--soft2);
+  --muted-foreground: var(--muted);
+  --accent: var(--blue);
+  --accent-foreground: var(--paper);
+  --destructive: var(--deny);
+  --destructive-foreground: var(--paper);
+  --border: var(--line);
+  --input: var(--line);
+  --ring: var(--blue);
+  --radius: 0.625rem;
+  --sidebar: var(--paper);
+  --sidebar-foreground: var(--ink);
+  --sidebar-primary: var(--ink);
+  --sidebar-primary-foreground: var(--paper);
+  --sidebar-accent: var(--soft2);
+  --sidebar-accent-foreground: var(--ink);
+  --sidebar-border: var(--line);
+  --sidebar-ring: var(--blue);
+  --success: var(--good);
+  --warning: var(--warn);
+}
+
+.dark {
+  --background: var(--hero);
+  --foreground: var(--on-night);
+  --card: #161416;
+  --card-foreground: var(--on-night);
+  --popover: #161416;
+  --popover-foreground: var(--on-night);
+  --primary: var(--paper);
+  --primary-foreground: var(--ink);
+  --secondary: #1c1a1b;
+  --secondary-foreground: var(--on-night);
+  --muted-foreground: var(--on-night-2);
+  --border: rgba(255, 255, 255, 0.12);
+  --input: rgba(255, 255, 255, 0.12);
+}
+
+@theme inline {
+  --font-sans: 'Switzer', 'Space Grotesk', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Chivo Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+  --font-brand: 'Space Grotesk', 'Switzer', system-ui, sans-serif;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted-bg);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-hero: var(--hero);
+  --color-soft: var(--soft);
+  --color-ink: var(--ink);
+  --color-blue: var(--blue);
+  --color-line: var(--line);
+  --color-good: var(--good);
+  --color-deny: var(--deny);
+  --radius-sm: var(--r-s);
+  --radius-md: var(--r-m);
+  --radius-lg: var(--r-l);
+  --radius-xl: calc(var(--r-l) + 4px);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    letter-spacing: -0.01em;
+  }
+
+  button,
+  select,
+  input,
+  textarea {
+    font: inherit;
+  }
+
+  ::selection {
+    background: var(--blue);
+    color: #fff;
+  }
+}
+
+@layer components {
+  .fi-wrap {
+    width: min(100% - 3rem, var(--wrap));
+    margin-inline: auto;
+  }
+
+  .fi-eyebrow {
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .fi-display {
+    font-family: var(--font-brand);
+    font-weight: 500;
+    letter-spacing: -0.04em;
+    line-height: 1.05;
+  }
+
+  .fi-mono {
+    font-family: var(--font-mono);
+  }
+
+  .fi-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    border-radius: 999px;
+    padding: 0.7rem 1.25rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    border: 1px solid transparent;
+  }
+
+  .fi-btn-dark {
+    background: var(--hero);
+    color: #fff;
+  }
+  .fi-btn-dark:hover {
+    background: #1a1718;
+  }
+
+  .fi-btn-light {
+    background: #fff;
+    color: var(--ink);
+  }
+  .fi-btn-light:hover {
+    background: rgba(255, 255, 255, 0.9);
+  }
+
+  .fi-btn-blue {
+    background: var(--blue);
+    color: #fff;
+  }
+  .fi-btn-blue:hover {
+    background: var(--blue-d);
+  }
+
+  .fi-btn-ghost {
+    background: transparent;
+    color: inherit;
+    border-color: currentColor;
+    opacity: 0.85;
+  }
+  .fi-btn-ghost:hover {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .fi-btn-line {
+    background: #fff;
+    color: var(--ink);
+    border-color: var(--line);
+  }
+  .fi-btn-line:hover {
+    border-color: var(--ink);
+  }
+
+  .fi-btn-deny {
+    background: var(--deny);
+    color: #fff;
+  }
+
+  .fi-panel {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    padding: 1.25rem;
+  }
+
+  .fi-field label {
+    display: block;
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 0.35rem;
+  }
+
+  .fi-field input,
+  .fi-field textarea,
+  .fi-field select {
+    width: 100%;
+    border: 1px solid var(--line);
+    background: #fff;
+    padding: 0.7rem 0.75rem;
+    border-radius: 0;
+    color: var(--ink);
+  }
+
+  .fi-field input:focus,
+  .fi-field textarea:focus,
+  .fi-field select:focus {
+    outline: 2px solid var(--blue);
+    outline-offset: 1px;
+  }
+
+  .fi-badge {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--line);
+    padding: 0.35rem 0.7rem;
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    background: #fff;
+  }
+
+  .fi-badge-live {
+    border-color: var(--good);
+    color: var(--good);
+    background: var(--good-t);
+  }
+
+  .fi-badge-mock {
+    border-color: var(--line);
+    color: var(--muted);
+  }
+
+  .fi-band-hero {
+    background: var(--hero);
+    color: #fff;
+  }
+  .fi-band-blue {
+    background: var(--blue);
+    color: #fff;
+  }
+  .fi-band-soft {
+    background: var(--soft);
+    color: var(--ink);
+  }
+  .fi-band-paper {
+    background: var(--paper);
+    color: var(--ink);
+  }
+}
+
+@keyframes fi-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fi-up {
+  animation: fi-fade-up 0.7s ease-out both;
+}

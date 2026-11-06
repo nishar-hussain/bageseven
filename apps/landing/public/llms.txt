@@ -1,0 +1,9 @@
+# Bagseven
+
+Public entitlements for agents. Humans mint once (World). Access lives on Arkiv until paid_through. Spend is dual-gated: mandate remaining AND living grant. Settlement on Hedera. MCP is the product.
+
+Dashboard: /app on the console host. Sign-in is a magic link (Resend).
+
+Repo docs: https://github.com — see llms.txt and docs/ at the source root.
+
+MCP tools: bagseven_status, grant_status, mint_with_world, buy_credits, paid_run, cancel_renewal, explain_denial, bagseven_fetch.

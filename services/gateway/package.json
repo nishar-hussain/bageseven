@@ -1,0 +1,31 @@
+{
+  "name": "@bagseven/gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src --max-warnings=0",
+    "test": "vitest run --passWithNoTests",
+    "dev": "node --env-file-if-exists=../../.env --import tsx --watch src/index.ts",
+    "start": "node --env-file-if-exists=../../.env dist/index.js"
+  },
+  "dependencies": {
+    "@bagseven/db": "workspace:*",
+    "@bagseven/server": "workspace:*",
+    "@fastify/cors": "^11.3.0",
+    "drizzle-orm": "^0.45.2",
+    "fastify": "^5.12.5",
+    "ioredis": "^6.0.0",
+    "pg": "^8.23.0"
+  }
+}

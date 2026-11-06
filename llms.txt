@@ -1,0 +1,67 @@
+# Bagseven
+
+> Infrastructure for autonomous AI agents. Humans mint a public, expiring entitlement. Agents spend under a mandate. Money settles on Hedera. Unique humans via World. MCP is the product.
+
+## Start
+
+pnpm setup
+pnpm start:local
+
+Landing http://localhost:3001
+Dashboard http://localhost:3000/app  (magic-link login)
+Gateway :4000  Daemon :4001  Policy :4003
+
+## What this repo is
+
+Monorepo (pnpm + turbo). Two product surfaces only:
+
+- apps/landing — Fianto-style marketing
+- apps/console — Fianto-style operator dashboard (/app)
+
+Backend: services/gateway, services/daemon, services/policy
+Libraries: packages/entitlements, packages/world, packages/notify, packages/db, packages/money, packages/onchain, packages/server
+
+## Dual-gate (IP)
+
+Payment clock = Hedera (payment_tx)
+Renewal clock = grant.renewal_enabled (cancel does not kill paid_through)
+Access clock = Arkiv grant remaining + TTL — queryable object, not a private /check API
+
+paid_run / bagseven_fetch require mandate remaining AND living grant (BAGSEVEN_REQUIRE_GRANT=true).
+
+## Auth
+
+Cookie bagseven_session (HMAC, 8h). Magic link is a signed 15-minute token. POST /api/auth/magic → Resend (or dev_hint). GET /api/auth/callback?token= sets the cookie on the redirect.
+
+Default: any email. Optional AUTH_ALLOWLIST.
+
+## Email (Resend)
+
+From bags@cesthq.com. Magic link to the typed address. Grant events to signed-in user + optional OPERATOR_NOTIFY_EMAIL.
+Events: magic_link, grant_minted, credits_bought, world_denied, paid_run, renewal_cancelled.
+
+## MCP tools
+
+bagseven_status, grant_status, mint_with_world, buy_credits, paid_run, cancel_renewal, explain_denial, bagseven_fetch
+Bind one worker: BAGSEVEN_MCP_WORKER=<uuid> pnpm mcp:local
+
+## Tracks (mock vs live)
+
+World: WORLD_MOCK_PROOFS vs WORLD_CLIENT_ID
+Hedera: HEDERA_DEMO_SETTLE vs facilitator / real tx
+Arkiv: ENTITLEMENT_STORE=memory vs ARKIV_ACCESS_KEY + ARKIV_PRIVATE_KEY
+
+## Design
+
+docs/design.md — --blue #0002f8, landing dark hero, dashboard #f2f2f2 sidebar, rounded 16px cards. Do not put marketing header on the dashboard.
+
+## Do not
+
+- Add a third web app or port 3010 inspector
+- Put operator keys in client JS
+- Weaken fail-closed policy / spend_token (docs/DECISIONS.md)
+- Add extra UIs or leftover demo apps
+
+## More
+
+docs/DEVELOPERS.md, docs/HOSTING.md, AGENTS.md, .cursor/skills/bagseven/SKILL.md

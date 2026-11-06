@@ -1,0 +1,5 @@
+# Convenience wrapper so `docker compose up -d` works from the repo root.
+# The real services live in deploy/docker-compose.yml.
+name: bagseven
+include:
+  - deploy/docker-compose.yml

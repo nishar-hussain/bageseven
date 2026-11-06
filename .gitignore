@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.next/
+.turbo/
+coverage/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+apps/console/.env.local
+.DS_Store
+dump.rdb
+*.rdb
+.bagseven-bin
