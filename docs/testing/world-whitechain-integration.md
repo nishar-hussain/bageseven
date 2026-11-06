@@ -28,7 +28,7 @@ BAGSEVEN_CHECKOUT_TEST_DATABASE_URL=postgres://bagseven:bagseven@localhost:55432
 
 It requires `_test` in the local database name, checks that the RPC is Anvil, and never reads the live `.env`. Set `BAGSEVEN_CHECKOUT_REPORT` to save JSON evidence.
 
-## Live steps still pending
+## Initial live setup (resolved by the public-network follow-up below)
 
 The read-only `pnpm integrations:check` currently identifies:
 
@@ -36,6 +36,10 @@ The read-only `pnpm integrations:check` currently identifies:
 2. B2B checkout uses each plan’s provider wallet; `WHITECHAIN_PAY_TO` is optional for legacy direct utilities. The provider receives the full price and owes a separately billed 0.1% fee.
 3. The mandate executor needs WBT for gas; the buyer and mandate vault need test USDT.e. Existing Fuji mandate data must not be treated as a Whitechain deployment.
 
-**Live World App sign-in is user-confirmed. A public Whitechain payment followed by a live Arkiv mint has not yet been completed** because a funded public-network checkout and mandate deployment remain pending. Source/unit tests, PostgreSQL persistence checks, and local chain verification cannot substitute for those external steps. See [the live setup guide](../LIVE.md) for the exact configuration and operator flow.
+**At the initial run**, live World App sign-in was user-confirmed, while a public Whitechain payment, live Arkiv mint, and mandate deployment were pending. Those steps passed in the 7 November follow-up below. Source/unit tests, PostgreSQL persistence checks, and local chain verification cannot substitute for those external steps. See [the live setup guide](../LIVE.md) for the exact configuration and operator flow.
 
 Final validation: 92 unit tests passed across World, wallet SDK, console, daemon, entitlements, and money packages. Backend and webpack console production builds, typechecks, lint on the changed TypeScript, and the isolated ten-check integration scenario passed. The restarted gateway, policy, daemon, and login page returned 200; live-config mock login returned 403 without setting a session cookie. Redis append-only persistence was verified enabled.
+
+## Public-network follow-up — 7 November 2026
+
+The previously pending public paid flow has now passed with the funded test USDT contract `0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7` (symbol USDT, 6 decimals), live Arkiv, and a real Whitechain mandate. See [the public payment evidence](whitechain-public-payment-2026-11-07.json). The provider received 0.10 USDT, the platform fee accrued once at 0.0001 USDT, and paid run consumed 0.01 credits. The active vault holds 0.10 USDT, for total net USDT usage of 0.20. Legacy token selection and an unkeyed Arkiv transport were corrected during this run; the mismatched vault’s tokens were recovered in full and its old mandate revoked.

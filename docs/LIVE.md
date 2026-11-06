@@ -15,9 +15,9 @@ The local `.env` is configured with:
 | World environment | `production` |
 | Whitechain network | Sepolia, chain `1874` |
 | RPC | `https://rpc.testnet.whitechain.io` |
-| USDT.e | `0xaa7962d073935D387e8d442DA1D7149C81388f46` |
+| Configured test USDT | `0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7` |
 
-The RPC was checked directly: chain 1874; that token contract reports `USDT.e` and 6 decimals. The shorter address ending in `88f4` is invalid. The [official network reference](https://docs.whitechain.io/learn/network/reference) identifies the current Sepolia RPC and chain ID; legacy Whitechain testnet 2625 is a different network.
+The RPC was checked directly: chain 1874. The funded token currently configured in `.env` reports `USDT` and 6 decimals at `0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7`. The earlier bridged USDT.e contract (`0xaa7962d073935D387e8d442DA1D7149C81388f46`) is a different token. Set `WHITECHAIN_USDT`, the legacy `USDC_ADDRESS`, and `NEXT_PUBLIC_WHITECHAIN_USDT` consistently; mandate creation and checkout now use the shared server configuration. The shorter address ending in `88f4` is invalid. The [official network reference](https://docs.whitechain.io/learn/network/reference) identifies the current Sepolia RPC and chain ID; legacy Whitechain testnet 2625 is a different network.
 
 ## Finish the local configuration
 
@@ -84,3 +84,7 @@ The billing migration is registered in the migration journal; `db:migrate` appli
 Local test fixtures may explicitly opt into mock proofs and demo settlement. Those flags are never accepted in production, and a failed live proof or payment never falls back to a fixture. Existing mock sessions are rejected after mock mode is turned off.
 
 A real World App approval needs the matching RP signing key. A real paid end-to-end run also needs a provider plan with its payout wallet, funded buyer and executor wallets, a Whitechain mandate, and working Arkiv credentials. Unit tests or a local Anvil payment do not prove those external steps succeeded.
+
+## Public testnet result — 7 November 2026
+
+The [real public-network run](testing/whitechain-public-payment-2026-11-07.json) passed checkout receipt verification, live Arkiv minting, idempotent reconfirmation, a separately accrued 0.1% fee, SDK access, and paid run with a real registered worker and funded mandate. The provider received 0.10 USDT and 0.10 USDT remains in the active mandate vault; total net USDT used was 0.20, below the authorized 1 USDT limit. The initial mismatched-token vault was fully recovered and revoked before its replacement was bound to the same worker. Arkiv transport now applies the configured access key to the Rabdi base RPC and uses bounded RPC timeouts. Missing credentials throw rather than creating in-memory placeholder grants.

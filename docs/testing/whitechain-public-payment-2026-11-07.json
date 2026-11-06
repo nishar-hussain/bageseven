@@ -1,0 +1,172 @@
+{
+  "network": "Whitechain Sepolia",
+  "chain_id": 1874,
+  "provider": "0x2E9302Da9c2925b2b4e22C47E3c26C46220C46CC",
+  "checkout_usdt": "0.10",
+  "mandate_vault_usdt": "0.10",
+  "maximum_usdt_budget": "1",
+  "checks": [
+    "Running platform uses live World configuration, real USDT receipts, and live Arkiv",
+    "Mandate executor funded with testnet WBT for gas",
+    "Real Whitechain mandate deployed and worker registered in policy database",
+    "Mandate vault holds exactly 0.10 real testnet USDT",
+    "0.10 USDT transfer to the supplied provider confirmed on public Whitechain",
+    "Provider received the full 0.10 USDT",
+    "Confirmed payment created a real Arkiv entitlement bound to the live worker",
+    "Checkout retry reused one grant and one separately billed 0.1% provider fee",
+    "SDK entitlement check confirms access",
+    "Paid run passed real on-chain mandate and live Arkiv gates",
+    "Fresh independent Arkiv client read confirms the persisted paid-run balance of 1.99 credits"
+  ],
+  "buyer": "0x59f9F231d579D2780898Ec9B6de7a1e6CD40F62F",
+  "initial_usdt_units": "100000000",
+  "executor_gas_tx": "0xc178caf4b15e41bedb3af27ba19535ef8e703486f660e7be3d242bbebaeda6e6",
+  "mandate": {
+    "mandate_id": "b855cb8f-a5e2-43fc-a417-65f2ef223e8e",
+    "root_agent_id": "110c3d3f-a158-4b12-bf91-2da6666fc44a",
+    "contract_address": "0xf3837d9e760640dcd5217135d104f19ccc6f69a2",
+    "status": "active"
+  },
+  "vault_funding_tx": "0x2ce9233ef268c5bc05f8d929380b13fb84922aee1fb431cb5c2cbde4bd006cd2",
+  "plan": {
+    "id": "plan_eccb2d4e602d4a12",
+    "provider_id": "legacy",
+    "feature": "ocr",
+    "name": "Whitechain real payment verification",
+    "amount": "0.10",
+    "interval": "once",
+    "credits": "2",
+    "ttl_seconds": 86400,
+    "merchant_wallet": "0x2e9302da9c2925b2b4e22c47e3c26c46220c46cc",
+    "active": true,
+    "created_at": "2026-11-06T19:03:54.874Z"
+  },
+  "checkout": {
+    "id": "cs_322e5fea282645d18ca8509de219cfab",
+    "plan_id": "plan_eccb2d4e602d4a12",
+    "holder": "wallet:0x59f9f231d579d2780898ec9b6de7a1e6cd40f62f",
+    "status": "PENDING",
+    "amount": "0.10",
+    "chain_id": 1874,
+    "platform_fee_bps": 10,
+    "platform_fee_amount": "0.0001",
+    "expires_at": "2026-11-06T20:03:54.903Z",
+    "created_at": "2026-11-06T19:03:54.903Z",
+    "plan": {
+      "id": "plan_eccb2d4e602d4a12",
+      "provider_id": "legacy",
+      "feature": "ocr",
+      "name": "Whitechain real payment verification",
+      "amount": "0.10",
+      "interval": "once",
+      "credits": "2",
+      "ttl_seconds": 86400,
+      "merchant_wallet": "0x2e9302da9c2925b2b4e22c47e3c26c46220c46cc",
+      "active": true,
+      "created_at": "2026-11-06T19:03:54.874Z"
+    }
+  },
+  "provider_balance_before": "0",
+  "payment_tx": "0x6de5c464ffbd72404949b490dc673fe46b41f412d83f9626bfc916334547370f",
+  "payment_block": "12395469",
+  "provider_balance_after": "100000",
+  "reconciliation": {
+    "reason": "Initial unkeyed Arkiv RPC request timed out before any Arkiv transaction was submitted; restarted writer, verified no entity for exact payment and unchanged latest/pending nonce 34, then released only this checkout claim",
+    "payment_reused": true
+  },
+  "paid": {
+    "session": {
+      "id": "cs_322e5fea282645d18ca8509de219cfab",
+      "plan_id": "plan_eccb2d4e602d4a12",
+      "holder": "wallet:0x59f9f231d579d2780898ec9b6de7a1e6cd40f62f",
+      "status": "PAID",
+      "amount": "0.10",
+      "platform_fee_bps": 10,
+      "platform_fee_amount": "0.0001",
+      "chain_id": 1874,
+      "customer_wallet": "0x59f9f231d579d2780898ec9b6de7a1e6cd40f62f",
+      "payment_tx": "0x6de5c464ffbd72404949b490dc673fe46b41f412d83f9626bfc916334547370f",
+      "grant_id": "8bdb9d2a-abab-4a16-88c6-583c62a2f6a2",
+      "expires_at": "2026-11-06T20:03:54.903Z",
+      "created_at": "2026-11-06T19:03:54.903Z",
+      "plan": {
+        "id": "plan_eccb2d4e602d4a12",
+        "provider_id": "legacy",
+        "feature": "ocr",
+        "name": "Whitechain real payment verification",
+        "amount": "0.10",
+        "interval": "once",
+        "credits": "2",
+        "ttl_seconds": 86400,
+        "merchant_wallet": "0x2e9302da9c2925b2b4e22c47e3c26c46220c46cc",
+        "active": true,
+        "created_at": "2026-11-06T19:03:54.874Z"
+      }
+    },
+    "grant": {
+      "id": "8bdb9d2a-abab-4a16-88c6-583c62a2f6a2",
+      "feature": "ocr",
+      "holder": "wallet:0x59f9f231d579d2780898ec9b6de7a1e6cd40f62f",
+      "enabled": true,
+      "remaining": "2",
+      "renewal_enabled": false,
+      "paid_through": "2026-11-07T19:08:13.432Z",
+      "payment_tx": "0x6de5c464ffbd72404949b490dc673fe46b41f412d83f9626bfc916334547370f",
+      "settlement_network": "whitechain",
+      "world_proof_id": "world:checkout:cs_322e5fea282645d18ca8509de219cfab",
+      "worker_id": "110c3d3f-a158-4b12-bf91-2da6666fc44a",
+      "schema_version": 1,
+      "created_at": "2026-11-06T19:08:13.432Z",
+      "updated_at": "2026-11-06T19:08:13.432Z",
+      "arkiv_entity_key": "0x37381a2dad740f0951486cce2c85fefb96ed903c8945527acf38674206c5b629"
+    },
+    "verification": "verified"
+  },
+  "token": "0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7",
+  "token_repair": {
+    "old_contract": "0x17166a09f3d4d0852e234b206142cb1cf5151faa",
+    "reason": "Legacy USDC_ADDRESS differed from the funded WHITECHAIN_USDT; all payment paths now share whitechainConfig",
+    "recovery_tx": "0xf60e32675ca12a4d6f78ec99b8dedc8c677f60f8329492a1f3e32e518a2c7014",
+    "revoke_tx": "0x052ce183cb70b256d48efa3fddc121dfe2289e7ae7e504902903d359b9e92720",
+    "new_contract": "0xf3837d9e760640dcd5217135d104f19ccc6f69a2",
+    "new_funding_tx": "0x2ce9233ef268c5bc05f8d929380b13fb84922aee1fb431cb5c2cbde4bd006cd2",
+    "recovered_usdt": "0.10"
+  },
+  "paid_run": {
+    "grant": {
+      "id": "8bdb9d2a-abab-4a16-88c6-583c62a2f6a2",
+      "feature": "ocr",
+      "holder": "wallet:0x59f9f231d579d2780898ec9b6de7a1e6cd40f62f",
+      "enabled": true,
+      "remaining": "1.99",
+      "renewal_enabled": false,
+      "paid_through": "2026-11-07T19:08:13.432Z",
+      "payment_tx": "0x6de5c464ffbd72404949b490dc673fe46b41f412d83f9626bfc916334547370f",
+      "settlement_network": "whitechain",
+      "world_proof_id": "world:checkout:cs_322e5fea282645d18ca8509de219cfab",
+      "worker_id": "110c3d3f-a158-4b12-bf91-2da6666fc44a",
+      "schema_version": 1,
+      "created_at": "2026-11-06T19:08:13.432Z",
+      "updated_at": "2026-11-06T19:11:03.849Z",
+      "arkiv_entity_key": "0x37381a2dad740f0951486cce2c85fefb96ed903c8945527acf38674206c5b629"
+    },
+    "work_echo": "Real testnet checkout verification",
+    "dual_gate": {
+      "mandate": "ok",
+      "grant": "ok"
+    },
+    "note": "Dual gate passed: mandate ceiling + living Arkiv grant"
+  },
+  "final_usdt_units": "99800000",
+  "total_usdt_used": "0.2",
+  "result": "PASS",
+  "finished_at": "2026-11-06T19:11:11.065Z",
+  "independent_arkiv_read": {
+    "grant_id": "8bdb9d2a-abab-4a16-88c6-583c62a2f6a2",
+    "entity_key": "0x37381a2dad740f0951486cce2c85fefb96ed903c8945527acf38674206c5b629",
+    "remaining": "1.99",
+    "worker_id": "110c3d3f-a158-4b12-bf91-2da6666fc44a"
+  },
+  "token_symbol": "USDT",
+  "token_decimals": 6
+}

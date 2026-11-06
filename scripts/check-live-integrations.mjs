@@ -17,6 +17,7 @@ check('Payment mocks disabled', env.WHITECHAIN_DEMO_SETTLE === 'false', 'WHITECH
 console.log('INFO Provider payouts: each checkout uses its plan merchant_wallet; no global WHITECHAIN_PAY_TO is required.');
 try {
   const config = whitechainConfig(env);
+  check('Shared payment token', !env.USDC_ADDRESS || env.USDC_ADDRESS.toLowerCase() === config.usdt.toLowerCase(), 'Legacy USDC_ADDRESS must match WHITECHAIN_USDT; mandates and checkout use the shared Whitechain configuration');
   const rpc = createPublicClient({ chain: config.chain, transport: http(config.rpcUrl, { timeout: 15000, retryCount: 1 }) });
   const id = await rpc.getChainId(); check('Whitechain RPC', id === config.chainId, `chain ${id}, expected ${config.chainId}`);
   const abi = parseAbi(['function symbol() view returns(string)', 'function decimals() view returns(uint8)', 'function balanceOf(address) view returns(uint256)']);

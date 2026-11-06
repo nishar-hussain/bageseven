@@ -51,7 +51,7 @@ export const MintGrantInputSchema = z.object({
 export type MintGrantInput = z.infer<typeof MintGrantInputSchema>;
 
 export type GrantStoreDescribe = {
-  mode: 'memory' | 'arkiv' | 'arkiv-fallback';
+  mode: 'memory' | 'arkiv';
   rpcUrl?: string;
   live?: boolean;
 };

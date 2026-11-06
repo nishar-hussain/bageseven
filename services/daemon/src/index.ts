@@ -143,7 +143,7 @@ async function verifyChallenge(config: NodeJS.ProcessEnv, url: URL, challenge: z
   if (challenge.expires_at < Math.floor(Date.now() / 1000)) throw new ApiError(502, 'PAYMENT_CHALLENGE_EXPIRED', 'provider payment challenge has expired');
   const expectedChain = Number(config.CHAIN_ID ?? WHITECHAIN_CHAIN_ID);
   if (challenge.chain !== undefined && Number(challenge.chain) !== expectedChain) throw new ApiError(502, 'PAYMENT_CHAIN_MISMATCH', 'provider challenge chain does not match Bagseven');
-  const token = config.USDC_ADDRESS?.toLowerCase();
+  const token = whitechainConfig(config).usdt.toLowerCase();
   if (token && challenge.token && challenge.token.toLowerCase() !== token) throw new ApiError(502, 'PAYMENT_TOKEN_MISMATCH', 'provider challenge token does not match Bagseven');
   const providerAddress = await registeredProviderAddress(config, url.hostname);
   const canonical = ['bagseven-payment-v1', url.hostname, challenge.amount, recipient.toLowerCase(), challenge.chain ?? expectedChain, challenge.token?.toLowerCase() ?? token ?? '', challenge.nonce ?? '', challenge.expires_at].join('|');
@@ -266,7 +266,7 @@ function buildRoutes(app: FastifyInstance, { config, redis, db }: ServiceDeps): 
       if (parsed && typeof parsed === 'object' && (parsed as { x402Version?: unknown }).x402Version === 2) {
         const required = decodeX402PaymentRequired(challengeHeader, parsed);
         const configuredChainId = Number(config.CHAIN_ID ?? WHITECHAIN_CHAIN_ID);
-        const requirement = selectX402Requirements(required, (config.USDC_ADDRESS ?? '') as `0x${string}`, chainConfigForId(configuredChainId).network);
+        const requirement = selectX402Requirements(required, whitechainConfig(config).usdt as `0x${string}`, chainConfigForId(configuredChainId).network);
         validateX402AgainstPolicy(requirement, {
           perPurchaseCap: parseUnits(resolved.mandate.per_purchase_cap, 6),
           remainingWindow: parseUnits(resolved.remaining.remaining_window, 6),

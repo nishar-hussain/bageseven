@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { agents, mandates, providers, refusals, reservations, transactions, vaults } from '@bagseven/db';
 import { validateMoney, sub } from '@bagseven/money';
 import { ApiError, idempotencyOnSend, idempotencyPreHandler, type ServiceDeps } from '@bagseven/server';
-import { canonicalMandate, canonicalSpawn, canonicalWithdraw, MandateClient, recoverEip191, recoverSpendIntentSigner, workerKey } from '@bagseven/onchain';
+import { canonicalMandate, canonicalSpawn, canonicalWithdraw, MandateClient, whitechainConfig, recoverEip191, recoverSpendIntentSigner, workerKey } from '@bagseven/onchain';
 import { recoverMessageAddress, type Address } from 'viem';
 
 const BOUNDS: Record<number, string> = {
@@ -182,7 +182,7 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
       owner: body.owner_address.toLowerCase() as Address,
       operator: body.operator_address.toLowerCase() as Address,
       enforcer: (config.DAEMON_EXECUTOR_ADDRESS ?? client.address) as Address,
-      usdc: (config.USDC_ADDRESS ?? '0x') as Address,
+      usdc: whitechainConfig(config).usdt as Address,
       budgetPerWindow: toUnits(body.budget_per_window),
       windowSeconds: body.window_seconds,
       lifetimeCap: toUnits(body.lifetime_cap),
@@ -549,7 +549,7 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
     const mandate = await getMandate(mandateId);
     if (!mandate.contractAddress) throw new ApiError(503, 'NO_CONTRACT', 'no contract');
     const client = mandateClient(config);
-    await client.fund(mandate.contractAddress as Address, (config.USDC_ADDRESS ?? '0x') as Address, toUnits(body.amount));
+    await client.fund(mandate.contractAddress as Address, whitechainConfig(config).usdt as Address, toUnits(body.amount));
     await db.insert(transactions).values({ mandateId, amount: body.amount, type: 'fund' });
     return { vault_balance: fromUnits(await client.vaultBalance(mandate.contractAddress as Address)) };
   });

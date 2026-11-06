@@ -11,7 +11,6 @@ import { add, gte, gt as moneyGt, sub, validateMoney } from '@bagseven/money';
 import { http } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import type { Hex } from 'viem';
-import { MemoryGrantStore } from './memory-store.js';
 import { BagsevenGrants } from './schema.js';
 import type { Grant, GrantStore, MintGrantInput } from './types.js';
 import { MintGrantInputSchema } from './types.js';
@@ -26,6 +25,15 @@ export interface ArkivStoreConfig {
   accessKey: string;
   privateKey: Hex;
   rpcUrl?: string;
+}
+
+/** Preserve custom RPC paths; attach the access key to the public Rabdi base URL. */
+export function arkivTransportUrl(rpcUrl: string, accessKey: string): string {
+  const url = new URL(rpcUrl);
+  if (url.hostname === 'rpc.rabdi.db-chain.testnet.arkiv.network' && url.pathname === '/') {
+    url.pathname = `/${encodeURIComponent(accessKey)}`;
+  }
+  return url.toString();
 }
 
 function nowIso(): string {
@@ -72,10 +80,9 @@ function bareDec(v: { value: string } | string | undefined | null): string {
  * Live Arkiv-backed grant store.
  *
  * Writes entities through `BagsevenGrants` with `ExpirationTime.fromSeconds(ttl)`.
- * When credentials are missing, falls back to MemoryGrantStore so CI/tests stay offline.
+ * Missing credentials fail closed; offline tests use MemoryGrantStore explicitly.
  */
 export class ArkivGrantStore implements GrantStore {
-  private readonly fallback: MemoryGrantStore | null;
   private readonly config: ArkivStoreConfig | null;
   private readonly rpcUrl: string;
   private readonly cache = new Map<string, Grant>();
@@ -88,36 +95,21 @@ export class ArkivGrantStore implements GrantStore {
   private live = false;
 
   constructor(rpcUrlOrConfig?: string | ArkivStoreConfig, maybeConfig?: ArkivStoreConfig) {
-    if (typeof rpcUrlOrConfig === 'object' && rpcUrlOrConfig) {
-      this.config = rpcUrlOrConfig;
-      this.rpcUrl = rpcUrlOrConfig.rpcUrl ?? 'https://rpc.rabdi.db-chain.testnet.arkiv.network';
-      this.fallback = null;
-      this.live = true;
-    } else {
-      this.rpcUrl =
-        typeof rpcUrlOrConfig === 'string'
-          ? rpcUrlOrConfig
-          : 'https://rpc.rabdi.db-chain.testnet.arkiv.network';
-      this.config = maybeConfig ?? null;
-      if (this.config?.accessKey && this.config?.privateKey) {
-        this.fallback = null;
-        this.live = true;
-      } else {
-        // Offline / missing credentials: same interface, memory semantics + placeholder keys.
-        this.fallback = new MemoryGrantStore();
-        this.live = false;
-      }
+    const config = typeof rpcUrlOrConfig === 'object' ? rpcUrlOrConfig : maybeConfig;
+    if (!config?.accessKey || !config.privateKey || !/^0x[0-9a-fA-F]{64}$/.test(config.privateKey)) {
+      throw new Error('ARKIV_NOT_CONFIGURED: set ARKIV_ACCESS_KEY and ARKIV_PRIVATE_KEY; live storage never falls back to memory');
     }
+    this.config = config;
+    this.rpcUrl = config.rpcUrl ?? (typeof rpcUrlOrConfig === 'string' ? rpcUrlOrConfig : 'https://rpc.rabdi.db-chain.testnet.arkiv.network');
+    this.live = true;
   }
 
   static fromEnv(env: NodeJS.ProcessEnv = process.env): ArkivGrantStore {
-    const accessKey = env.ARKIV_ACCESS_KEY ?? '';
-    const pk = (env.ARKIV_PRIVATE_KEY ?? env.PRIVATE_KEY ?? '') as Hex;
-    const rpcUrl = env.ARKIV_RPC_URL ?? 'https://rpc.rabdi.db-chain.testnet.arkiv.network';
-    if (accessKey && pk && pk.startsWith('0x')) {
-      return new ArkivGrantStore({ accessKey, privateKey: pk, rpcUrl });
-    }
-    return new ArkivGrantStore(rpcUrl);
+    return new ArkivGrantStore({
+      accessKey: env.ARKIV_ACCESS_KEY ?? '',
+      privateKey: (env.ARKIV_PRIVATE_KEY ?? env.PRIVATE_KEY ?? '') as Hex,
+      rpcUrl: env.ARKIV_RPC_URL,
+    });
   }
 
   private ensureClients(): void {
@@ -130,11 +122,11 @@ export class ArkivGrantStore implements GrantStore {
     this.wallet = createWalletClient({
       account,
       chain,
-      transport: http(this.rpcUrl),
+      transport: http(arkivTransportUrl(this.rpcUrl, this.config.accessKey), { timeout: 15_000, retryCount: 1 }),
     });
     this.public = createPublicClient({
       chain,
-      transport: http(this.rpcUrl),
+      transport: http(arkivTransportUrl(this.rpcUrl, this.config.accessKey), { timeout: 15_000, retryCount: 1 }),
     });
   }
 
@@ -191,15 +183,6 @@ export class ArkivGrantStore implements GrantStore {
     }
     validateMoney(input.remaining);
 
-    if (this.fallback) {
-      const grant = await this.fallback.mint(input);
-      return {
-        ...grant,
-        arkiv_entity_key: `arkiv:pending:${grant.id}`,
-        settlement_network: grant.settlement_network,
-      };
-    }
-
     this.ensureClients();
     const id = randomUUID();
     const created = nowIso();
@@ -255,10 +238,6 @@ export class ArkivGrantStore implements GrantStore {
   }
 
   async get(id: string): Promise<Grant | null> {
-    if (this.fallback) {
-      const g = await this.fallback.get(id);
-      return g ? { ...g, arkiv_entity_key: g.arkiv_entity_key ?? `arkiv:pending:${g.id}` } : null;
-    }
     const cached = this.cache.get(id);
     if (cached && !isExpired(cached)) return cached;
     this.ensureClients();
@@ -276,7 +255,6 @@ export class ArkivGrantStore implements GrantStore {
     feature?: string;
     worker_id?: string;
   }): Promise<Grant[]> {
-    if (this.fallback) return this.fallback.findLive(query);
 
     this.ensureClients();
     const at = Date.now();
@@ -314,7 +292,6 @@ export class ArkivGrantStore implements GrantStore {
   }
 
   async consume(id: string, amount: string, idempotencyKey: string): Promise<Grant> {
-    if (this.fallback) return this.fallback.consume(id, amount, idempotencyKey);
     validateMoney(amount);
     if (!moneyGt(amount, '0')) throw new Error('INVALID_AMOUNT: consume amount must be positive');
     const key = `${id}:${idempotencyKey}`;
@@ -344,7 +321,6 @@ export class ArkivGrantStore implements GrantStore {
   }
 
   async cancelRenewal(id: string): Promise<Grant> {
-    if (this.fallback) return this.fallback.cancelRenewal(id);
     const grant = (await this.get(id)) ?? (() => {
       throw new Error('GRANT_NOT_FOUND');
     })();
@@ -360,7 +336,6 @@ export class ArkivGrantStore implements GrantStore {
   }
 
   async hold(id: string, amount: string, holdId: string): Promise<Grant> {
-    if (this.fallback) return this.fallback.hold(id, amount, holdId);
     validateMoney(amount);
     if (this.holds.has(holdId)) throw new Error('HOLD_EXISTS');
     const grant = (await this.get(id)) ?? (() => {
@@ -382,7 +357,6 @@ export class ArkivGrantStore implements GrantStore {
   }
 
   async commit(holdId: string): Promise<Grant> {
-    if (this.fallback) return this.fallback.commit(holdId);
     const hold = this.holds.get(holdId);
     if (!hold) throw new Error('HOLD_NOT_FOUND');
     this.holds.delete(holdId);
@@ -392,7 +366,6 @@ export class ArkivGrantStore implements GrantStore {
   }
 
   async release(holdId: string): Promise<Grant> {
-    if (this.fallback) return this.fallback.release(holdId);
     const hold = this.holds.get(holdId);
     if (!hold) throw new Error('HOLD_NOT_FOUND');
     this.holds.delete(holdId);
@@ -411,9 +384,9 @@ export class ArkivGrantStore implements GrantStore {
     return next;
   }
 
-  describe(): { mode: 'arkiv' | 'arkiv-fallback'; rpcUrl: string; live: boolean } {
+  describe(): { mode: 'arkiv'; rpcUrl: string; live: boolean } {
     return {
-      mode: this.live ? 'arkiv' : 'arkiv-fallback',
+      mode: 'arkiv',
       rpcUrl: this.rpcUrl,
       live: this.live,
     };

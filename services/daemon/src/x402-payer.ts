@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { createPublicClient, createWalletClient, fallback, http, type Address, type Hex, type PublicClient } from 'viem';
 import { privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
-import { WHITECHAIN_CHAIN_ID, WHITECHAIN_RPC_URL, chainForId } from '@bagseven/onchain';
+import { WHITECHAIN_CHAIN_ID, WHITECHAIN_RPC_URL, chainForId, whitechainConfig } from '@bagseven/onchain';
 import { encodePaymentSignatureHeader } from '@x402/core/http';
 import type { PaymentPayload, PaymentRequired } from '@x402/core/types';
 import type { X402Requirements } from './x402.js';
@@ -126,13 +126,14 @@ export class X402Payer {
 export function x402PayerFromEnv(config: NodeJS.ProcessEnv, operator: string, enforcer: string): X402Payer {
   const key = config.BAGSEVEN_X402_PAYER_KEY;
   if (!key) throw new Error('BAGSEVEN_X402_PAYER_KEY is not configured');
-  if (!config.USDC_ADDRESS) throw new Error('USDC_ADDRESS is not configured');
+  const token = whitechainConfig(config).usdt;
+  if (!token) throw new Error('WHITECHAIN_USDT is not configured');
   const payer = new X402Payer({
     key: key as Hex,
     rpcUrl: config.RPC_URL ?? WHITECHAIN_RPC_URL,
     rpcFallbackUrl: config.RPC_FALLBACK_URL ?? WHITECHAIN_RPC_URL,
     chainId: Number(config.CHAIN_ID ?? WHITECHAIN_CHAIN_ID),
-    usdc: config.USDC_ADDRESS as Address,
+    usdc: token as Address,
   });
   if (payer.account.address.toLowerCase() === operator.toLowerCase()) throw new Error('x402 payer must not be the worker operator');
   if (payer.account.address.toLowerCase() === enforcer.toLowerCase()) throw new Error('x402 payer must not be the contract enforcer');
