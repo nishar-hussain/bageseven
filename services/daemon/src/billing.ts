@@ -2,8 +2,11 @@ import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import { ApiError } from '@bagseven/server';
 import { getGrantStore } from '@bagseven/entitlements';
-import { createPublicClient, http, parseAbiItem, type Hex } from 'viem';
-import { WHITECHAIN_CHAIN_ID, WHITECHAIN_RPC_URL, whitechainSepolia } from '@bagseven/onchain';
+import type { Redis } from 'ioredis';
+import type { Database } from '@bagseven/db';
+import { whitechainConfig } from '@bagseven/onchain';
+import { verifyPaymentAuthorization, verifyWhitechainPayment } from './whitechain-payment.js';
+import { whitechainDemoAllowed } from './whitechain-settle.js';
 import {
   assertCanRead,
   assertCanWrite,
@@ -17,8 +20,9 @@ import {
 } from './billing-store.js';
 
 const confirmBody = z.object({
-  payment_tx: z.string().min(1),
+  payment_tx: z.string().regex(/^0x[0-9a-fA-F]{64}$/),
   customer_wallet: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
+  payment_signature: z.string().optional(),
 });
 
 function principalFrom(auth: string | string[] | undefined): ApiPrincipal {
@@ -31,64 +35,26 @@ function holderFor(principal: ApiPrincipal, requested?: string): string {
   return requested;
 }
 
-async function verifyWhitechainPayment(opts: {
-  payment_tx: string;
-  merchant_wallet: string;
-  customer_wallet: string;
-  amount: string;
-}): Promise<{ ok: true; mode: 'verified' | 'demo' } | { ok: false; reason: string }> {
-  const tx = opts.payment_tx.trim();
-  if (!/^0x[0-9a-fA-F]{64}$/.test(tx)) {
-    return { ok: false, reason: 'payment_tx must be a 32-byte hex hash' };
+/** Provider scope is accepted only from the authenticated console BFF. */
+function providerScope(req: { headers: { authorization?: string; [key: string]: unknown } }): string | undefined {
+  const provider = req.headers['x-bagseven-provider'];
+  if (provider === undefined) return undefined;
+  if (typeof provider !== 'string' || !provider.trim() || req.headers.authorization !== `Bearer ${process.env.DAEMON_AUTH_TOKEN}`) {
+    throw new ApiError(403, 'FORBIDDEN', 'Provider scope requires console authentication');
   }
-
-  const prod = (process.env.NODE_ENV ?? 'development') === 'production';
-  const demo = (process.env.WHITECHAIN_DEMO_SETTLE ?? (prod ? 'false' : 'true')).toLowerCase() !== 'false';
-  const rpc = (process.env.WHITECHAIN_RPC_URL ?? process.env.RPC_URL ?? WHITECHAIN_RPC_URL).trim();
-  const usdt = (process.env.WHITECHAIN_USDT ?? '0xaa7962d073935D387e8d442DA1D7149C81388f46').trim();
-
-  try {
-    const client = createPublicClient({
-      chain: whitechainSepolia,
-      transport: http(rpc),
-    });
-    const receipt = await client.getTransactionReceipt({ hash: tx as Hex });
-    if (receipt.status !== 'success') return { ok: false, reason: 'transaction failed on-chain' };
-
-    const transferEvent = parseAbiItem(
-      'event Transfer(address indexed from, address indexed to, uint256 value)',
-    );
-    const logs = await client.getLogs({
-      address: usdt as Hex,
-      event: transferEvent,
-      fromBlock: receipt.blockNumber,
-      toBlock: receipt.blockNumber,
-    });
-    const from = opts.customer_wallet.toLowerCase();
-    const to = opts.merchant_wallet.toLowerCase();
-    const hit = logs.some((l) => {
-      const args = l.args as { from?: string; to?: string };
-      return args.from?.toLowerCase() === from && args.to?.toLowerCase() === to;
-    });
-    if (hit) return { ok: true, mode: 'verified' };
-    // Buyer-signed native stamp or demo environments: receipt success is enough when demo settle is on.
-    if (demo) return { ok: true, mode: 'demo' };
-    return { ok: false, reason: 'no matching USDT Transfer log for customer→merchant' };
-  } catch (e) {
-    if (demo) return { ok: true, mode: 'demo' };
-    return { ok: false, reason: e instanceof Error ? e.message : String(e) };
-  }
+  return provider;
 }
 
-export function registerBillingRoutes(app: FastifyInstance): void {
-  const store = getBillingStore();
+export function registerBillingRoutes(app: FastifyInstance, deps: { redis?: Redis; db?: Database } = {}): void {
+  const store = getBillingStore(deps.db);
   const grants = getGrantStore(process.env);
+  const confirmations = new Map<string, Promise<unknown>>();
 
   app.post('/v1/plans', async (req) => {
     const principal = principalFrom(req.headers.authorization);
     if (principal.kind !== 'sk') throw new ApiError(403, 'FORBIDDEN', 'secret key required to create plans');
     try {
-      const plan = store.createPlan(CreatePlanInput.parse(req.body ?? {}));
+      const plan = await store.createPlan({ ...CreatePlanInput.parse(req.body ?? {}), provider_id: providerScope(req) ?? 'legacy' });
       return { plan };
     } catch (e) {
       if (e instanceof ApiError) throw e;
@@ -100,14 +66,15 @@ export function registerBillingRoutes(app: FastifyInstance): void {
     const principal = principalFrom(req.headers.authorization);
     if (principal.kind === 'embed') throw new ApiError(403, 'FORBIDDEN', 'embed tokens cannot list merchant plans');
     const q = req.query as { active?: string };
-    return { plans: store.listPlans(q.active === 'true') };
+    const provider = providerScope(req);
+    return { plans: (await store.listPlans(q.active === 'true')).filter(p => !provider || p.provider_id === provider) };
   });
 
   app.get('/v1/plans/:id', async (req) => {
     principalFrom(req.headers.authorization);
     const { id } = req.params as { id: string };
-    const plan = store.getPlan(id);
-    if (!plan) throw new ApiError(404, 'PLAN_NOT_FOUND', 'plan not found');
+    const plan = await store.getPlan(id);
+    if (!plan || (providerScope(req) && plan.provider_id !== providerScope(req))) throw new ApiError(404, 'PLAN_NOT_FOUND', 'plan not found');
     return { plan };
   });
 
@@ -119,7 +86,10 @@ export function registerBillingRoutes(app: FastifyInstance): void {
       if (principal.kind === 'embed' && body.holder !== principal.holder) {
         throw new ApiError(403, 'HOLDER_MISMATCH', 'embed token is scoped to a different holder');
       }
-      const session = store.createCheckout(body);
+      const plan = await store.getPlan(body.plan_id);
+      const provider = providerScope(req);
+      if (provider && plan?.provider_id !== provider) throw new ApiError(404, 'PLAN_NOT_FOUND', 'plan not found');
+      const session = await store.createCheckout(body);
       return { session, checkout_session: session };
     } catch (e) {
       if (e instanceof ApiError) throw e;
@@ -132,14 +102,17 @@ export function registerBillingRoutes(app: FastifyInstance): void {
     const principal = principalFrom(req.headers.authorization);
     if (principal.kind !== 'sk') throw new ApiError(403, 'FORBIDDEN', 'secret key required');
     const q = req.query as { holder?: string; plan_id?: string };
-    return { sessions: store.listCheckouts({ holder: q.holder, plan_id: q.plan_id }) };
+    const provider = providerScope(req);
+    return { sessions: (await store.listCheckouts({ holder: q.holder, plan_id: q.plan_id })).filter(s => !provider || s.plan?.provider_id === provider) };
   });
 
   app.get('/v1/checkout-sessions/:id', async (req) => {
     const principal = principalFrom(req.headers.authorization);
     const { id } = req.params as { id: string };
-    const session = store.getCheckout(id);
+    const session = await store.getCheckout(id);
     if (!session) throw new ApiError(404, 'CHECKOUT_NOT_FOUND', 'checkout session not found');
+    const provider = providerScope(req);
+    if (provider && session.plan?.provider_id !== provider) throw new ApiError(404, 'CHECKOUT_NOT_FOUND', 'checkout session not found');
     if (principal.kind === 'embed' && session.holder !== principal.holder) {
       throw new ApiError(403, 'HOLDER_MISMATCH', 'embed token is scoped to a different holder');
     }
@@ -149,7 +122,7 @@ export function registerBillingRoutes(app: FastifyInstance): void {
   /** Public resolve — no daemon Bearer; still requires session id knowledge. */
   app.get('/v1/public/checkout/:id', async (req) => {
     const { id } = req.params as { id: string };
-    const session = store.getCheckout(id);
+    const session = await store.getCheckout(id);
     if (!session) throw new ApiError(404, 'CHECKOUT_NOT_FOUND', 'checkout session not found');
     return {
       session: {
@@ -157,6 +130,7 @@ export function registerBillingRoutes(app: FastifyInstance): void {
         status: session.status,
         amount: session.amount,
         chain_id: session.chain_id,
+        payment: { chain_id: session.chain_id, usdt: whitechainConfig().usdt, rpc_url: whitechainConfig().rpcUrl, explorer: whitechainConfig().explorer },
         holder: session.holder,
         expires_at: session.expires_at,
         customer_wallet: session.customer_wallet,
@@ -182,50 +156,71 @@ export function registerBillingRoutes(app: FastifyInstance): void {
   app.post('/v1/public/checkout/:id/confirm', async (req) => {
     const { id } = req.params as { id: string };
     const body = confirmBody.parse(req.body ?? {});
-    const session = store.getCheckout(id);
+    const session = await store.getCheckout(id);
     if (!session) throw new ApiError(404, 'CHECKOUT_NOT_FOUND', 'checkout session not found');
     if (session.status === 'PAID') return { session, already_paid: true };
     if (session.status !== 'PENDING') throw new ApiError(409, `CHECKOUT_${session.status}`, `session is ${session.status}`);
-    const plan = session.plan ?? store.getPlan(session.plan_id);
+    const plan = session.plan ?? await store.getPlan(session.plan_id);
     if (!plan) throw new ApiError(404, 'PLAN_NOT_FOUND', 'plan missing');
+    if (session.chain_id !== whitechainConfig().chainId) throw new ApiError(409, 'CHECKOUT_NETWORK_CHANGED', 'Create a new checkout for the configured network');
 
-    const verified = await verifyWhitechainPayment({
-      payment_tx: body.payment_tx,
-      merchant_wallet: plan.merchant_wallet,
-      customer_wallet: body.customer_wallet,
-      amount: plan.amount,
-    });
-    if (!verified.ok) {
-      store.markFailed(id);
-      throw new ApiError(402, 'PAYMENT_UNVERIFIED', verified.reason);
-    }
+    const pending = confirmations.get(id);
+    if (pending) return pending;
+    const confirm = async () => {
+      const demo = whitechainDemoAllowed();
+      if (!demo) {
+        try {
+          await verifyPaymentAuthorization({ wallet: body.customer_wallet, signature: body.payment_signature, context: `checkout:${session.id}`, hash: body.payment_tx });
+          await verifyWhitechainPayment({
+            payment_tx: body.payment_tx, merchant_wallet: plan.merchant_wallet,
+            customer_wallet: body.customer_wallet, amount: session.amount,
+          });
+        } catch (error) {
+          // Keep the checkout payable: an RPC outage or pending receipt is retryable.
+          throw new ApiError(402, 'PAYMENT_UNVERIFIED', error instanceof Error ? error.message : String(error));
+        }
+      }
+      const paymentKey = `whitechain:payment:${session.chain_id}:${body.payment_tx.toLowerCase()}`;
+      if (deps.redis) {
+        const fresh = await deps.redis.set(paymentKey, id, 'NX');
+        if (!fresh) throw new ApiError(409, 'PAYMENT_REUSED', 'This payment is already redeemed or awaiting reconciliation; check its existing entitlement');
+      } else if (process.env.NODE_ENV === 'production') {
+        throw new ApiError(503, 'PAYMENT_LEDGER_UNAVAILABLE', 'Payment replay protection is not configured');
+      }
+      try { await store.claimPayment(body.payment_tx, id); } catch {
+        throw new ApiError(409, 'PAYMENT_REUSED', 'This payment already belongs to another checkout');
+      }
 
-    const live = await grants.findLive({ holder: session.holder, feature: plan.feature });
-    const prior = live[0];
-    const grant = await grants.mint({
-      feature: plan.feature,
-      holder: session.holder,
-      remaining: plan.credits,
-      ttl_seconds: plan.ttl_seconds,
-      payment_tx: body.payment_tx,
-      settlement_network: 'whitechain',
-      human_id: prior?.human_id,
-      world_proof_id: prior?.world_proof_id ?? `world:checkout:${session.id}`,
-      worker_id: prior?.worker_id || process.env.BAGSEVEN_MCP_WORKER?.trim(),
-      renewal_enabled: plan.interval === 'month',
-    });
+      const live = await grants.findLive({ holder: session.holder, feature: plan.feature });
+      const prior = live[0];
+      const grant = await grants.mint({
+        feature: plan.feature,
+        holder: session.holder,
+        remaining: plan.credits,
+        ttl_seconds: plan.ttl_seconds,
+        payment_tx: body.payment_tx,
+        settlement_network: 'whitechain',
+        human_id: prior?.human_id,
+        world_proof_id: prior?.world_proof_id ?? `world:checkout:${session.id}`,
+        worker_id: prior?.worker_id || process.env.BAGSEVEN_MCP_WORKER?.trim(),
+        renewal_enabled: plan.interval === 'month',
+      });
 
-    const paid = store.markPaid(id, {
-      payment_tx: body.payment_tx,
-      customer_wallet: body.customer_wallet,
-      grant_id: grant.id,
-    });
+      const paid = await store.markPaid(id, {
+        payment_tx: body.payment_tx,
+        customer_wallet: body.customer_wallet,
+        grant_id: grant.id,
+      });
 
-    return {
-      session: paid,
-      grant,
-      verification: verified.mode,
+      return {
+        session: paid,
+        grant,
+        verification: demo ? 'demo' : 'verified',
+      };
     };
+    const result = confirm();
+    confirmations.set(id, result);
+    try { return await result; } finally { confirmations.delete(id); }
   });
 }
 

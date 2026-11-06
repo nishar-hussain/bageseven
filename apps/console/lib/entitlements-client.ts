@@ -25,9 +25,12 @@ export type MumbaiStatus = {
       app_id?: string | null;
       rp_id?: string | null;
       action?: string;
+      environment?: 'production' | 'staging';
       oidc_client_id?: string | null;
     };
     whitechain: {
+      pay_to?: string | null;
+      usdt?: string;
       network: string;
       chain_id: number;
       explorer: string;

@@ -1,32 +1,33 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { settleWhitechainUsdt, whitechainExplorerUrl } from './whitechain-settle.js';
-
+const verify = vi.hoisted(() => vi.fn());
+vi.mock('./whitechain-payment.js', async (original) => ({ ...await original<typeof import('./whitechain-payment.js')>(), verifyWhitechainPayment: verify, verifyPaymentAuthorization: vi.fn(async () => undefined) }));
+beforeEach(() => { vi.clearAllMocks(); verify.mockResolvedValue(undefined); });
+const input = { amount: '1', feature: 'ocr', holder: 'human', payment_tx: `0x${'ab'.repeat(32)}` };
+const recipient = '0x1111111111111111111111111111111111111111';
 describe('settleWhitechainUsdt', () => {
-  it('records provided payment_tx with explorer URL', async () => {
-    const r = await settleWhitechainUsdt(
-      {
-        amount: '1',
-        feature: 'ocr',
-        holder: '0x1',
-        payment_tx: '0xabc123',
-      },
-      { WHITECHAIN_NETWORK: 'testnet' },
-    );
-    expect(r.mode).toBe('provided');
-    expect(r.settlement_network).toBe('whitechain');
-    expect(r.explorer_url).toContain('explorer.testnet.whitechain.io/tx/0xabc123');
+  it('records provided transactions only after real receipt verification', async () => {
+    const env = { WHITECHAIN_NETWORK: 'testnet', WHITECHAIN_PAY_TO: recipient };
+    const result = await settleWhitechainUsdt(input, env);
+    expect(result.mode).toBe('provided'); expect(result.explorer_url).toContain(input.payment_tx);
+    expect(verify).toHaveBeenCalledWith(expect.objectContaining({ payment_tx: input.payment_tx, amount: '1', merchant_wallet: recipient }), env);
   });
-
-  it('demo settles when operator unset', async () => {
-    const r = await settleWhitechainUsdt(
-      { amount: '1', feature: 'ocr', holder: '0x1' },
-      { WHITECHAIN_DEMO_SETTLE: 'true' },
-    );
-    expect(r.mode).toBe('demo');
-    expect(r.payment_tx.startsWith('0x')).toBe(true);
+  it('does not turn a verification failure into a demo payment', async () => {
+    verify.mockRejectedValue(new Error('insufficient transfer'));
+    await expect(settleWhitechainUsdt(input, { WHITECHAIN_PAY_TO: recipient })).rejects.toThrow('insufficient transfer');
   });
-
-  it('builds explorer URLs', () => {
-    expect(whitechainExplorerUrl('0xdead')).toContain('/tx/0xdead');
+  it('supports an explicitly enabled development fixture without network calls', async () => {
+    const result = await settleWhitechainUsdt({ amount: '1', feature: 'ocr', holder: 'human' }, { WHITECHAIN_DEMO_SETTLE: 'true' });
+    expect(result.mode).toBe('demo'); expect(verify).not.toHaveBeenCalled();
+  });
+  it('never enables fake payments in production', async () => {
+    await expect(settleWhitechainUsdt({ amount: '1', feature: 'ocr', holder: 'human' }, { NODE_ENV: 'production', WHITECHAIN_DEMO_SETTLE: 'true' })).rejects.toThrow('WHITECHAIN_UNCONFIGURED');
+  });
+  it('does not borrow a mandate owner key or send a native stamp as USDT', async () => {
+    await expect(settleWhitechainUsdt({ amount: '1', feature: 'ocr', holder: 'human' }, { WHITECHAIN_PAY_TO: recipient, DAEMON_OWNER_KEY: `0x${'01'.repeat(32)}` })).rejects.toThrow('WHITECHAIN_PRIVATE_KEY');
+  });
+  it('builds network-specific explorer URLs', () => {
+    expect(whitechainExplorerUrl('0xdead')).toContain('explorer.testnet.whitechain.io/tx/0xdead');
+    expect(whitechainExplorerUrl('0xdead', 'mainnet')).toContain('explorer.whitechain.io/tx/0xdead');
   });
 });

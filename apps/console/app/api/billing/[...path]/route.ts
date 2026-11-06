@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSession, sessionIsValid } from '../../../../lib/auth';
+import { getSession, sessionIsValid, sessionHolder } from '../../../../lib/auth';
 import { daemonFetch } from '../../../../lib/daemon-bff';
 
 type Ctx = { params: Promise<{ path: string[] }> };
@@ -17,7 +17,7 @@ function allowed(method: string, parts: string[]): boolean {
 
 async function proxy(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   const session = await getSession();
-  if (!sessionIsValid(session)) {
+  if (!session || !sessionIsValid(session)) {
     return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: 'Sign in required' } }, { status: 401 });
   }
   const { path } = await ctx.params;
@@ -28,6 +28,7 @@ async function proxy(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   const url = new URL(req.url);
   const target = `/v1/${suffix}${url.search}`;
   const headers = new Headers();
+  headers.set('x-bagseven-provider', session.world_human_id ? `world:${session.world_human_id}` : sessionHolder(session));
   const init: RequestInit = { method: req.method, headers };
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     init.body = await req.text();

@@ -1,0 +1,17 @@
+{
+  "scope": "Isolated Anvil 1874 and PostgreSQL; real local receipts and cryptographic wallet signatures, no World proof fabricated, no external funds",
+  "result": "PASS",
+  "checks": [
+    "Plans and checkout survive a fresh PostgreSQL store instance",
+    "Actual local token transfer + payer signature + exact receipt minted one living grant",
+    "Duplicate confirmation returned the existing checkout, without a second grant",
+    "A second checkout could not redeem the same real transaction",
+    "SDK public check sees the paid entitlement",
+    "Paid run used the bound worker and actual on-chain mandate capacity",
+    "A child with insufficient allocation was refused",
+    "On-chain revocation refused paid work and preserved credits",
+    "Provider received the full payment; one exact 0.1% fee persisted after retries and store restart",
+    "Mandate signatures for another chain were rejected before deployment"
+  ],
+  "local_payment": "0x088838b992cdbbbbf43e306ed9a9501b9815a205b9d20286cab6f0ebd061765b"
+}

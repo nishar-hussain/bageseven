@@ -33,6 +33,8 @@ export const MintGrantInputSchema = z.object({
   remaining: z.string().default('10'),
   ttl_seconds: z.number().int().positive().default(3600),
   payment_tx: z.string().optional(),
+  customer_wallet: z.string().optional(),
+  payment_signature: z.string().optional(),
   settlement_network: z.enum(['whitechain', 'local']).default('whitechain'),
   world_proof_id: z.string().optional(),
   /** OIDC ID token from World Agent Pass (live mode). */

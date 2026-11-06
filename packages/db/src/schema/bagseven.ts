@@ -132,6 +132,7 @@ export const billingPlans = pgTable(
   'billing_plans',
   {
     id: text('id').primaryKey(),
+    providerId: text('provider_id').notNull().default('legacy'),
     feature: text('feature').notNull(),
     name: text('name').notNull(),
     amount: text('amount').notNull(),
@@ -156,6 +157,8 @@ export const checkoutSessions = pgTable(
     status: text('status').notNull().default('PENDING'),
     amount: text('amount').notNull(),
     chainId: integer('chain_id').notNull().default(1874),
+    platformFeeBps: integer('platform_fee_bps').notNull().default(0),
+    platformFeeAmount: text('platform_fee_amount').notNull().default('0'),
     customerWallet: text('customer_wallet'),
     paymentTx: text('payment_tx'),
     grantId: text('grant_id'),
@@ -167,6 +170,7 @@ export const checkoutSessions = pgTable(
     index('idx_checkout_sessions_plan').on(t.planId),
     index('idx_checkout_sessions_holder').on(t.holder),
     index('idx_checkout_sessions_status').on(t.status),
+    uniqueIndex('idx_checkout_payment_unique').on(t.chainId, t.paymentTx),
   ],
 );
 

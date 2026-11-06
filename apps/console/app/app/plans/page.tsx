@@ -17,7 +17,7 @@ export default function PlansPage() {
   const [credits, setCredits] = useState('10');
   const [ttl, setTtl] = useState(3600);
   const [interval, setInterval] = useState<'once' | 'month'>('once');
-  const [wallet, setWallet] = useState('0x1111111111111111111111111111111111111111');
+  const [wallet, setWallet] = useState('');
 
   const refresh = useCallback(async () => {
     const r = await billingApi.listPlans();
@@ -56,7 +56,7 @@ export default function PlansPage() {
       <div>
         <h1 className="text-[2rem] font-semibold tracking-tight">Plans</h1>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          Thin plans only — price + feature + credits. Checkout sessions mint living Arkiv grants. No payment-link catalog.
+          Set your price, credits, and provider payout wallet. Customers pay your wallet directly; the 0.1% platform fee is billed separately.
         </p>
         <div className="mt-4">
           <StatusBadges />
@@ -103,7 +103,7 @@ export default function PlansPage() {
         <label className="block text-xs font-semibold uppercase text-[var(--muted)]">
           Payout wallet (Whitechain)
           <div className="mt-1 flex gap-2">
-            <input className="w-full rounded-xl border border-[var(--line)] px-3 py-2 font-mono text-xs" value={wallet} onChange={(e) => setWallet(e.target.value)} required />
+            <input className="w-full rounded-xl border border-[var(--line)] px-3 py-2 font-mono text-xs" placeholder="0x… provider wallet" pattern="0x[0-9a-fA-F]{40}" value={wallet} onChange={(e) => setWallet(e.target.value)} required />
             <button
               type="button"
               className="shrink-0 rounded-full border border-[var(--line)] px-3 text-xs font-semibold"

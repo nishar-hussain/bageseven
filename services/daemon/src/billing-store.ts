@@ -1,10 +1,15 @@
+import { formatUnits } from 'viem';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { assertKnownFeature } from '@bagseven/entitlements';
-import { WHITECHAIN_CHAIN_ID } from '@bagseven/onchain';
+import { WHITECHAIN_CHAIN_ID, whitechainConfig } from '@bagseven/onchain';
+import { usdtUnits } from './whitechain-payment.js';
+import { billingPlans, checkoutSessions, type Database } from '@bagseven/db';
+import { desc, eq } from 'drizzle-orm';
 
 export const PlanSchema = z.object({
   id: z.string().min(1),
+  provider_id: z.string().min(1).default('legacy'),
   feature: z.string().min(1),
   name: z.string().min(1),
   amount: z.string().min(1),
@@ -24,6 +29,8 @@ export const CheckoutSessionSchema = z.object({
   holder: z.string().min(1),
   status: z.enum(['PENDING', 'PAID', 'EXPIRED', 'CANCELLED', 'FAILED']),
   amount: z.string().min(1),
+  platform_fee_bps: z.number().int().default(0),
+  platform_fee_amount: z.string().default('0'),
   chain_id: z.number().int().default(WHITECHAIN_CHAIN_ID),
   customer_wallet: z.string().optional(),
   payment_tx: z.string().optional(),
@@ -37,6 +44,7 @@ export const CheckoutSessionSchema = z.object({
 export type CheckoutSession = z.infer<typeof CheckoutSessionSchema>;
 
 export const CreatePlanInput = z.object({
+  provider_id: z.string().min(1).default('legacy'),
   feature: z.string().min(1),
   name: z.string().min(1),
   amount: z.string().min(1),
@@ -54,6 +62,11 @@ export const CreateCheckoutInput = z.object({
   expires_in: z.number().int().positive().max(86_400).default(3600),
 });
 
+/** 0.1% owed by the provider; preserve fractional micro-USDT until invoicing. */
+export function platformFee(amount: string): string {
+  return formatUnits(usdtUnits(amount), 9);
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -62,12 +75,23 @@ function nowIso(): string {
 export class MemoryBillingStore {
   private plans = new Map<string, Plan>();
   private sessions = new Map<string, CheckoutSession>();
+  private payments = new Map<string, string>();
+
+  claimPayment(hash: string, checkoutId: string): void {
+    const key = hash.toLowerCase();
+    const prior = this.payments.get(key);
+    if (prior && prior !== checkoutId) throw new Error('PAYMENT_REUSED: this transaction belongs to another checkout');
+    this.payments.set(key, checkoutId);
+  }
 
   createPlan(raw: z.input<typeof CreatePlanInput>): Plan {
     const input = CreatePlanInput.parse(raw);
     assertKnownFeature(input.feature);
+    usdtUnits(input.amount);
+    if (!/^\d+(\.\d+)?$/.test(input.credits) || Number(input.credits) <= 0) throw new Error('Plan credits must be positive');
     const plan: Plan = {
       id: `plan_${randomUUID().replace(/-/g, '').slice(0, 16)}`,
+      provider_id: input.provider_id,
       feature: input.feature,
       name: input.name,
       amount: input.amount,
@@ -101,7 +125,9 @@ export class MemoryBillingStore {
       holder: input.holder,
       status: 'PENDING',
       amount: plan.amount,
-      chain_id: WHITECHAIN_CHAIN_ID,
+      chain_id: whitechainConfig().chainId,
+      platform_fee_bps: 10,
+      platform_fee_amount: platformFee(plan.amount),
       success_url: input.success_url,
       expires_at: new Date(Date.now() + input.expires_in * 1000).toISOString(),
       created_at: nowIso(),
@@ -156,10 +182,72 @@ export class MemoryBillingStore {
   }
 }
 
-let singleton: MemoryBillingStore | undefined;
+type BillingStore = { [K in keyof MemoryBillingStore]: MemoryBillingStore[K] extends (...args: infer A) => infer R ? (...args: A) => R | Promise<R> : never };
 
-export function getBillingStore(): MemoryBillingStore {
-  if (!singleton) singleton = new MemoryBillingStore();
+/** Live plans and checkout sessions survive daemon restarts. */
+export class PostgresBillingStore implements BillingStore {
+  constructor(private readonly db: Database) {}
+  async createPlan(raw: z.input<typeof CreatePlanInput>): Promise<Plan> {
+    const plan = new MemoryBillingStore().createPlan(raw);
+    await this.db.insert(billingPlans).values({
+      id: plan.id, providerId: plan.provider_id, feature: plan.feature, name: plan.name, amount: plan.amount, interval: plan.interval,
+      credits: plan.credits, ttlSeconds: plan.ttl_seconds, merchantWallet: plan.merchant_wallet,
+      active: String(plan.active), createdAt: new Date(plan.created_at),
+    });
+    return plan;
+  }
+  async getPlan(id: string): Promise<Plan | null> {
+    const [p] = await this.db.select().from(billingPlans).where(eq(billingPlans.id, id));
+    return p ? PlanSchema.parse({ ...p, provider_id: p.providerId, active: p.active === 'true', ttl_seconds: p.ttlSeconds, merchant_wallet: p.merchantWallet, created_at: p.createdAt.toISOString() }) : null;
+  }
+  async listPlans(activeOnly = false): Promise<Plan[]> {
+    const rows = await this.db.select().from(billingPlans).orderBy(desc(billingPlans.createdAt));
+    return rows.filter((p) => !activeOnly || p.active === 'true').map((p) => PlanSchema.parse({ ...p, provider_id: p.providerId, active: p.active === 'true', ttl_seconds: p.ttlSeconds, merchant_wallet: p.merchantWallet, created_at: p.createdAt.toISOString() }));
+  }
+  async createCheckout(raw: z.input<typeof CreateCheckoutInput>): Promise<CheckoutSession> {
+    const input = CreateCheckoutInput.parse(raw);
+    const plan = await this.getPlan(input.plan_id);
+    if (!plan?.active) throw new Error('PLAN_NOT_FOUND');
+    const session: CheckoutSession = { id: `cs_${randomUUID().replace(/-/g, '')}`, plan_id: plan.id, holder: input.holder, status: 'PENDING', amount: plan.amount, chain_id: whitechainConfig().chainId, platform_fee_bps: 10, platform_fee_amount: platformFee(plan.amount), success_url: input.success_url, expires_at: new Date(Date.now() + input.expires_in * 1000).toISOString(), created_at: nowIso(), plan };
+    await this.db.insert(checkoutSessions).values({ id: session.id, planId: plan.id, holder: session.holder, status: session.status, amount: session.amount, chainId: session.chain_id, platformFeeBps: session.platform_fee_bps, platformFeeAmount: session.platform_fee_amount, successUrl: session.success_url, expiresAt: new Date(session.expires_at) });
+    return session;
+  }
+  async getCheckout(id: string): Promise<CheckoutSession | null> {
+    const [s] = await this.db.select().from(checkoutSessions).where(eq(checkoutSessions.id, id));
+    if (!s) return null;
+    const status = s.status === 'PENDING' && s.expiresAt.getTime() <= Date.now() ? 'EXPIRED' : s.status;
+    return CheckoutSessionSchema.parse({ ...s, status, plan_id: s.planId, chain_id: s.chainId, platform_fee_bps: s.platformFeeBps, platform_fee_amount: s.platformFeeAmount, customer_wallet: s.customerWallet || undefined, payment_tx: s.paymentTx || undefined, grant_id: s.grantId || undefined, success_url: s.successUrl || undefined, expires_at: s.expiresAt.toISOString(), created_at: s.createdAt.toISOString(), plan: await this.getPlan(s.planId) });
+  }
+  async listCheckouts(opts?: { holder?: string; plan_id?: string }): Promise<CheckoutSession[]> {
+    const rows = await this.db.select().from(checkoutSessions).orderBy(desc(checkoutSessions.createdAt));
+    const filtered = rows.filter((s) => (!opts?.holder || s.holder === opts.holder) && (!opts?.plan_id || s.planId === opts.plan_id));
+    return (await Promise.all(filtered.map((s) => this.getCheckout(s.id)))).filter((s): s is CheckoutSession => s !== null);
+  }
+  async claimPayment(hash: string, id: string): Promise<void> {
+    const rows = await this.db.select().from(checkoutSessions).where(eq(checkoutSessions.paymentTx, hash.toLowerCase()));
+    if (rows.length) throw new Error('PAYMENT_REUSED');
+    await this.db.update(checkoutSessions).set({ paymentTx: hash.toLowerCase() }).where(eq(checkoutSessions.id, id));
+  }
+  async markPaid(id: string, input: { payment_tx: string; customer_wallet: string; grant_id: string }): Promise<CheckoutSession> {
+    const session = await this.getCheckout(id);
+    if (!session) throw new Error('CHECKOUT_NOT_FOUND');
+    if (session.status === 'PAID') return session;
+    if (session.status !== 'PENDING') throw new Error(`CHECKOUT_${session.status}`);
+    await this.db.update(checkoutSessions).set({ status: 'PAID', paymentTx: input.payment_tx.toLowerCase(), customerWallet: input.customer_wallet.toLowerCase(), grantId: input.grant_id }).where(eq(checkoutSessions.id, id));
+    return (await this.getCheckout(id))!;
+  }
+  async markFailed(id: string): Promise<CheckoutSession> {
+    await this.db.update(checkoutSessions).set({ status: 'FAILED' }).where(eq(checkoutSessions.id, id));
+    const session = await this.getCheckout(id);
+    if (!session) throw new Error('CHECKOUT_NOT_FOUND');
+    return session;
+  }
+}
+
+let singleton: BillingStore | undefined;
+
+export function getBillingStore(db?: Database): BillingStore {
+  if (!singleton) singleton = db ? new PostgresBillingStore(db) : new MemoryBillingStore();
   return singleton;
 }
 

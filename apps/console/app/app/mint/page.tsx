@@ -4,17 +4,17 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { IDKitRequestWidget, proofOfHuman, type RpContext } from '@worldcoin/idkit';
+import { payUsdtOnWhitechain } from '@bagseven/sdk/wallet';
 import { StatusBadges } from '../../../components/app/StatusBadges';
 import { entitlementsApi } from '../../../lib/entitlements-client';
 import { FEATURE_OPTIONS, TTL_PRESETS, featureLabel, shortId, useOperator } from '../../../lib/use-operator';
 
-const APP_ID = (process.env.NEXT_PUBLIC_WORLD_APP_ID || '') as `app_${string}`;
-const RP_ID = process.env.NEXT_PUBLIC_WORLD_RP_ID || '';
-const ACTION = process.env.NEXT_PUBLIC_WORLD_IDKIT_ACTION || 'bagseven-mint';
-const ENVIRONMENT = (process.env.NEXT_PUBLIC_WORLD_IDKIT_ENVIRONMENT || 'production') as 'production' | 'staging';
-
 export default function MintPage() {
   const op = useOperator();
+  const APP_ID = (op.status?.tracks.world.app_id || '') as `app_${string}`;
+  const RP_ID = op.status?.tracks.world.rp_id || '';
+  const ACTION = op.status?.tracks.world.action || 'bagseven-mint';
+  const ENVIRONMENT = op.status?.tracks.world.environment || 'production';
   const router = useRouter();
   const [feature, setFeature] = useState('ocr');
   const [credits, setCredits] = useState('5');
@@ -24,10 +24,12 @@ export default function MintPage() {
   const [busy, setBusy] = useState(false);
   const [idkitOpen, setIdkitOpen] = useState(false);
   const [rpContext, setRpContext] = useState<RpContext | null>(null);
+  const [pendingPayment, setPendingPayment] = useState<{ context: string; payment_tx: string; customer_wallet: string; payment_signature?: string } | null>(null);
 
   const idkitReady = Boolean(APP_ID && RP_ID && op.status?.tracks.world.idkit);
   const agentPassReady = Boolean(op.status?.tracks.world.agent_pass);
   const mockAllowed = op.status?.tracks.world.mock_proofs === true;
+  const verifiedSession = Boolean(op.worldHumanId && !op.mock && !op.worldHumanId.startsWith('email:'));
 
   /** End-to-end create: Whitechain settle + Arkiv grant for the signed-in operator. */
   const createEntitlement = async (opts?: { idkit_response?: unknown; id_token?: string; world_proof_id?: string }) => {
@@ -38,12 +40,28 @@ export default function MintPage() {
     setBusy(true);
     setMsg('Creating living entitlement (Whitechain settle → Arkiv write)…');
     try {
+      let payment: { payment_tx?: string; customer_wallet?: string; payment_signature?: string } = {};
+      const context = `entitlement:${op.holder}:${feature}:${credits}`;
+      const rail = op.status?.tracks.whitechain;
+      if (!rail) throw new Error('Payment configuration is still loading');
+      if (!rail.demo_settle) {
+        if (!rail.pay_to || !rail.usdt) throw new Error('The operator must configure the Whitechain payment recipient before purchases are available');
+        if (pendingPayment && pendingPayment.context !== context) throw new Error('Finish the existing payment before changing the feature or credit amount');
+        if (pendingPayment) payment = pendingPayment;
+        else {
+          setMsg(`Confirm ${credits} USDT.e in your Whitechain wallet…`);
+          const paid = await payUsdtOnWhitechain({ merchantWallet: rail.pay_to, amount: credits, usdt: rail.usdt, chainId: rail.chain_id, context });
+          payment = paid;
+          setPendingPayment({ context, ...paid });
+        }
+      }
       const r = await entitlementsApi.mint({
         feature,
         holder: op.holder,
         remaining: credits,
         ttl_seconds: ttl,
         settlement_network: 'whitechain',
+        ...payment,
         renewal_enabled: true,
         ...(opts?.idkit_response !== undefined ? { idkit_response: opts.idkit_response } : {}),
         ...(opts?.id_token ? { id_token: opts.id_token } : {}),
@@ -53,6 +71,7 @@ export default function MintPage() {
           : {}),
       });
       setLastLabel(`${featureLabel(r.grant.feature)} · ${r.grant.remaining} credits · ${shortId(r.grant.id)}`);
+      setPendingPayment(null);
       setMsg(
         `Done. Entitlement for feature “${featureLabel(feature)}” is live (${r.grant.remaining} credits).` +
           (r.settlement?.explorer_url ? `\nWhitechain: ${r.settlement.explorer_url}` : '') +
@@ -87,7 +106,7 @@ export default function MintPage() {
     } finally {
       setBusy(false);
     }
-  }, [op.holder]);
+  }, [op.holder, RP_ID, ACTION]);
 
   const beginAgentPass = useCallback(async () => {
     if (!op.holder) return;
@@ -218,15 +237,16 @@ export default function MintPage() {
         <button
           type="button"
           disabled={busy || !op.holder || op.loading}
-          onClick={() => void (mockAllowed || !idkitReady ? createEntitlement() : beginIdKit())}
+          onClick={() => void (verifiedSession || mockAllowed ? createEntitlement() : beginIdKit())}
           className="w-full rounded-full bg-[var(--blue)] px-4 py-3 text-sm font-semibold text-white disabled:opacity-50"
         >
           {busy
             ? 'Creating…'
-            : mockAllowed || !idkitReady
+            : verifiedSession || mockAllowed
               ? `Create entitlement for ${featureLabel(feature)}`
               : 'Verify with World ID & create entitlement'}
         </button>
+        {!op.status?.tracks.whitechain.demo_settle && <p className="text-sm text-[var(--muted)]">Your wallet pays {credits} USDT.e on Whitechain Sepolia before the entitlement is created.</p>}
 
         <div className="grid gap-2 sm:grid-cols-2">
           <button

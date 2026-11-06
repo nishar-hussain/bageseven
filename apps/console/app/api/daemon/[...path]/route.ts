@@ -44,9 +44,22 @@ async function proxy(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
 
   const headers = new Headers();
   headers.set('x-bagseven-actor', sessionHolder(session));
+  if (!session.mock && session.world_human_id && !session.world_human_id.startsWith('email:')) {
+    headers.set('x-bagseven-world-human', session.world_human_id);
+  }
   const init: RequestInit = { method: req.method, headers };
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     init.body = await req.text();
+    if (path[0] === 'grants' && (path[1] === 'mint' || path[1] === 'buy-credits')) {
+      try {
+        const body = JSON.parse(init.body);
+        // Console purchases always belong to the signed-in operator and use
+        // the real payment rail; clients cannot request an unpaid local mint.
+        init.body = JSON.stringify({ ...body, holder: sessionHolder(session), settlement_network: 'whitechain' });
+      } catch {
+        return NextResponse.json({ error: { message: 'Invalid purchase request' } }, { status: 400 });
+      }
+    }
     headers.set('content-type', req.headers.get('content-type') ?? 'application/json');
   }
 

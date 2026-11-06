@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from 'react';
 import type { Entitlement } from './types.js';
-import { connectWhitechainWallet, payUsdtOnWhitechain } from './wallet.js';
+import { authorizeWhitechainPayment, connectWhitechainWallet, payUsdtOnWhitechain } from './wallet.js';
 
 type BagsevenContextValue = {
   publishableKey: string;
@@ -162,6 +162,8 @@ type PublicCheckout = {
   status: string;
   amount: string;
   holder: string;
+  chain_id: number;
+  payment: { chain_id: number; usdt: string };
   plan: {
     id: string;
     name: string;
@@ -270,7 +272,7 @@ export function BagsevenEmbed({
                 credits · {checkout.status}
               </p>
               <p style={{ fontSize: 12, color: '#666', marginBottom: 12 }}>
-                Pay with WhiteWallet when available; MetaMask / injected EVM works on Whitechain Testnet (1874) today.
+                Pay with WhiteWallet or an injected EVM wallet. Your wallet will switch to the checkout’s Whitechain network.
               </p>
               {checkout.status === 'PAID' ? (
                 <p style={{ color: '#0a7', fontSize: 14 }}>Paid. Entitlement is live for {checkout.holder}.</p>
@@ -284,7 +286,10 @@ export function BagsevenEmbed({
                         if (!checkout.plan) return;
                         const paid = await payUsdtOnWhitechain({
                           merchantWallet: checkout.plan.merchant_wallet,
-                          amount: checkout.plan.amount,
+                          amount: checkout.amount,
+                          chainId: checkout.chain_id,
+                          usdt: checkout.payment.usdt,
+                          context: `checkout:${checkout.id}`,
                         });
                         await fetch(`${base}/public/checkout/${encodeURIComponent(checkout.id)}/confirm`, {
                           method: 'POST',
@@ -306,7 +311,7 @@ export function BagsevenEmbed({
                     disabled={busy}
                     onClick={() =>
                       void act(async () => {
-                        const { address } = await connectWhitechainWallet();
+                        const { address } = await connectWhitechainWallet(checkout.chain_id);
                         setMsg(`Connected ${address}`);
                       })
                     }
@@ -318,7 +323,7 @@ export function BagsevenEmbed({
                     <input
                       value={demoTx}
                       onChange={(e) => setDemoTx(e.target.value)}
-                      placeholder="0x… payment_tx (demo)"
+                      placeholder="Existing transaction hash (0x…)"
                       style={{ flex: 1, border: '1px solid #ddd', borderRadius: 8, padding: '8px', fontSize: 12 }}
                     />
                     <button
@@ -326,18 +331,16 @@ export function BagsevenEmbed({
                       disabled={busy || !demoTx || !checkout.plan}
                       onClick={() =>
                         void act(async () => {
-                          const { address } = await connectWhitechainWallet().catch(() => ({
-                            address: '0x2222222222222222222222222222222222222222',
-                          }));
+                          const authorization = await authorizeWhitechainPayment({ payment_tx: demoTx.trim(), context: `checkout:${checkout.id}`, chainId: checkout.chain_id });
                           await fetch(`${base}/public/checkout/${encodeURIComponent(checkout.id)}/confirm`, {
                             method: 'POST',
                             headers: { 'content-type': 'application/json' },
-                            body: JSON.stringify({ payment_tx: demoTx.trim(), customer_wallet: address }),
+                            body: JSON.stringify({ payment_tx: demoTx.trim(), ...authorization }),
                           }).then(async (r) => {
                             const j = await r.json().catch(() => ({}));
                             if (!r.ok) throw new Error(j.error?.message ?? `confirm ${r.status}`);
                           });
-                          setMsg('Demo payment confirmed');
+                          setMsg('Payment verified — entitlement is live');
                         })
                       }
                       style={{ borderRadius: 999, border: '1px solid #ddd', padding: '8px 12px', fontSize: 12 }}

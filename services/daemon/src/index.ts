@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
-import { spendIntentDomain, spendIntentTypes, canonicalSpawn, chainConfigForId, MandateClient } from '@bagseven/onchain';
+import { spendIntentDomain, spendIntentTypes, canonicalSpawn, chainConfigForId, MandateClient, workerKey } from '@bagseven/onchain';
 import { createDb } from '@bagseven/db';
 import { Redis } from 'ioredis';
 import { ApiError, createService, type ServiceDeps } from '@bagseven/server';
@@ -13,7 +13,7 @@ import { gte } from '@bagseven/money';
 import { decodeX402PaymentRequired, selectX402Requirements, validateX402AgainstPolicy, type X402Requirements } from './x402.js';
 import { x402PayerFromEnv, type X402Payer } from './x402-payer.js';
 import { registerGrantRoutes } from './grants.js';
-import { WHITECHAIN_CHAIN_ID } from '@bagseven/onchain';
+import { WHITECHAIN_CHAIN_ID, whitechainConfig } from '@bagseven/onchain';
 import { settleWhitechainUsdt } from './whitechain-settle.js';
 import { isPublicEntitlementPath, registerPublicEntitlementRoutes } from './public-entitlements.js';
 import { registerBillingRoutes } from './billing.js';
@@ -189,7 +189,7 @@ async function executeSpend(config: NodeJS.ProcessEnv, resolved: ResolvedWorker,
   }
 }
 
-function buildRoutes(app: FastifyInstance, { config, redis }: ServiceDeps): void {
+function buildRoutes(app: FastifyInstance, { config, redis, db }: ServiceDeps): void {
   app.addHook('preHandler', async (req, reply) => {
     if (isPublicEntitlementPath(req.url)) return;
     const token = config.DAEMON_AUTH_TOKEN;
@@ -380,10 +380,16 @@ function buildRoutes(app: FastifyInstance, { config, redis }: ServiceDeps): void
 
   // Public entitlement layer (Arkiv physics + World mint gate). Lives beside mandate spend.
   const grantDeps = {
+    claimPayment: async (hash: string) => {
+      const chain = whitechainConfig(config).chainId;
+      return await redis.set(`whitechain:payment:${chain}:${hash.toLowerCase()}`, 'entitlement', 'NX') === 'OK';
+    },
     resolveMandateCapacity: async (workerId: string, amount = '1') => {
       try {
         const resolved = await resolveWorker(config, workerId);
-        const ok = resolved.agent.status === 'active' && resolved.mandate.status === 'active'
+        const client = new MandateClient(config.DAEMON_EXECUTOR_KEY as `0x${string}`, { rpcUrl: config.RPC_URL || whitechainConfig(config).rpcUrl, chainId: Number(config.CHAIN_ID || WHITECHAIN_CHAIN_ID) });
+        const code = await client.checkWorker(resolved.mandate.contract_address as `0x${string}`, parseUnits(amount, 6), '0x0000000000000000000000000000000000000000', workerKey(resolved.agent.id));
+        const ok = code === 0 && resolved.agent.status === 'active' && resolved.mandate.status === 'active'
           && gte(resolved.remaining.remaining_window, amount)
           && gte(resolved.remaining.remaining_lifetime, amount)
           && gte(resolved.remaining.vault_available, amount)
@@ -393,7 +399,7 @@ function buildRoutes(app: FastifyInstance, { config, redis }: ServiceDeps): void
           ok,
           reason: ok
             ? undefined
-            : `window=${resolved.remaining.remaining_window} lifetime=${resolved.remaining.remaining_lifetime} vault=${resolved.remaining.vault_available}`,
+            : `onchain_code=${code} window=${resolved.remaining.remaining_window} lifetime=${resolved.remaining.remaining_lifetime} vault=${resolved.remaining.vault_available}`,
           remaining_window: resolved.remaining.remaining_window,
           remaining_lifetime: resolved.remaining.remaining_lifetime,
           vault_available: resolved.remaining.vault_available,
@@ -409,7 +415,7 @@ function buildRoutes(app: FastifyInstance, { config, redis }: ServiceDeps): void
   };
   registerGrantRoutes(app, grantDeps);
   registerPublicEntitlementRoutes(app, grantDeps);
-  registerBillingRoutes(app);
+  registerBillingRoutes(app, { redis, db });
 }
 
 function validateEnvContract(): void {

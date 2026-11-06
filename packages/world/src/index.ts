@@ -1,5 +1,7 @@
 import { createHash, createPublicKey, createVerify } from 'node:crypto';
 import { z } from 'zod';
+import { worldMocksAllowed } from './config.js';
+export { worldMocksAllowed, worldIdKitConfig } from './config.js';
 
 /** Explicit fail outcomes for the World deny/expire/cancel demo path. */
 export const WorldFailOutcomeSchema = z.enum(['denied', 'expired', 'cancelled', 'invalid']);
@@ -70,9 +72,9 @@ function b64urlToBuffer(value: string): Buffer {
 
 async function fetchJwks(): Promise<JsonWebKey[]> {
   if (jwksCache && Date.now() - jwksCache.fetchedAt < 60 * 60 * 1000) return jwksCache.keys;
-  const discovery = (await fetch(DISCOVERY).then((r) => r.json())) as { jwks_uri?: string };
+  const discovery = (await fetch(DISCOVERY, { signal: AbortSignal.timeout(15_000) }).then((r) => r.json())) as { jwks_uri?: string };
   if (!discovery.jwks_uri) throw new Error('World discovery missing jwks_uri');
-  const jwks = (await fetch(discovery.jwks_uri).then((r) => r.json())) as { keys?: JsonWebKey[] };
+  const jwks = (await fetch(discovery.jwks_uri, { signal: AbortSignal.timeout(15_000) }).then((r) => r.json())) as { keys?: JsonWebKey[] };
   const keys = jwks.keys ?? [];
   jwksCache = { keys, fetchedAt: Date.now() };
   return keys;
@@ -198,7 +200,7 @@ export async function exchangeWorldAuthorizationCode(input: {
     body,
   });
   const raw = await response.text();
-  let json: Record<string, unknown> = {};
+  let json: Record<string, unknown>;
   try {
     json = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
   } catch {
@@ -232,7 +234,7 @@ export function pkceChallengeFromVerifier(verifier: string): string {
  * Backend World Agent Pass verification.
  * - WORLD_AGENT_PASS_ENABLED=false → always WORLD_DENIED
  * - Live when WORLD_CLIENT_ID set: JWKS RS256 verify of id_token
- * - Else mock proofs when WORLD_MOCK_PROOFS!=false
+ * - Else mock proofs only when WORLD_MOCK_PROOFS=true outside production
  */
 export async function verifyWorldAgentPass(
   raw: VerifyWorldInput,
@@ -244,7 +246,7 @@ export async function verifyWorldAgentPass(
   }
 
   const clientId = env.WORLD_CLIENT_ID?.trim();
-  const mockAllowed = (env.WORLD_MOCK_PROOFS ?? 'true').toLowerCase() !== 'false';
+  const mockAllowed = worldMocksAllowed(env);
   // Live when CLIENT_ID is set and an id_token is presented; otherwise mock if allowed.
   const mode: 'live' | 'mock' = clientId && input.id_token ? 'live' : clientId && !mockAllowed ? 'live' : 'mock';
 
@@ -261,32 +263,15 @@ export async function verifyWorldAgentPass(
   if (proof.startsWith('world:cancel:')) return fail('cancelled', 'user cancelled Agent Pass', mode);
   if (proof.startsWith('world:invalid:')) return fail('invalid', 'malformed or forged proof', mode);
 
-  if (clientId && !input.id_token && !mockAllowed) {
+  if (!input.id_token && !mockAllowed) {
     return fail('invalid', 'live mode requires id_token from Agent Pass callback', 'live');
   }
 
+  if (input.id_token && !clientId) return fail('invalid', 'WORLD_CLIENT_ID is not configured for Agent Pass', 'live');
+
   if (mode === 'live' && input.id_token) {
     try {
-      const skipJwks = (env.WORLD_SKIP_JWKS ?? '').toLowerCase() === 'true';
-      if (skipJwks && (env.NODE_ENV ?? 'development') === 'production') {
-        return fail('invalid', 'WORLD_SKIP_JWKS is forbidden in production', 'live');
-      }
-      let payload: Record<string, unknown>;
-      if (skipJwks) {
-        const decoded = decodeJwtPart(input.id_token.split('.')[1] ?? '');
-        if (!decoded) return fail('invalid', 'id_token is not a JWT', 'live');
-        payload = decoded;
-        if (payload.iss !== ISSUER && payload.iss !== `${ISSUER}/`) {
-          return fail('invalid', `unexpected issuer ${String(payload.iss)}`, 'live');
-        }
-        const aud = payload.aud;
-        const audOk = aud === clientId || (Array.isArray(aud) && aud.includes(clientId!));
-        if (!audOk) return fail('invalid', 'id_token audience mismatch', 'live');
-        const exp = typeof payload.exp === 'number' ? payload.exp : 0;
-        if (exp * 1000 <= Date.now()) return fail('expired', 'id_token expired', 'live');
-      } else {
-        payload = await verifyRs256Jwt(input.id_token, clientId!);
-      }
+      const payload = await verifyRs256Jwt(input.id_token, clientId!);
       const sub = typeof payload.sub === 'string' ? payload.sub : '';
       if (!sub) return fail('invalid', 'id_token missing sub', 'live');
       if (input.nonce) {

@@ -32,6 +32,8 @@ export type CheckoutSession = {
   holder: string;
   status: string;
   amount: string;
+  platform_fee_bps: number;
+  platform_fee_amount: string;
   payment_tx?: string;
   grant_id?: string;
   customer_wallet?: string;

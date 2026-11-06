@@ -113,7 +113,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                   ? 'World Agent Pass'
                   : status.tracks.world.mode === 'live' || status.tracks.world.mode === 'oidc'
                     ? 'World live'
-                    : 'World mock',
+                    : status.tracks.world.mode === 'mock' ? 'World mock' : 'World not configured',
             status.tracks.arkiv.live ? 'Arkiv live' : 'Memory',
           ];
           setNetworkLabel(parts.join(' · '));

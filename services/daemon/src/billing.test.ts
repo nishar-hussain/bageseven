@@ -21,6 +21,34 @@ afterEach(() => {
 });
 
 describe('billing plans + checkout', () => {
+  it('isolates provider plans and checkouts and rejects a forged owner on creation', async () => {
+    const app = Fastify();
+    app.setErrorHandler((error, _req, reply) => {
+      const result = errorResponse(error);
+      return reply.code(result.status).send(result.body);
+    });
+    registerBillingRoutes(app);
+    const alice = { authorization: 'Bearer sk_test_unit', 'x-bagseven-provider': 'world:alice' };
+    const bob = { authorization: 'Bearer sk_test_unit', 'x-bagseven-provider': 'world:bob' };
+    try {
+      const created = await app.inject({ method: 'POST', url: '/v1/plans', headers: alice, payload: {
+        name: 'Alice plan', feature: 'ocr', amount: '100', merchant_wallet: '0x3333333333333333333333333333333333333333', provider_id: 'world:bob',
+      } });
+      expect(created.statusCode).toBe(200);
+      const plan = created.json().plan;
+      expect(plan.provider_id).toBe('world:alice');
+      expect((await app.inject({ url: '/v1/plans', headers: bob })).json().plans).toHaveLength(0);
+      expect((await app.inject({ url: `/v1/plans/${plan.id}`, headers: bob })).statusCode).toBe(404);
+      expect((await app.inject({ method: 'POST', url: '/v1/checkout-sessions', headers: bob, payload: { plan_id: plan.id, holder: 'buyer' } })).statusCode).toBe(404);
+      const checkout = await app.inject({ method: 'POST', url: '/v1/checkout-sessions', headers: alice, payload: { plan_id: plan.id, holder: 'buyer' } });
+      expect(checkout.statusCode).toBe(200);
+      const id = checkout.json().session.id;
+      expect((await app.inject({ url: `/v1/checkout-sessions/${id}`, headers: bob })).statusCode).toBe(404);
+      expect((await app.inject({ url: '/v1/checkout-sessions', headers: bob })).json().sessions).toHaveLength(0);
+      expect((await app.inject({ url: '/v1/checkout-sessions', headers: alice })).json().sessions).toHaveLength(1);
+    } finally { await app.close(); }
+  });
+
   it('creates a plan, opens a session, and confirms into a living grant', async () => {
     const app = Fastify();
     app.setErrorHandler((error, _req, reply) => {

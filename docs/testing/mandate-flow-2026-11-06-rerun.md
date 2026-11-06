@@ -23,3 +23,5 @@ A confirmed local payment was `0xa80f234fb7483e55b20eaaf851ddf0364fbcc103fbf5a60
 [All 22 results are saved as JSON](mandate-flow-2026-11-06-rerun.json). The [original report](mandate-flow-2026-11-06.md) retains the pre-fix findings.
 
 The normal development stack was restored after the tests. Its runtime Redis URL was set to `redis://localhost:56379`, matching the existing container; `.env` still specifies port 6379 and was left unchanged. Temporary test files and the isolated SQL database were removed. Local test contracts and receipts remain on Anvil.
+
+Follow-up: the World/Whitechain integration now checks on-chain worker state/allocation and rejects signed requests for a different configured chain. The [new integration verification](world-whitechain-integration.md) exercises those cases. This report remains the historical pre-integration matrix.

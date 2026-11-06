@@ -155,6 +155,7 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
   // contract on-chain — the caps become the immutable, enforced guarantee.
   app.post('/v1/mandates', async (req) => {
     const body = createMandateSchema.parse(req.body);
+    if (body.chain_id !== Number(config.CHAIN_ID ?? 1874)) throw new ApiError(400, 'CHAIN_MISMATCH', 'Signed chain_id must match the configured Whitechain network');
     validateMoney(body.budget_per_window);
     validateMoney(body.lifetime_cap);
     validateMoney(body.per_purchase_cap);
@@ -342,6 +343,7 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
   app.post('/v1/mandates/:id/spawn-agent', async (req) => {
     const { id } = req.params as { id: string };
     const body = spawnSchema.parse(req.body);
+    if (body.chain_id !== Number(config.CHAIN_ID ?? 1874)) throw new ApiError(400, 'CHAIN_MISMATCH', 'Signed chain_id must match the configured Whitechain network');
     const mandate = await getMandate(id);
     const parent = await db.query.agents.findFirst({ where: eq(agents.id, body.parent_agent_id) });
     if (!parent || parent.mandateId !== id) throw new ApiError(404, 'NOT_FOUND', 'parent agent not in this mandate');
@@ -398,6 +400,7 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
   // mode the daemon submits the transaction, then settles this reservation.
   app.post('/v1/spend-intents', async (req) => {
     const body = spendIntentSchema.parse(req.body);
+    if (body.chain_id !== Number(config.CHAIN_ID ?? 1874)) throw new ApiError(400, 'CHAIN_MISMATCH', 'Signed chain_id must match the configured Whitechain network');
     const now = Math.floor(Date.now() / 1000);
     if (Math.abs(now - body.timestamp) > Number(config.SPEND_INTENT_MAX_AGE_SECONDS ?? 300)) {
       throw new ApiError(400, 'SPEND_INTENT_EXPIRED', 'spend intent timestamp is outside the allowed window');
@@ -554,6 +557,7 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
   app.post('/v1/vaults/:mandateId/withdraw', async (req) => {
     const { mandateId } = req.params as { mandateId: string };
     const body = withdrawSchema.parse(req.body);
+    if (body.chain_id !== Number(config.CHAIN_ID ?? 1874)) throw new ApiError(400, 'CHAIN_MISMATCH', 'Signed chain_id must match the configured Whitechain network');
     validateMoney(body.amount);
     const mandate = await getMandate(mandateId);
     if (!mandate.contractAddress) throw new ApiError(503, 'NO_CONTRACT', 'no contract');

@@ -257,3 +257,36 @@ describe('paid work dual gate', () => {
     } finally { await app.close(); }
   });
 });
+
+describe('World IDKit challenge lifecycle', () => {
+  async function idkitFixture() {
+    vi.stubEnv('WORLD_APP_ID', 'app_test'); vi.stubEnv('WORLD_RP_ID', 'rp_test');
+    vi.stubEnv('WORLD_RP_SIGNING_KEY', `0x${'01'.repeat(32)}`); vi.stubEnv('WORLD_SIGNER_ADDRESS', '');
+    vi.stubEnv('WORLD_IDKIT_ACTION', 'bagseven-mint');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ success: true, action: 'bagseven-mint', environment: 'production' }))));
+    return fixture();
+  }
+  function proof(nonce: string) { return { protocol_version: '4.0', nonce, action: 'bagseven-mint', responses: [{ identifier: 'proof_of_human', nullifier: '0x123456', proof: 'verified-by-portal-in-this-unit-test' }] }; }
+  it('rejects an unissued nonce before remote verification', async () => {
+    const { app } = await idkitFixture();
+    try {
+      const res = await app.inject({ method: 'POST', url: '/internal/world/verify-idkit', payload: { idkit_response: proof('unissued') } });
+      expect(res.statusCode).toBe(403); expect(fetch).not.toHaveBeenCalled();
+    } finally { await app.close(); vi.unstubAllGlobals(); }
+  });
+  it('allows returning humans with fresh challenges, rejects replay, and preserves mint eligibility', async () => {
+    const { app } = await idkitFixture();
+    try {
+      for (let login = 0; login < 2; login++) {
+        const signed = await app.inject({ method: 'POST', url: '/internal/world/rp-signature', payload: { purpose: 'login' } });
+        expect(signed.statusCode).toBe(200);
+        const payload = { idkit_response: proof(signed.json().nonce) };
+        expect((await app.inject({ method: 'POST', url: '/internal/world/verify-idkit', payload })).statusCode).toBe(200);
+        expect((await app.inject({ method: 'POST', url: '/internal/world/verify-idkit', payload })).statusCode).toBe(403);
+      }
+      const signed = await app.inject({ method: 'POST', url: '/internal/world/rp-signature', payload: { purpose: 'mint' } });
+      const minted = await app.inject({ method: 'POST', url: '/internal/grants/mint', payload: { feature: 'ocr', holder: 'world:human', remaining: '3', ttl_seconds: 60, settlement_network: 'local', idkit_response: proof(signed.json().nonce) } });
+      expect(minted.statusCode).toBe(200);
+    } finally { await app.close(); vi.unstubAllGlobals(); }
+  });
+});

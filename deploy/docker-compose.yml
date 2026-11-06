@@ -19,6 +19,9 @@ services:
 
   redis:
     image: valkey/valkey:8
+    command: ["valkey-server", "--appendonly", "yes"]
+    volumes:
+      - valkey-data:/data
     ports:
       - "${REDIS_PORT:-56379}:6379"
     healthcheck:
@@ -62,5 +65,6 @@ services:
       retries: 10
 
 volumes:
+  valkey-data:
   pgdata:
   anvil-data:

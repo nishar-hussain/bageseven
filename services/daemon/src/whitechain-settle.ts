@@ -1,124 +1,53 @@
 import { randomBytes } from 'node:crypto';
-import { createWalletClient, http, parseUnits, type Hex } from 'viem';
+import { createPublicClient, createWalletClient, http, isAddress, type Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { WHITECHAIN_EXPLORER, WHITECHAIN_RPC_URL, whitechainSepolia } from '@bagseven/onchain';
-
-const erc20TransferAbi = [
-  {
-    type: 'function' as const,
-    name: 'transfer',
-    inputs: [
-      { name: 'to', type: 'address' },
-      { name: 'amount', type: 'uint256' },
-    ],
-    outputs: [{ type: 'bool' }],
-    stateMutability: 'nonpayable' as const,
-  },
-] as const;
+import { whitechainConfig } from '@bagseven/onchain';
+import { usdtAbi, usdtUnits, verifyPaymentAuthorization, verifyWhitechainPayment } from './whitechain-payment.js';
 
 export type WhitechainSettleInput = {
-  amount: string;
-  feature: string;
-  holder: string;
-  grant_id?: string;
-  /** Existing Whitechain explorer tx if the client already paid. */
-  payment_tx?: string;
-  reason?: string;
+  amount: string; feature: string; holder: string; grant_id?: string; payment_tx?: string; reason?: string;
+  customer_wallet?: string; payment_signature?: string;
 };
-
 export type WhitechainSettleResult = {
-  payment_tx: string;
-  settlement_network: 'whitechain';
-  network: 'testnet' | 'mainnet';
-  explorer_url: string;
-  mode: 'provided' | 'operator' | 'demo';
+  payment_tx: string; settlement_network: 'whitechain'; network: 'testnet' | 'mainnet';
+  explorer_url: string; mode: 'provided' | 'operator' | 'demo';
 };
-
 export function whitechainExplorerUrl(tx: string, network: 'testnet' | 'mainnet' = 'testnet'): string {
-  const base = network === 'mainnet' ? 'https://explorer.whitechain.io' : WHITECHAIN_EXPLORER;
-  return `${base}/tx/${tx}`;
+  return `${network === 'mainnet' ? 'https://explorer.whitechain.io' : 'https://explorer.testnet.whitechain.io'}/tx/${tx}`;
 }
 
-function networkFromEnv(env: NodeJS.ProcessEnv): 'testnet' | 'mainnet' {
-  return env.WHITECHAIN_NETWORK === 'mainnet' ? 'mainnet' : 'testnet';
+/** Explicit development fixture; a failed live payment never falls back to it. */
+export function whitechainDemoAllowed(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.NODE_ENV !== 'production' && env.WHITECHAIN_DEMO_SETTLE === 'true';
 }
 
-function operatorKey(env: NodeJS.ProcessEnv): Hex | null {
-  const raw = (env.WHITECHAIN_PRIVATE_KEY ?? env.DAEMON_OWNER_KEY ?? '').trim();
-  if (!raw) return null;
-  return (raw.startsWith('0x') ? raw : `0x${raw}`) as Hex;
-}
+export async function settleWhitechainUsdt(input: WhitechainSettleInput, env: NodeJS.ProcessEnv = process.env): Promise<WhitechainSettleResult> {
+  usdtUnits(input.amount);
+  const network = env.WHITECHAIN_NETWORK === 'mainnet' ? 'mainnet' : 'testnet';
+  const result = (hash: string, mode: WhitechainSettleResult['mode']): WhitechainSettleResult => ({
+    payment_tx: hash, settlement_network: 'whitechain', network, explorer_url: whitechainExplorerUrl(hash, network), mode,
+  });
+  if (whitechainDemoAllowed(env)) return result(input.payment_tx || `0x${randomBytes(32).toString('hex')}`, 'demo');
 
-/**
- * Stamp a Whitechain payment for mint / buy_credits.
- *
- * Priority:
- * 1. Caller-provided payment_tx (already on explorer)
- * 2. Operator native 1-wei transfer when a key + RPC is set
- * 3. Demo settle id when WHITECHAIN_DEMO_SETTLE != false (non-prod default)
- */
-export async function settleWhitechainUsdt(
-  input: WhitechainSettleInput,
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<WhitechainSettleResult> {
-  const network = networkFromEnv(env);
-
-  if (input.payment_tx?.trim()) {
-    const payment_tx = input.payment_tx.trim();
-    return {
-      payment_tx,
-      settlement_network: 'whitechain',
-      network,
-      explorer_url: whitechainExplorerUrl(payment_tx, network),
-      mode: 'provided',
-    };
+  const payTo = env.WHITECHAIN_PAY_TO?.trim();
+  if (!payTo || !isAddress(payTo)) throw new Error('WHITECHAIN_UNCONFIGURED: configure WHITECHAIN_PAY_TO with the payment recipient');
+  if (input.payment_tx) {
+    await verifyPaymentAuthorization({ wallet: input.customer_wallet, signature: input.payment_signature, context: `entitlement:${input.holder}:${input.feature}:${input.amount}`, hash: input.payment_tx }, env);
+    await verifyWhitechainPayment({ payment_tx: input.payment_tx, amount: input.amount, merchant_wallet: payTo, customer_wallet: input.customer_wallet }, env);
+    return result(input.payment_tx, 'provided');
   }
-
-  const key = operatorKey(env);
-  const rpc = (env.WHITECHAIN_RPC_URL ?? env.RPC_URL ?? WHITECHAIN_RPC_URL).trim();
-  const payTo = (env.WHITECHAIN_PAY_TO ?? '').trim();
-  if (key && rpc && payTo) {
-    const account = privateKeyToAccount(key);
-    const wallet = createWalletClient({
-      account,
-      chain: whitechainSepolia,
-      transport: http(rpc),
-    });
-    const usdt = (env.WHITECHAIN_USDT ?? '').trim();
-    const hash = usdt
-      ? await wallet.writeContract({
-          address: usdt as `0x${string}`,
-          abi: erc20TransferAbi,
-          functionName: 'transfer',
-          args: [payTo as `0x${string}`, parseUnits(input.amount || '1', 6)],
-        })
-      : await wallet.sendTransaction({
-          to: payTo as `0x${string}`,
-          value: 1n,
-        });
-    return {
-      payment_tx: hash,
-      settlement_network: 'whitechain',
-      network,
-      explorer_url: whitechainExplorerUrl(hash, network),
-      mode: 'operator',
-    };
-  }
-
-  const prod = (env.NODE_ENV ?? 'development') === 'production';
-  const demoDefault = prod ? 'false' : 'true';
-  if ((env.WHITECHAIN_DEMO_SETTLE ?? demoDefault).toLowerCase() === 'false') {
-    throw new Error(
-      'WHITECHAIN_UNCONFIGURED: set WHITECHAIN_PRIVATE_KEY + WHITECHAIN_PAY_TO, pass payment_tx, or WHITECHAIN_DEMO_SETTLE=true for non-prod',
-    );
-  }
-
-  const payment_tx = `0x${randomBytes(32).toString('hex')}`;
-  return {
-    payment_tx,
-    settlement_network: 'whitechain',
-    network,
-    explorer_url: whitechainExplorerUrl(payment_tx, network),
-    mode: 'demo',
-  };
+  // An operator settlement must opt into a dedicated key; never borrow the mandate owner key.
+  const rawKey = env.WHITECHAIN_PRIVATE_KEY?.trim();
+  if (!rawKey) throw new Error('WHITECHAIN_UNCONFIGURED: pay through checkout or configure WHITECHAIN_PRIVATE_KEY for operator-funded USDT payments');
+  const config = whitechainConfig(env);
+  if (!isAddress(config.usdt)) throw new Error('WHITECHAIN_USDT is not configured for this network');
+  const account = privateKeyToAccount((rawKey.startsWith('0x') ? rawKey : `0x${rawKey}`) as Hex);
+  const transport = http(config.rpcUrl);
+  const client = createPublicClient({ chain: config.chain, transport });
+  if (await client.getChainId() !== config.chainId) throw new Error('WHITECHAIN_RPC_CHAIN_MISMATCH');
+  const wallet = createWalletClient({ account, chain: config.chain, transport });
+  const hash = await wallet.writeContract({ address: config.usdt, abi: usdtAbi, functionName: 'transfer', args: [payTo, usdtUnits(input.amount)] });
+  await client.waitForTransactionReceipt({ hash, confirmations: config.confirmations, timeout: 90_000 });
+  await verifyWhitechainPayment({ payment_tx: hash, amount: input.amount, merchant_wallet: payTo, customer_wallet: account.address }, env);
+  return result(hash, 'operator');
 }

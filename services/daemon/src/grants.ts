@@ -19,11 +19,15 @@ import {
   verifyWorldAgentPass,
   verifyWorldIdKitProof,
   worldDeniedMessage,
+  worldIdKitConfig,
+  worldMocksAllowed,
 } from '@bagseven/world';
 import { gte } from '@bagseven/money';
 import type { FastifyInstance } from 'fastify';
-import { settleWhitechainUsdt } from './whitechain-settle.js';
+import { settleWhitechainUsdt, whitechainDemoAllowed } from './whitechain-settle.js';
 import { notifyConfigured, notifyOperator } from '@bagseven/notify';
+import { claimSettlement, type PaymentLedger } from './payment-ledger.js';
+import { whitechainConfig } from '@bagseven/onchain';
 
 function actorEmail(req: { headers: { [key: string]: string | string[] | undefined } }): string | undefined {
   const raw = req.headers['x-bagseven-actor'];
@@ -59,6 +63,8 @@ const buyCreditsSchema = z.object({
   remaining: z.string().default('10'),
   ttl_seconds: z.number().int().positive().default(120),
   payment_tx: z.string().optional(),
+  customer_wallet: z.string().optional(),
+  payment_signature: z.string().optional(),
   human_id: z.string().optional(),
   worker_id: z.string().optional(),
   mandate_id: z.string().optional(),
@@ -97,7 +103,7 @@ export type MandateCapacity = {
   mandate_id?: string;
 };
 
-export type GrantRouteDeps = {
+export type GrantRouteDeps = PaymentLedger & {
   /** Dual-gate: mandate money ceiling for a worker. */
   resolveMandateCapacity?: (workerId: string, amount?: string) => Promise<MandateCapacity>;
 };
@@ -116,28 +122,39 @@ function mapGrantError(error: unknown): never {
 /** Public entitlement routes — access clock beside mandate spend. */
 export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps = {}): void {
   const store = getGrantStore(process.env);
-  /** Replay protection for World IDKit nullifiers (action + nullifier). */
-  const usedNullifiers = new Set<string>();
+  const challenges = new Map<string, { action: string; purpose: 'login' | 'mint'; expires: number }>();
+
+  function takeChallenge(response: unknown, purpose: 'login' | 'mint'): string {
+    const nonce = (response as { nonce?: unknown } | null)?.nonce;
+    const challenge = typeof nonce === 'string' ? challenges.get(nonce) : undefined;
+    if (!challenge || challenge.purpose !== purpose || challenge.expires <= Date.now()) {
+      throw new ApiError(403, 'WORLD_CHALLENGE_INVALID', 'Start a new World ID verification; the request is missing, expired, or already used');
+    }
+    challenges.delete(nonce as string);
+    return challenge.action;
+  }
 
   app.get('/internal/mumbai/status', async () => {
     const hasArkiv = Boolean(process.env.ARKIV_ACCESS_KEY && (process.env.ARKIV_PRIVATE_KEY || process.env.PRIVATE_KEY));
     const whitechainNetwork = process.env.WHITECHAIN_NETWORK === 'mainnet' ? 'mainnet' : 'testnet';
-    const idkit = Boolean(process.env.WORLD_RP_ID?.trim() && process.env.WORLD_RP_SIGNING_KEY?.trim());
+    const worldConfig = worldIdKitConfig();
+    const idkit = worldConfig.idkit;
     const agentPass = Boolean(process.env.WORLD_CLIENT_ID?.trim() && process.env.WORLD_CLIENT_SECRET?.trim());
-    const mode = idkit && agentPass ? 'dual' : idkit ? 'idkit' : agentPass ? 'agent_pass' : 'mock';
+    const mode = idkit && agentPass ? 'dual' : idkit ? 'idkit' : agentPass ? 'agent_pass' : worldConfig.mock_proofs ? 'mock' : 'unconfigured';
     return {
       notifications: { delivery: notifyConfigured() ? 'resend' : 'log' },
       tracks: {
         world: {
           enabled: (process.env.WORLD_AGENT_PASS_ENABLED ?? 'true').toLowerCase() !== 'false',
           mode,
-          mock_proofs: (process.env.WORLD_MOCK_PROOFS ?? 'true').toLowerCase() !== 'false',
+          mock_proofs: worldConfig.mock_proofs,
           idkit,
           agent_pass: agentPass,
           /** IDKit Developer Portal app (proof of human). */
           app_id: process.env.WORLD_APP_ID || null,
           rp_id: process.env.WORLD_RP_ID || null,
           action: process.env.WORLD_IDKIT_ACTION || 'bagseven-mint',
+          environment: worldConfig.environment,
           /** World IdP OIDC client (Agent Pass) — separate from app_id. */
           oidc_client_id: process.env.WORLD_CLIENT_ID || null,
         },
@@ -146,7 +163,9 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
           chain_id: Number(process.env.CHAIN_ID ?? 1874),
           explorer: process.env.WHITECHAIN_NETWORK === 'mainnet' ? 'https://explorer.whitechain.io' : 'https://explorer.testnet.whitechain.io',
           operator: Boolean((process.env.WHITECHAIN_PRIVATE_KEY ?? '').trim() && (process.env.WHITECHAIN_PAY_TO ?? '').trim()),
-          demo_settle: (process.env.WHITECHAIN_DEMO_SETTLE ?? 'true').toLowerCase() !== 'false',
+          demo_settle: whitechainDemoAllowed(),
+          pay_to: process.env.WHITECHAIN_PAY_TO || null,
+          usdt: whitechainConfig().usdt,
         },
         arkiv: {
           live: hasArkiv,
@@ -274,16 +293,22 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
 
   /** IDKit RP signature — never expose WORLD_RP_SIGNING_KEY to the browser. */
   app.post('/internal/world/rp-signature', async (req) => {
-    const body = z.object({ action: z.string().min(1).optional() }).parse(req.body ?? {});
+    const body = z.object({ action: z.string().min(1).optional(), purpose: z.enum(['login', 'mint']).default('mint') }).parse(req.body ?? {});
     const signingKey = process.env.WORLD_RP_SIGNING_KEY?.trim();
-    if (!signingKey) throw new ApiError(400, 'WORLD_NOT_CONFIGURED', 'WORLD_RP_SIGNING_KEY is not set');
-    const action = body.action?.trim() || process.env.WORLD_IDKIT_ACTION || 'bagseven-mint';
-    const sig = signWorldIdKitRequest({ signingKeyHex: signingKey, action });
+    const config = worldIdKitConfig();
+    if (!signingKey || !config.idkit) throw new ApiError(503, 'WORLD_NOT_CONFIGURED', 'Configure WORLD_APP_ID, WORLD_RP_ID, and WORLD_RP_SIGNING_KEY on the server');
+    const action = config.action;
+    if (body.action && body.action !== action) throw new ApiError(400, 'WORLD_ACTION_INVALID', 'Action does not match the configured World app');
+    const sig = signWorldIdKitRequest({ signingKeyHex: signingKey, action, expectedSignerAddress: process.env.WORLD_SIGNER_ADDRESS });
+    for (const [nonce, challenge] of challenges) if (challenge.expires <= Date.now()) challenges.delete(nonce);
+    if (challenges.size >= 5000) throw new ApiError(429, 'WORLD_BUSY', 'Too many pending World verifications; try again shortly');
+    challenges.set(sig.nonce, { action, purpose: body.purpose, expires: sig.expires_at * 1000 });
     return {
       ...sig,
       action,
-      rp_id: process.env.WORLD_RP_ID ?? null,
-      app_id: process.env.WORLD_APP_ID || process.env.WORLD_CLIENT_ID || null,
+      rp_id: config.rp_id,
+      app_id: config.app_id,
+      environment: config.environment,
     };
   });
 
@@ -297,7 +322,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
       .parse(req.body ?? {});
     const rpId = process.env.WORLD_RP_ID?.trim();
     if (!rpId) throw new ApiError(400, 'WORLD_NOT_CONFIGURED', 'WORLD_RP_ID is not set');
-    const action = body.action?.trim() || process.env.WORLD_IDKIT_ACTION || 'bagseven-mint';
+    const action = takeChallenge(body.idkit_response, 'login');
     const verified = await verifyWorldIdKitProof({
       rpId,
       idkitResponse: body.idkit_response,
@@ -307,11 +332,8 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
     if (!verified.ok) {
       throw new ApiError(403, verified.code, verified.detail);
     }
-    const key = `${verified.action}:${verified.nullifier.toLowerCase()}`;
-    if (usedNullifiers.has(key)) {
-      throw new ApiError(409, 'WORLD_NULLIFIER_REUSED', 'This World ID already minted for this action');
-    }
-    usedNullifiers.add(key);
+    // Login consumes its challenge, not the human's mint eligibility. Returning
+    // humans may sign in again with a fresh, independently verified request.
     return {
       ok: true,
       human_id: verified.human_id,
@@ -320,6 +342,13 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
       action: verified.action,
       mode: 'idkit',
     };
+  });
+
+  app.post('/internal/world/verify-session', async (req) => {
+    const body = z.object({ id_token: z.string().min(1) }).parse(req.body);
+    const verified = await verifyWorldAgentPass({ id_token: body.id_token });
+    if (!verified.ok || verified.mode !== 'live') throw new ApiError(403, 'WORLD_DENIED', 'A verified World Agent Pass token is required');
+    return verified;
   });
 
   async function resolveWorldForWrite(opts: {
@@ -336,10 +365,16 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
     feature?: string;
     req: { headers: { [key: string]: string | string[] | undefined } };
   }): Promise<WorldOk> {
+    const verifiedSession = opts.req.headers['x-bagseven-world-human'];
+    if (typeof verifiedSession === 'string' && verifiedSession) {
+      // This header is supplied only by the authenticated console BFF after
+      // validating its signed, non-mock World session. Never accept it publicly.
+      return { ok: true, human_id: verifiedSession, world_proof_id: `world:idkit:session:${verifiedSession}`, mode: 'idkit' };
+    }
     if (opts.idkitResponse !== undefined) {
       const rpId = process.env.WORLD_RP_ID?.trim();
       if (!rpId) throw new ApiError(400, 'WORLD_NOT_CONFIGURED', 'WORLD_RP_ID is not set for IDKit');
-      const action = process.env.WORLD_IDKIT_ACTION || 'bagseven-mint';
+      const action = takeChallenge(opts.idkitResponse, 'mint');
       const verified = await verifyWorldIdKitProof({
         rpId,
         idkitResponse: opts.idkitResponse,
@@ -356,17 +391,11 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
         );
         throw new ApiError(403, verified.code, verified.detail);
       }
-      const nKey =
-        opts.nullifierScope === 'buy'
-          ? `${verified.action}:buy:${verified.nullifier.toLowerCase()}`
-          : `${verified.action}:${verified.nullifier.toLowerCase()}`;
-      if (usedNullifiers.has(nKey)) {
-        throw new ApiError(409, 'WORLD_NULLIFIER_REUSED', 'This World ID proof was already used for this action');
-      }
-      usedNullifiers.add(nKey);
+      // A human may purchase again. The one-time request nonce prevents proof
+      // replay; the persistent payment ledger prevents crediting a receipt twice.
       return {
         ok: true,
-        human_id: opts.human_id ?? verified.human_id,
+        human_id: verified.human_id,
         world_proof_id: verified.world_proof_id,
         mode: 'idkit',
         issuer: 'https://developer.world.org',
@@ -375,7 +404,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
 
     if (opts.allowPriorGrant && opts.feature) {
       const living = await store.findLive({ holder: opts.holder, feature: opts.feature });
-      const prior = living.find((g) => g.world_proof_id || g.human_id);
+      const prior = living.find((g) => worldMocksAllowed() || g.world_proof_id?.startsWith('world:idkit:') || g.world_proof_id?.startsWith('oidc:'));
       if (prior?.world_proof_id || prior?.human_id) {
         return {
           ok: true,
@@ -474,8 +503,11 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
           feature: body.feature,
           holder: body.holder,
           payment_tx: body.payment_tx,
+          customer_wallet: body.customer_wallet,
+          payment_signature: body.payment_signature,
         });
       }
+      if (settlement) await claimSettlement(settlement, deps);
 
       const grant = await store.mint({
         ...body,
@@ -552,7 +584,10 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
         holder: body.holder,
         payment_tx: body.payment_tx,
         reason: 'buy_credits',
+        customer_wallet: body.customer_wallet,
+        payment_signature: body.payment_signature,
       });
+      await claimSettlement(settlement, deps);
 
       const grant = await store.mint({
         feature: body.feature,

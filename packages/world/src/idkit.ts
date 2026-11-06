@@ -1,5 +1,6 @@
 import { signRequest } from '@worldcoin/idkit-core/signing';
 import { z } from 'zod';
+import { privateKeyToAccount } from 'viem/accounts';
 
 const VERIFY_URL = (rpId: string) => `https://developer.world.org/api/v4/verify/${encodeURIComponent(rpId)}`;
 
@@ -15,9 +16,15 @@ export function signWorldIdKitRequest(input: {
   signingKeyHex: string;
   action: string;
   ttl?: number;
+  expectedSignerAddress?: string;
 }): RpSignature {
+  const key = input.signingKeyHex.startsWith('0x') ? input.signingKeyHex : `0x${input.signingKeyHex}`;
+  const signer = privateKeyToAccount(key as `0x${string}`);
+  if (input.expectedSignerAddress && signer.address.toLowerCase() !== input.expectedSignerAddress.toLowerCase()) {
+    throw new Error('WORLD_SIGNER_MISMATCH: RP signing key does not match WORLD_SIGNER_ADDRESS');
+  }
   const { sig, nonce, createdAt, expiresAt } = signRequest({
-    signingKeyHex: input.signingKeyHex,
+    signingKeyHex: key,
     action: input.action,
     ttl: input.ttl ?? 300,
   });
@@ -31,11 +38,11 @@ export function signWorldIdKitRequest(input: {
 
 export const IdKitResultSchema = z
   .object({
-    protocol_version: z.string().optional(),
-    nonce: z.string().optional(),
-    action: z.string().optional(),
+    protocol_version: z.enum(['3.0', '4.0']),
+    nonce: z.string().min(1),
+    action: z.string().min(1),
     environment: z.string().optional(),
-    responses: z.array(z.record(z.string(), z.unknown())).optional(),
+    responses: z.array(z.record(z.string(), z.unknown())).min(1),
   })
   .passthrough();
 
@@ -93,7 +100,7 @@ export async function verifyWorldIdKitProof(input: {
       detail: `IDKit environment mismatch (got ${parsed.environment}, want ${expectedEnvironment})`,
     };
   }
-  if (input.expectedAction && parsed.action && parsed.action !== input.expectedAction) {
+  if (input.expectedAction && parsed.action !== input.expectedAction) {
     return {
       ok: false,
       code: 'WORLD_IDKIT_FAILED',
@@ -105,9 +112,10 @@ export async function verifyWorldIdKitProof(input: {
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'application/json' },
     body: JSON.stringify({ ...parsed, environment: expectedEnvironment }),
+    signal: AbortSignal.timeout(15_000),
   });
   const raw = await response.text();
-  let verification: Record<string, unknown> = {};
+  let verification: Record<string, unknown>;
   try {
     verification = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
   } catch {
@@ -125,17 +133,23 @@ export async function verifyWorldIdKitProof(input: {
   if (verification.environment && verification.environment !== expectedEnvironment) {
     return { ok: false, code: 'WORLD_IDKIT_FAILED', detail: 'Verify response environment mismatch' };
   }
+  if (verification.action && verification.action !== parsed.action) {
+    return { ok: false, code: 'WORLD_IDKIT_FAILED', detail: 'Verify response action mismatch' };
+  }
 
   const nullifier = extractNullifier(parsed);
   if (!nullifier) {
     return { ok: false, code: 'WORLD_IDKIT_FAILED', detail: 'Verified payload missing nullifier' };
+  }
+  if (typeof verification.nullifier === 'string' && verification.nullifier !== nullifier) {
+    return { ok: false, code: 'WORLD_IDKIT_FAILED', detail: 'Verify response nullifier mismatch' };
   }
   const action = parsed.action || input.expectedAction || 'unknown';
   return {
     ok: true,
     nullifier,
     action,
-    human_id: `world:nullifier:${nullifier.slice(0, 18)}`,
+    human_id: `world:nullifier:${nullifier}`,
     world_proof_id: `world:idkit:${action}:${nullifier}`,
     environment: expectedEnvironment,
     verification,

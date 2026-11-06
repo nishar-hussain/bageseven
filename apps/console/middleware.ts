@@ -20,7 +20,7 @@ export async function middleware(req: NextRequest) {
   }
 
   const session = await verifySessionToken(raw, secret, 'session');
-  if (!session) {
+  if (!session || (session.mock && !(process.env.NODE_ENV !== 'production' && process.env.WORLD_MOCK_PROOFS === 'true'))) {
     const url = req.nextUrl.clone();
     url.pathname = '/app/login';
     url.searchParams.set('next', pathname);

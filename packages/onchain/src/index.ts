@@ -33,6 +33,29 @@ export const whitechainSepolia = defineChain({
   blockExplorers: { default: { name: 'Whitechain Explorer', url: WHITECHAIN_EXPLORER } },
 });
 
+export const whitechainMainnet = defineChain({
+  id: 1875,
+  name: 'Whitechain',
+  nativeCurrency: { name: 'WhiteBIT Coin', symbol: 'WBT', decimals: 18 },
+  rpcUrls: { default: { http: ['https://rpc.whitechain.io'] } },
+  blockExplorers: { default: { name: 'Whitechain Explorer', url: 'https://explorer.whitechain.io' } },
+});
+
+/** Shared server configuration: never mix a network, RPC, and token implicitly. */
+export function whitechainConfig(env: NodeJS.ProcessEnv = process.env) {
+  const chain = env.WHITECHAIN_NETWORK === 'mainnet' ? whitechainMainnet : whitechainSepolia;
+  const requested = Number(env.WHITECHAIN_CHAIN_ID || env.CHAIN_ID || chain.id);
+  if (requested !== chain.id) throw new Error(`WHITECHAIN_CHAIN_MISMATCH: ${env.WHITECHAIN_NETWORK || 'testnet'} requires chain ${chain.id}, got ${requested}`);
+  return {
+    chain,
+    chainId: chain.id,
+    rpcUrl: env.WHITECHAIN_RPC_URL || env.RPC_URL || chain.rpcUrls.default.http[0],
+    explorer: chain.blockExplorers.default.url,
+    usdt: env.WHITECHAIN_USDT?.trim() || (chain.id === 1874 ? '0xaa7962d073935D387e8d442DA1D7149C81388f46' : ''),
+    confirmations: Math.max(1, Number(env.WHITECHAIN_CONFIRMATIONS || 2)),
+  };
+}
+
 /** The local anvil chain (chainId 31337). */
 export const localChain = defineChain({
   id: 31337,
@@ -62,10 +85,11 @@ export interface MandateClientOpts {
   chainId?: number;
 }
 
-export const SUPPORTED_CHAIN_IDS = [WHITECHAIN_CHAIN_ID] as const;
+export const SUPPORTED_CHAIN_IDS = [WHITECHAIN_CHAIN_ID, 1875] as const;
 export type SupportedChainId = (typeof SUPPORTED_CHAIN_IDS)[number];
 
 export const chainConfig = {
+  1875: { id: 1875, name: 'Whitechain', network: 'eip155:1875', nativeSymbol: 'WBT', defaultRpcUrl: 'https://rpc.whitechain.io', explorer: 'https://explorer.whitechain.io', usdc: '' },
   [WHITECHAIN_CHAIN_ID]: {
     id: WHITECHAIN_CHAIN_ID,
     name: 'Whitechain Testnet',
@@ -78,11 +102,13 @@ export const chainConfig = {
 } as const;
 
 export function chainForId(chainId: number) {
+  if (chainId === 1875) return whitechainMainnet;
   if (chainId === WHITECHAIN_CHAIN_ID) return whitechainSepolia;
   throw new Error(`unsupported chain id ${chainId}; expected Whitechain Testnet (${WHITECHAIN_CHAIN_ID})`);
 }
 
 export function chainConfigForId(chainId: number) {
+  if (chainId === 1875) return chainConfig[1875];
   if (chainId === WHITECHAIN_CHAIN_ID) return chainConfig[WHITECHAIN_CHAIN_ID];
   throw new Error(`unsupported chain id ${chainId}; expected Whitechain Testnet (${WHITECHAIN_CHAIN_ID})`);
 }
@@ -97,6 +123,7 @@ export class MandateClient {
   readonly publicClient: PublicClient;
   private readonly wallet: WalletClient;
   readonly address: Address;
+  private chainVerified?: Promise<void>;
 
   constructor(privateKey: Hex, opts: MandateClientOpts) {
     const chain = opts.chainId === 31337 ? localChain : chainForId(opts.chainId ?? WHITECHAIN_CHAIN_ID);
@@ -202,6 +229,10 @@ export class MandateClient {
   }
 
   private async read(fn: string, args: unknown[], contract: Address): Promise<unknown> {
+    this.chainVerified ??= this.publicClient.getChainId().then((id) => {
+      if (id !== this.publicClient.chain?.id) throw new Error('WHITECHAIN_RPC_CHAIN_MISMATCH: on-chain reads are connected to another network');
+    });
+    await this.chainVerified;
     return this.publicClient.readContract({ address: contract, abi, functionName: fn, args });
   }
 

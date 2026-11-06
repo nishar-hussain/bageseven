@@ -17,6 +17,7 @@ import {
 } from './api-keys.js';
 import { settleWhitechainUsdt } from './whitechain-settle.js';
 import type { GrantRouteDeps } from './grants.js';
+import { claimSettlement } from './payment-ledger.js';
 
 const consumeBody = z.object({
   feature: z.string().min(1),
@@ -42,6 +43,8 @@ const creditsBody = z.object({
   ttl_seconds: z.number().int().positive().default(900),
   amount: z.string().default('1.00'),
   payment_tx: z.string().optional(),
+  customer_wallet: z.string().optional(),
+  payment_signature: z.string().optional(),
 });
 
 export function isPublicEntitlementPath(url: string): boolean {
@@ -200,7 +203,10 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
       holder,
       payment_tx: body.payment_tx,
       reason: 'sdk_credits',
+      customer_wallet: body.customer_wallet,
+      payment_signature: body.payment_signature,
     });
+    await claimSettlement(settlement, deps);
     const grant = await store.mint({
       feature: body.feature,
       holder,

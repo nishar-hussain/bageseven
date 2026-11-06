@@ -53,6 +53,7 @@ export function isAllowedEmail(email: string): boolean {
 
 export function sessionIsValid(session: Session | null | undefined): boolean {
   if (!session) return false;
+  if (session.mock && !(process.env.NODE_ENV !== 'production' && process.env.WORLD_MOCK_PROOFS === 'true')) return false;
   if (session.exp * 1000 < Date.now()) return false;
   return Boolean(session.world_human_id?.trim() || session.email?.trim());
 }

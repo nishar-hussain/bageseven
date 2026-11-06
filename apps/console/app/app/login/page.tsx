@@ -3,12 +3,6 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { IDKitRequestWidget, proofOfHuman, type RpContext } from '@worldcoin/idkit';
-import { entitlementsApi } from '../../../lib/entitlements-client';
-
-const APP_ID = (process.env.NEXT_PUBLIC_WORLD_APP_ID || '') as `app_${string}`;
-const RP_ID = process.env.NEXT_PUBLIC_WORLD_RP_ID || '';
-const ACTION = process.env.NEXT_PUBLIC_WORLD_IDKIT_ACTION || 'bagseven-mint';
-const ENVIRONMENT = (process.env.NEXT_PUBLIC_WORLD_IDKIT_ENVIRONMENT || 'production') as 'production' | 'staging';
 
 function LoginForm() {
   const params = useSearchParams();
@@ -21,13 +15,13 @@ function LoginForm() {
   const [rpContext, setRpContext] = useState<RpContext | null>(null);
   const [recoveryEmail, setRecoveryEmail] = useState('');
   const [showRecovery, setShowRecovery] = useState(false);
-  const [status, setStatus] = useState<{ mock_proofs?: boolean; idkit?: boolean } | null>(null);
+  const [status, setStatus] = useState<{ mock_proofs: boolean; idkit: boolean; app_id: string; rp_id: string; action: string; environment: 'production' | 'staging' } | null>(null);
 
   useEffect(() => {
-    void entitlementsApi
-      .status()
-      .then((s) => setStatus({ mock_proofs: s.tracks.world.mock_proofs, idkit: s.tracks.world.idkit }))
-      .catch(() => setStatus({ mock_proofs: true, idkit: false }));
+    void fetch('/api/auth/world', { cache: 'no-store' })
+      .then(async (res) => { if (!res.ok) throw new Error('World configuration unavailable'); return res.json(); })
+      .then(setStatus)
+      .catch(() => setMsg('World sign-in is temporarily unavailable. Please try again.'));
   }, []);
 
   const finish = useCallback(
@@ -43,12 +37,14 @@ function LoginForm() {
         const json = (await res.json().catch(() => ({}))) as { error?: string; note?: string };
         if (!res.ok) {
           setMsg(json.error ?? 'World sign-in failed');
-          return;
+          return false;
         }
         if (json.note) setMsg(json.note);
-        router.replace(next.startsWith('/') ? next : '/app');
+        router.replace(next.startsWith('/') && !next.startsWith('//') ? next : '/app');
+        return true;
       } catch (e) {
         setMsg(e instanceof Error ? e.message : String(e));
+        return false;
       } finally {
         setBusy(false);
       }
@@ -62,9 +58,11 @@ function LoginForm() {
     setBusy(true);
     setMsg('Opening World ID…');
     try {
-      const sig = await entitlementsApi.worldRpSignature(ACTION);
+      const response = await fetch('/api/auth/world/challenge', { method: 'POST' });
+      const sig = await response.json();
+      if (!response.ok) throw new Error(sig.error?.message || 'Could not start World verification');
       setRpContext({
-        rp_id: (sig.rp_id || RP_ID) as `rp_${string}`,
+        rp_id: sig.rp_id as `rp_${string}`,
         nonce: sig.nonce,
         created_at: sig.created_at,
         expires_at: sig.expires_at,
@@ -94,7 +92,7 @@ function LoginForm() {
     setMsg(json.dev_hint ? `Dev: ${json.dev_hint}` : `Check ${recoveryEmail} for a recovery link.`);
   };
 
-  const idkitReady = Boolean(APP_ID && RP_ID);
+  const idkitReady = Boolean(status?.app_id && status.rp_id && status.idkit);
   const mockAllowed = status?.mock_proofs === true;
   const preset = useMemo(() => proofOfHuman({ signal: 'bagseven-login' }), []);
 
@@ -133,7 +131,7 @@ function LoginForm() {
               </button>
             ) : null}
             {!idkitReady && !mockAllowed ? (
-              <p className="text-sm text-[#63636d]">Configure World IDKit credentials or enable WORLD_MOCK_PROOFS locally.</p>
+              <p className="text-sm text-[#63636d]">World ID sign-in is awaiting server configuration. Please contact the operator.</p>
             ) : null}
           </div>
 
@@ -169,14 +167,14 @@ function LoginForm() {
         <IDKitRequestWidget
           open={idkitOpen}
           onOpenChange={setIdkitOpen}
-          app_id={APP_ID}
-          action={ACTION}
+          app_id={status!.app_id as `app_${string}`}
+          action={status!.action}
           rp_context={rpContext}
           allow_legacy_proofs
-          environment={ENVIRONMENT}
+          environment={status!.environment}
           preset={preset}
           handleVerify={async (result) => {
-            await finish({ idkit_response: result });
+            if (!await finish({ idkit_response: result })) throw new Error('World sign-in verification failed');
           }}
           onSuccess={() => setIdkitOpen(false)}
           onError={(code) => {

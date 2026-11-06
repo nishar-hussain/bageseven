@@ -50,7 +50,7 @@ export default function CheckoutsPage() {
       <div>
         <h1 className="text-[2rem] font-semibold tracking-tight">Checkouts</h1>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          Open a checkout session for a holder. Embed or share the public checkout URL — buyer pays on Whitechain.
+          Open a checkout session for a holder. Embed or share the public checkout URL — buyer pays your provider wallet on Whitechain. A 0.1% platform fee is billed separately after successful payment.
         </p>
         <div className="mt-4">
           <StatusBadges />
@@ -97,6 +97,7 @@ export default function CheckoutsPage() {
                 <div className="font-semibold">{s.id}</div>
                 <div className="text-xs text-[var(--muted)]">
                   {s.status} · {s.holder} · {s.amount} USDT
+                  {s.status === 'PAID' ? ` · provider fee owed: ${s.platform_fee_amount} USDT` : ''}
                   {s.grant_id ? ` · grant ${s.grant_id.slice(0, 8)}…` : ''}
                 </div>
               </div>

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { authorizeWhitechainPayment, payUsdtOnWhitechain } from '@bagseven/sdk/wallet';
 import { StatusBadges } from '../../../components/app/StatusBadges';
 import { entitlementsApi } from '../../../lib/entitlements-client';
 import { FEATURE_OPTIONS, TTL_PRESETS, featureLabel, shortId, useOperator } from '../../../lib/use-operator';
@@ -25,15 +26,29 @@ export default function CreditsPage() {
     setBusy(true);
     setMsg('Settling on Whitechain…');
     try {
+      let tx = paymentTx.trim() || undefined;
+      let authorization: { customer_wallet?: string; payment_signature?: string } = {};
+      const rail = op.status?.tracks.whitechain;
+      if (!rail) throw new Error('Payment configuration is still loading');
+      if (!tx && !rail.demo_settle) {
+        if (!rail.pay_to || !rail.usdt) throw new Error('The operator must configure the Whitechain payment recipient');
+        const paid = await payUsdtOnWhitechain({ merchantWallet: rail.pay_to, amount, usdt: rail.usdt, chainId: rail.chain_id, context: `entitlement:${op.holder}:${feature}:${amount}` });
+        tx = paid.payment_tx;
+        authorization = paid;
+        setPaymentTx(tx);
+      }
+      if (tx && !authorization.payment_signature && !rail.demo_settle) authorization = await authorizeWhitechainPayment({ payment_tx: tx, context: `entitlement:${op.holder}:${feature}:${amount}`, chainId: rail.chain_id });
       const r = await entitlementsApi.buyCredits({
         feature,
         holder: op.holder,
         amount,
         remaining,
         ttl_seconds: ttl,
-        payment_tx: paymentTx.trim() || undefined,
+        payment_tx: tx,
+        ...authorization,
         // Reuses World proof from a living grant for this holder (mint with IDKit first).
       });
+      setPaymentTx('');
       setMsg(
         `Topped up ${featureLabel(feature)} for ${op.holder}. ` +
           `${r.settlement?.mode ?? 'settle'} · grant ${shortId(r.grant.id)} · ${r.grant.remaining} credits left` +
@@ -80,7 +95,7 @@ export default function CreditsPage() {
         </div>
         <div className="grid gap-3 md:grid-cols-3">
           <div className="fi-field">
-            <label htmlFor="amount">Pay (USDC)</label>
+            <label htmlFor="amount">Pay (USDT.e)</label>
             <input id="amount" value={amount} onChange={(e) => setAmount(e.target.value)} />
           </div>
           <div className="fi-field">

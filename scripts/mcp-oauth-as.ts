@@ -2,7 +2,7 @@
  * Bagseven MCP OAuth Authorization Server (ChatGPT custom MCP).
  *
  * ChatGPT cannot use World as its IdP directly (redirect URI must be ChatGPT’s).
- * Flow: ChatGPT → Bagseven AS authorize → human proves World Agent Pass (or mock)
+ * Flow: ChatGPT → Bagseven AS authorize → human proves World IDKit or World Agent Pass
  * → Bagseven issues access_token → ChatGPT calls /mcp with Bearer.
  */
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
@@ -78,7 +78,7 @@ export function verifyMcpAccessToken(authHeader: string | undefined): AccessToke
   if (process.env.MCP_AUTH_TOKEN && safeEqual(token, process.env.MCP_AUTH_TOKEN)) {
     return {
       humanId: 'static-token',
-      worldProofId: 'world:ok:static-token',
+      worldProofId: 'operator:static-token',
       clientId: 'static',
       scope: 'bagseven',
       exp: Date.now() + 86_400_000,
@@ -87,6 +87,10 @@ export function verifyMcpAccessToken(authHeader: string | undefined): AccessToke
   const row = tokens.get(token);
   if (!row || row.exp < Date.now()) return null;
   return row;
+}
+
+function html(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 function authorizePage(opts: {
@@ -125,17 +129,38 @@ function authorizePage(opts: {
 </style></head><body>
   <div class="card">
     <h1>Authorize Bagseven for ChatGPT</h1>
-    <p>Use the same email you minted with on the Bagseven console (World IDKit). ChatGPT gets a Bagseven access token for MCP tools — agents never hold World credentials.</p>
-    ${opts.error ? `<p class="err">${opts.error}</p>` : ''}
-    <form method="post" action="/oauth/authorize?${q.toString()}">
-      <label>Email / holder (must already have a living entitlement)</label>
-      <input name="holder" required placeholder="you@company.com" />
-      <label>World OIDC id_token (optional — only if Agent Pass OIDC is configured)</label>
-      <textarea name="id_token" rows="3" placeholder="Usually leave blank — we reuse your living World-minted grant"></textarea>
-      <button type="submit">Continue</button>
+    <p>Verify with World ID to approve this agent connection. The agent receives a Bagseven token; your World credentials stay with you.</p>
+    ${opts.error ? `<p class="err">${html(opts.error)}</p>` : ''}
+    <form method="post" action="/oauth/authorize?${html(q.toString())}">
+      <input type="hidden" name="idkit_response" id="world-proof" />
+      <button type="button" id="verify-world">Verify with World ID</button>
+      <a id="world-link" hidden>Open World App</a>
+      <p id="world-status" role="status"></p>
     </form>
-    <p style="margin-top:1rem;font-size:.75rem">Resource: <code>${opts.resource || resourceUrl(opts.base)}</code></p>
+    <p style="margin-top:1rem;font-size:.75rem">Resource: <code>${html(opts.resource || resourceUrl(opts.base))}</code></p>
   </div>
+<script src="https://cdn.jsdelivr.net/npm/@worldcoin/idkit-core@4.6.0/dist/idkit.global.js"></script>
+<script>
+ document.getElementById('verify-world').onclick = async function () {
+  this.disabled = true;
+  const status = document.getElementById('world-status');
+  try {
+   status.textContent = 'Starting World ID verification…';
+   const response = await fetch('/oauth/world/challenge', { method: 'POST' });
+   const sig = await response.json();
+   if (!response.ok) throw new Error(sig.error || 'World ID is unavailable');
+   const request = await IDKit.request({ app_id: sig.app_id, action: sig.action, environment: sig.environment,
+    rp_context: { rp_id: sig.rp_id, nonce: sig.nonce, created_at: sig.created_at, expires_at: sig.expires_at, signature: sig.sig },
+    allow_legacy_proofs: true }).constraints(IDKit.CredentialRequest('proof_of_human'));
+   const link = document.getElementById('world-link'); link.href = request.connectorURI; link.hidden = false;
+   status.textContent = 'Open World App using the link above to approve verification.';
+   const completion = await request.pollUntilCompletion();
+   if (!completion.success) throw new Error('World ID verification was cancelled or failed');
+   document.getElementById('world-proof').value = JSON.stringify(completion.result);
+   document.querySelector('form').submit();
+  } catch (error) { status.textContent = error.message; this.disabled = false; }
+ };
+</script>
 </body></html>`;
 }
 
@@ -172,6 +197,21 @@ export function mountMcpOAuth(app: Express): void {
   app.get('/.well-known/openid-configuration', asMeta);
   app.get('/.well-known/oauth-protected-resource', prMeta);
   app.get('/.well-known/oauth-protected-resource/mcp', prMeta);
+
+  app.post('/oauth/world/challenge', async (req, res) => {
+    try {
+      const daemon = (process.env.DAEMON_URL || 'http://127.0.0.1:4001').replace(/\/$/, '');
+      const response = await fetch(`${daemon}/internal/world/rp-signature`, {
+        method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${process.env.DAEMON_AUTH_TOKEN || ''}` },
+        body: JSON.stringify({ purpose: 'login' }), signal: AbortSignal.timeout(10000),
+      });
+      const sig = await response.json() as { nonce?: string };
+      if (!response.ok || !sig.nonce) { res.status(503).json({ error: 'World ID signing credentials are not ready' }); return; }
+      res.cookie('bagseven_oauth_world_nonce', sig.nonce, { httpOnly: true, sameSite: 'lax', secure: publicBase(req).startsWith('https:'), path: '/oauth', maxAge: 300000 });
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(sig);
+    } catch { res.status(503).json({ error: 'World verification is unavailable' }); }
+  });
 
   app.get('/oauth/authorize', (req, res) => {
     const base = publicBase(req);
@@ -216,11 +256,9 @@ export function mountMcpOAuth(app: Express): void {
     const code_challenge_method = q.code_challenge_method ? String(q.code_challenge_method) : undefined;
 
     const body = req.body as {
-      holder?: string;
-      world_proof_id?: string;
+      idkit_response?: string;
       id_token?: string;
     };
-    const holder = (body.holder || '').trim();
     const idToken = (body.id_token || '').trim() || undefined;
 
     const fail = (msg: string) => {
@@ -242,55 +280,41 @@ export function mountMcpOAuth(app: Express): void {
         );
     };
 
-    if (!holder) return fail('Holder email is required');
-    const okRedirect =
-      redirect_uri.startsWith('https://chatgpt.com/') ||
-      redirect_uri.startsWith('https://chat.openai.com/') ||
-      redirect_uri.startsWith('http://127.0.0.1') ||
-      redirect_uri.startsWith('http://localhost');
+    let okRedirect = false;
+    try {
+      const target = new URL(redirect_uri);
+      okRedirect = (target.protocol === 'https:' && ['chatgpt.com', 'chat.openai.com'].includes(target.hostname)) ||
+        (target.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(target.hostname));
+    } catch { /* Invalid redirect URLs are refused. */ }
     if (!okRedirect) {
       return fail('redirect_uri must be a ChatGPT connector callback (or local inspector)');
     }
 
-    let humanId = holder;
-    let worldProofId = '';
-
-    // Prefer reuse of a living Arkiv grant minted via World IDKit on the console.
-    try {
-      const daemon = (process.env.DAEMON_URL || 'http://127.0.0.1:4001').replace(/\/$/, '');
-      const token = process.env.DAEMON_AUTH_TOKEN?.trim();
-      const liveRes = await fetch(`${daemon}/internal/grants/live?holder=${encodeURIComponent(holder)}`, {
-        headers: token ? { authorization: `Bearer ${token}` } : {},
-      });
-      if (liveRes.ok) {
-        const liveJson = (await liveRes.json()) as {
-          grants?: Array<{ human_id?: string; world_proof_id?: string; id: string }>;
-        };
-        const g = (liveJson.grants ?? []).find((row) => row.world_proof_id || row.human_id);
-        if (g) {
-          humanId = g.human_id || holder;
-          worldProofId = g.world_proof_id || `world:prior:${g.id}`;
-        }
-      }
-    } catch {
-      /* fall through */
-    }
-
-    if (!worldProofId) {
-      if (!idToken) {
-        return fail(
-          'No living World-minted entitlement for this email. Mint on the console with World ID first, then retry.',
-        );
-      }
-      const verified = await verifyWorldAgentPass({
-        id_token: idToken,
-        human_id: holder,
-      });
-      if (!verified.ok) {
-        return fail(`World gate failed: ${verified.detail}`);
-      }
+    let humanId: string;
+    let worldProofId: string;
+    if (body.idkit_response) {
+      try {
+        const proof = JSON.parse(body.idkit_response) as { nonce?: string };
+        const cookie = req.headers.cookie?.split(';').map((v) => v.trim()).find((v) => v.startsWith('bagseven_oauth_world_nonce='))?.slice('bagseven_oauth_world_nonce='.length);
+        if (!cookie || decodeURIComponent(cookie) !== proof.nonce) return fail('World verification does not match this browser request');
+        const daemon = (process.env.DAEMON_URL || 'http://127.0.0.1:4001').replace(/\/$/, '');
+        const response = await fetch(`${daemon}/internal/world/verify-idkit`, {
+          method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${process.env.DAEMON_AUTH_TOKEN || ''}` },
+          body: JSON.stringify({ idkit_response: proof }), signal: AbortSignal.timeout(20000),
+        });
+        const verified = await response.json() as { ok?: boolean; human_id?: string; world_proof_id?: string };
+        if (!response.ok || !verified.ok || !verified.human_id || !verified.world_proof_id) return fail('World ID verification failed');
+        humanId = verified.human_id;
+        worldProofId = verified.world_proof_id;
+        res.clearCookie('bagseven_oauth_world_nonce', { path: '/oauth' });
+      } catch { return fail('World verification is unavailable or the proof is invalid'); }
+    } else if (idToken) {
+      const verified = await verifyWorldAgentPass({ id_token: idToken });
+      if (!verified.ok || verified.mode !== 'live') return fail('A verified World identity is required');
       humanId = verified.human_id;
       worldProofId = verified.world_proof_id;
+    } else {
+      return fail('Complete World ID verification before authorizing an agent');
     }
 
     prune();

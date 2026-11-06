@@ -38,7 +38,9 @@ export function StatusBadges() {
     status.tracks.world.mode === 'live' ||
     status.tracks.world.mode === 'oidc';
   const worldLabel =
-    status.tracks.world.mode === 'dual'
+    status.tracks.world.mode === 'unconfigured'
+      ? 'Not configured'
+      : status.tracks.world.mode === 'dual'
       ? 'IDKit+AgentPass'
       : status.tracks.world.mode === 'idkit'
         ? 'IDKit'
@@ -51,12 +53,8 @@ export function StatusBadges() {
     { label: 'World', value: worldLabel, live: worldLive },
     {
       label: 'Whitechain',
-      value: status.tracks.whitechain.operator
-        ? 'Operator'
-        : status.tracks.whitechain.demo_settle
-          ? 'Demo settle'
-          : status.tracks.whitechain.network,
-      live: status.tracks.whitechain.operator || !status.tracks.whitechain.demo_settle,
+      value: status.tracks.whitechain.demo_settle ? 'Demo settle' : status.tracks.whitechain.network,
+      live: !status.tracks.whitechain.demo_settle,
     },
     { label: 'Arkiv', value: status.tracks.arkiv.live ? 'Live' : 'Memory', live: status.tracks.arkiv.live },
   ];
