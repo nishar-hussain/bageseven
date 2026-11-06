@@ -89,6 +89,7 @@ const explainSchema = z.object({
   feature: z.string().optional(),
   holder: z.string().optional(),
   amount: z.string().default('1'),
+  operation: z.enum(['access', 'payment']).default('access'),
   world_proof_id: z.string().optional(),
   world_denied: z.boolean().optional(),
   outcome: z.enum(['ok', 'denied', 'expired', 'cancelled', 'invalid']).optional(),
@@ -176,6 +177,8 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
         },
       },
       dual_gate: {
+        prepaid_access_requires_mandate: false,
+        payment_requires_mandate: true,
         require_grant: (process.env.BAGSEVEN_REQUIRE_GRANT ?? 'true').toLowerCase() !== 'false',
         /** @deprecated Prefer `features` — scalar kept for older clients. */
         feature: process.env.BAGSEVEN_GRANT_FEATURE ?? DEFAULT_FEATURE_ID,
@@ -714,22 +717,23 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
   });
 
   /**
-   * Dual-gate work unit: mandate capacity AND living grant with remaining >= cost.
-   * Either fail → refuse (use explain-denial for structured why).
+   * Prepaid work unit: a living grant with remaining >= credit cost.
+   * New USDT payments use the separate worker spending path.
    */
   app.post('/internal/grants/paid-run', async (req) => {
     try {
       const body = consumeSchema.parse(req.body);
+      const actor = typeof req.headers['x-bagseven-actor'] === 'string' ? req.headers['x-bagseven-actor'].trim() : '';
       let grantId = body.grant_id?.trim();
       if (!grantId) {
         // Explicit feature only — omit filter to pick richest living grant across SKUs.
         const feature = featureForAction('paid_run', body.feature);
         const live = await store.findLive({
           feature,
-          holder: body.holder?.trim() || undefined,
-          worker_id: body.worker_id,
+          holder: actor || body.holder?.trim() || undefined,
         });
-        const ranked = [...live].sort((a, b) => Number(b.remaining) - Number(a.remaining));
+        const eligible = live.filter(g => !body.worker_id || !g.worker_id || g.worker_id === body.worker_id);
+        const ranked = eligible.sort((a, b) => Number(b.remaining) - Number(a.remaining));
         const pick = ranked.find((g) => gte(g.remaining, body.amount)) ?? ranked[0];
         if (!pick) {
           throw new ApiError(
@@ -744,7 +748,8 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
       const grant = await store.get(grantId);
       if (!grant) throw new ApiError(404, 'GRANT_NOT_FOUND', 'grant not found');
 
-      const actor = typeof req.headers['x-bagseven-actor'] === 'string' ? req.headers['x-bagseven-actor'].trim() : '';
+      if (body.feature && grant.feature !== body.feature) throw new ApiError(403, 'FEATURE_MISMATCH', 'grant does not cover the requested feature');
+
       if (actor) {
         if (grant.holder.toLowerCase() !== actor.toLowerCase()) {
           throw new ApiError(403, 'FORBIDDEN', 'cannot spend another holder’s entitlement');
@@ -768,31 +773,14 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
 
       if (grant.worker_id && body.worker_id && grant.worker_id !== body.worker_id) throw new ApiError(403, 'GRANT_WORKER_MISMATCH', 'This entitlement is bound to another agent');
 
-      // Dual-gate money side — always required (skip_mandate_gate is intentionally ignored).
-      const worker = resolveWorkerId(body.worker_id, grant.worker_id);
-      if (!worker || !deps.resolveMandateCapacity) {
-        throw new ApiError(
-          403,
-          'DUAL_GATE',
-          'MANDATE_REQUIRED: paid work needs a worker bound to a funded mandate — open Mandate in the console',
-        );
-      }
-      const capacity = await deps.resolveMandateCapacity(worker, body.amount);
-      if (!capacity.ok) {
-        throw new ApiError(
-          403,
-          'DUAL_GATE',
-          `MANDATE_EMPTY: ${capacity.reason ?? 'mandate capacity insufficient'}`,
-          capacity,
-        );
-      }
-
+      // This endpoint consumes already-paid service credits. Credit units are
+      // not USDT amounts; only payment execution checks a spending mandate.
       // Boolean features: access check only — do not burn Arkiv remaining.
       if (valueType === 'boolean') {
         return {
           grant,
           work_echo: body.work ?? null,
-          dual_gate: { mandate: 'ok', grant: 'ok' },
+          dual_gate: { mandate: 'not_required', grant: 'ok' },
           note: 'Boolean entitlement active on Arkiv until paid_through',
         };
       }
@@ -803,7 +791,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
       void notifyOperator(
         'paid_run',
         'Paid run completed',
-        'Dual-gate spend burned grant credits.',
+        'Prepaid entitlement credits consumed; no new payment was made.',
         {
           grant_id: next.id,
           remaining: next.remaining,
@@ -815,8 +803,8 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
       return {
         grant: next,
         work_echo: body.work ?? null,
-        dual_gate: { mandate: 'ok', grant: 'ok' },
-        note: 'Dual gate passed: mandate ceiling + living Arkiv grant',
+        dual_gate: { mandate: 'not_required', grant: 'ok' },
+        note: 'Prepaid access used; no USDT spent',
       };
     } catch (error) {
       if (error instanceof ApiError) throw error;
@@ -834,7 +822,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
       return {
         grant,
         work_echo: body.work ?? null,
-        note: 'Grant credits burned; use /paid-run for dual-gate (mandate + grant)',
+        note: 'Grant credits consumed; /paid-run also checks holder and worker binding',
       };
     } catch (error) {
       if (error instanceof ApiError) throw error;
@@ -876,7 +864,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
       }
     }
 
-    if (body.worker_id && deps.resolveMandateCapacity) {
+    if (body.operation === 'payment' && body.worker_id && deps.resolveMandateCapacity) {
       const capacity = await deps.resolveMandateCapacity(body.worker_id, body.amount);
       if (!capacity.ok) {
         reasons.push({ code: 'MANDATE_EMPTY', detail: capacity.reason ?? 'mandate capacity insufficient' });
@@ -884,7 +872,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
     }
 
     if (reasons.length === 0) {
-      reasons.push({ code: 'NONE', detail: 'no denial detected for supplied inputs — dual gate would allow' });
+      reasons.push({ code: 'NONE', detail: 'no denial detected for supplied inputs' });
     }
 
     return {

@@ -52,7 +52,7 @@ Payment clock = Whitechain (payment_tx)
 Renewal clock = grant.renewal_enabled (cancel does not kill paid_through)
 Access clock = Arkiv grant remaining + TTL — queryable object
 
-paid_run / secret consume / bagseven_fetch require mandate remaining AND living grant.
+paid_run / secret consume use prepaid grants without a mandate. New USDT payments via bagseven_fetch require mandate remaining AND a living grant. Dashboard /app/mandate manages owner-signed spending permissions.
 
 ## Auth
 

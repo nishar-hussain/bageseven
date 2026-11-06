@@ -38,7 +38,7 @@ const catalogNav: NavItem[] = [
 ];
 
 const accessNav: NavItem[] = [
-  { href: '/app/mandate', label: 'Mandate', icon: Shield },
+  { href: '/app/mandate', label: 'Agent spending', icon: Shield },
   { href: '/app/mcp', label: 'Connect agent', icon: Terminal },
   { href: '/app/sdk', label: 'SDK', icon: Puzzle },
 ];

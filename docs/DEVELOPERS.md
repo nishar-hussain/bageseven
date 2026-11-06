@@ -14,7 +14,7 @@ Three clocks, all independent:
 | Renewal | Will we collect again? | `renewal_enabled` on the grant |
 | Access | Can they use the feature *now*? | Living Arkiv grant (`remaining` + `paid_through`) |
 
-**Dual-gate:** a paid tool call (`paid_run`, `bagseven_fetch`) needs mandate remaining **and** a living grant. Fail closed.
+**Access vs payment:** `paid_run` and SDK consume use prepaid grants without a USDT mandate. New payments (`bagseven_fetch`) need mandate remaining **and** a living grant. Fail closed on payment checks.
 
 The daemon uses `BAGSEVEN_MCP_WORKER` as the default worker for dashboard mint and credit purchases, storing the binding on the grant. Paid runs use an explicit `worker_id`, then the grant's saved worker, then this server default for older unbound grants. Every paid run still checks mandate capacity; missing or unavailable workers cannot bypass the gate. Set this variable on the daemon as well as the MCP process.
 
@@ -133,7 +133,7 @@ React is UI gating. Authoritative checks always go through Node / daemon.
 
 ### 4. MCP (agent)
 
-Same verbs: `check_entitlement` / `consume_entitlement` / `create_checkout_session`. Secret consume and `paid_run` dual-gate (mandate remaining ∧ living grant). Agents never hold World credentials.
+Same verbs: `check_entitlement` / `consume_entitlement` / `create_checkout_session`. Secret consume and `paid_run` consume prepaid credits without a mandate; new payments through `bagseven_fetch` require mandate remaining ∧ living grant. Agents never hold World credentials.
 
 ### Plans + checkout
 

@@ -36,14 +36,21 @@ npm install @bagseven/sdk
 
 React is UI gating. Authoritative checks always go through Node / daemon. Agents never hold World credentials.
 
-## Dual-gate (the win thesis)
+## Prepaid access and agent spending
 
-Every paid **agent** action must pass **both**:
+`paid_run`, `consume_entitlement`, and SDK `/v1/usage/consume` use already-paid credits. Both humans and agents need an active entitlement, enough credits, and valid holder/worker scope. They do not require a USDT mandate or send another payment. Cancelling renewal leaves access valid until `paid_through`.
 
-- **Mandate** — money / spend ceiling still remaining
-- **Living grant** — Arkiv object with `remaining` and `paid_through` still in the future
+New payments through `bagseven_fetch` require an active registered agent, sufficient on-chain mandate capacity, and a living grant for the payment feature. Mandates limit USDT spending per purchase, window, lifetime, provider, and delegated worker.
 
-Human embed consume is grant-only (UI). Secret-key consume dual-gates.
+Manage these at `/app/mandate` (**Agent spending**):
+
+- Create: connect an allowed owner wallet, review fixed limits, sign the canonical permission. The backend verifies the signature and deploys the contract with a root agent. Deployment gas is paid in WBT by `MANDATE_DEPLOYER_KEY` when configured, falling back to the executor key. A separate deployment signer does not change the contract enforcer or owner. Insufficient gas returns `DEPLOYER_GAS_INSUFFICIENT`; successful creation selects the new permission in the dashboard.
+- Fund: approve a USDT transfer from the owner wallet into the deployed vault.
+- Delegate: select a parent and sign a narrower child allocation.
+- Withdraw: return unused USDT to the owner wallet.
+- Revoke: permanently block future spending; withdrawals remain available.
+
+Funding, withdrawal, and revocation are transaction drafts sent only by the connected wallet. Agent spending uses the active RainbowKit/wagmi connector, including WalletConnect. A signed-in account can add its connected wallet to spending scope by signing a five-minute ownership challenge. The server verifies the signature and issues an HttpOnly ownership cookie bound to that account and website for eight hours. An optional, unverified profile wallet is not sufficient. Existing local operator wallets remain available; managing an existing permission still requires its actual owner. Creating a root agent does not automatically rebind the running MCP instance; configure its worker to the intended root or child. Missing deployments stay visible with spending disabled.
 
 ## Auth: World vs MCP vs SDK (three doors)
 
@@ -61,7 +68,7 @@ Agent (Cursor / Claude)
   MCP process with BAGSEVEN_MCP_WORKER
                  └─ NEVER holds World ID credentials
                  └─ check_entitlement / consume_entitlement / paid_run
-                 └─ Daemon enforces dual-gate against the human-minted grant
+                 └─ Daemon checks prepaid access; new payments also require a spending permission
 ```
 
 ## Live tracks
@@ -84,6 +91,6 @@ Merchants define a **Plan** (feature + USDT + credits). `createCheckoutSession` 
 
 ## Win angle
 
-> “We don’t give agents wallets. Humans approve mint once under World. Settlement is Whitechain. Access lives on Arkiv until TTL. Humans check via SDK. Agents consume via MCP — and paid calls dual-gate.”
+> “We don’t give agents wallets. Humans approve mint once under World. Settlement is Whitechain. Access lives on Arkiv until TTL. Humans check via SDK. Agents consume via MCP — and new payments also check spending permissions.”
 
 Demo (daemon running): `pnpm sdk:demo` — human `checkEntitlement` → agent consume → living grant evaporates.

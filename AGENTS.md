@@ -1,6 +1,6 @@
 # Agent instructions (Bagseven)
 
-Monorepo for **Bagseven**: humans mint living Arkiv entitlements; humans and agents `checkEntitlement` via `@bagseven/sdk`; agents spend only through MCP under a **dual-gate** (mandate remaining ∧ living grant). Prefer the live product path — no extra UIs, ports, or demo apps.
+Monorepo for **Bagseven**: humans mint living Arkiv entitlements; humans and agents `checkEntitlement` via `@bagseven/sdk`; agents make new payments through MCP under a **dual-gate** (mandate remaining ∧ living grant); prepaid credit usage needs only a living grant. Prefer the live product path — no extra UIs, ports, or demo apps.
 
 ## Architecture
 
@@ -26,7 +26,9 @@ Do **not** add another web app, revive `bag-dashboard`, or put an inspector on `
 | Renewal | `grant.renewal_enabled` (cancel does **not** kill `paid_through`) |
 | Access | Arkiv grant `remaining` + `paid_through` (queryable object, not a private `/check`) |
 
-`paid_run` / `bagseven_fetch` fail closed without both mandate capacity and a living grant (`BAGSEVEN_REQUIRE_GRANT=true`). When `BAGSEVEN_MCP_WORKER` is not a policy agent, MCP status is `entitlements_only` — grant reads and minting still work; `paid_run` and mandate spend via `bagseven_fetch` need agent registration.
+`paid_run`, `consume_entitlement`, and SDK `/v1/usage/consume` use already-paid access: require a living grant, holder authorization, worker binding when supplied, and enough credits. They do not check a USDT mandate. Credit units are not payment amounts.
+
+New payments through `bagseven_fetch` still require an active agent, mandate capacity, and a living grant (`BAGSEVEN_REQUIRE_GRANT=true`). `entitlements_only` MCP connections can use prepaid credits without a deployed mandate. Dashboard `/app/mandate` manages agent spending permissions: owner-signed create/delegate, owner-wallet funding/withdrawal/revoke. Never expose private keys or auto-send wallet transaction drafts.
 
 ## Auth + email
 

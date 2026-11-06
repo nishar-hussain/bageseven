@@ -2,13 +2,14 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
+import { SpendingControls } from '../../../components/app/SpendingControls';
 import { PageHeader } from '../../../components/app/ui';
-import { entitlementsApi, type Grant, type MumbaiStatus } from '../../../lib/entitlements-client';
+import { entitlementsApi, type Grant } from '../../../lib/entitlements-client';
 import { mandateApi, type MandateOverview, type MandateSummary } from '../../../lib/mandate-client';
 import { featureLabel, shortId } from '../../../lib/use-operator';
 
 export default function MandatePage() {
-  const [status, setStatus] = useState<MumbaiStatus | null>(null);
+  const [revision, setRevision] = useState(0);
   const [grants, setGrants] = useState<Grant[]>([]);
   const [mandates, setMandates] = useState<MandateSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -19,12 +20,11 @@ export default function MandatePage() {
   const loadList = useCallback(async () => {
     setErr('');
     try {
-      const [s, list, live] = await Promise.all([
-        entitlementsApi.status().catch(() => null),
+      const [list, live] = await Promise.all([
         mandateApi.list('owner'),
         entitlementsApi.live().catch(() => ({ grants: [] as Grant[] })),
       ]);
-      setStatus(s);
+      setRevision(n => n + 1);
       setGrants(live.grants ?? []);
       const rows = list.mandates ?? [];
       setMandates(rows);
@@ -60,64 +60,24 @@ export default function MandatePage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedId]);
+  }, [selectedId, revision]);
 
-  const dualFeature = status?.dual_gate.feature ?? 'ocr';
+  const dualFeature = 'ocr';
   const livingForDual = grants.filter((g) => g.feature === dualFeature && Number(g.remaining) > 0);
-  const gateReady = mandates.length > 0 && livingForDual.length > 0;
 
   return (
     <div className="mx-auto max-w-4xl space-y-5">
-      <PageHeader title="Mandate" description="Agent spend ceiling. Needs a living entitlement too." />
+      <PageHeader title="Agent spending permissions" description="Set USDT budgets for automated purchases. Prepaid service access is managed separately." />
 
-      <div
-        className={`rounded-2xl border px-4 py-3 text-sm ${
-          gateReady
-            ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
-            : 'border-[var(--line)] bg-[var(--soft)] text-[var(--ink2)]'
-        }`}
-      >
-        <div className="font-semibold text-[var(--ink)]">Dual-gate status</div>
-        <ol className="mt-2 list-decimal space-y-1 pl-5">
-          <li>
-            Mandate funded:{' '}
-            {mandates.length > 0 ? (
-              <span className="font-medium text-[var(--good)]">yes ({mandates.length})</span>
-            ) : (
-              <span className="font-medium text-[var(--deny)]">no — seed / fund below</span>
-            )}
-          </li>
-          <li>
-            Living entitlement for <code className="fi-mono text-xs">{dualFeature}</code>:{' '}
-            {livingForDual.length > 0 ? (
-              <span className="font-medium text-[var(--good)]">
-                yes ({livingForDual.length} · {livingForDual.reduce((a, g) => a + Number(g.remaining), 0)} credits)
-              </span>
-            ) : (
-              <span className="font-medium text-[var(--deny)]">
-                no —{' '}
-                <Link href="/app/grants?tab=plans" className="underline">
-                  sell a plan
-                </Link>{' '}
-                or{' '}
-                <Link href="/app/grants?tab=issue" className="underline">
-                  issue access
-                </Link>
-              </span>
-            )}
-          </li>
-          <li>
-            Agent MCP:{' '}
-            <Link href="/app/mcp" className="font-medium text-[var(--blue)] underline">
-              Connect agent
-            </Link>
-          </li>
-        </ol>
+      <div className="rounded-2xl border border-[var(--line)] bg-white px-4 py-3 text-sm">
+        <p className="font-semibold">Prepaid access and new payments are separate</p>
+        <p className="mt-2 text-[var(--muted)]">Agents use active entitlements and remaining credits through MCP without funding a mandate. Set up a spending permission below only when an agent should make new USDT payments automatically.</p>
+        <Link href="/app/grants" className="mt-2 inline-block font-medium text-[var(--blue)] underline">Manage service access</Link>
       </div>
 
       {livingForDual.length > 0 && (
         <div className="rounded-2xl border border-[var(--line)] bg-white p-4 shadow-[var(--sh)]">
-          <h2 className="text-sm font-semibold">Entitlements feeding this gate</h2>
+          <h2 className="text-sm font-semibold">Prepaid service access</h2>
           <ul className="mt-2 divide-y divide-[var(--line)] text-sm">
             {livingForDual.slice(0, 5).map((g) => (
               <li key={g.id} className="flex justify-between gap-3 py-2">
@@ -136,7 +96,7 @@ export default function MandatePage() {
 
       <div className="rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
         <div className="mb-4 flex items-center justify-between gap-3">
-          <h2 className="text-base font-semibold">Your mandates</h2>
+          <h2 className="text-base font-semibold">Your spending permissions</h2>
           <button
             type="button"
             onClick={() => void loadList()}
@@ -150,10 +110,9 @@ export default function MandatePage() {
         {err && <p className="text-sm text-[var(--deny)]">{err}</p>}
         {!loading && mandates.length === 0 && !err && (
           <div className="py-6 text-center text-sm">
-            <p className="font-medium">No mandates in the policy DB yet</p>
+            <p className="font-medium">No agent spending permissions yet</p>
             <p className="mt-2 text-[var(--muted)]">
-              Local Anvil path: run <code className="fi-mono text-xs">pnpm seed:local</code> so a funded BagMandate
-              exists. Then agents can spend under dual-gate.
+              Create a permission to authorize new agent payments. You can already use any active prepaid entitlement.
             </p>
           </div>
         )}
@@ -182,19 +141,20 @@ export default function MandatePage() {
         </ul>
       </div>
 
-      {overview && (
+      <SpendingControls selectedId={selectedId} overview={overview} onChange={loadList} onCreated={setSelectedId} />
+
+      {overview?.mandate_id === selectedId && overview && (
         <div className="space-y-4 rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
           <h2 className="text-base font-semibold">Live capacity</h2>
           {overview.onchain_state.status === 'unavailable' && (
             <p className="rounded-xl border border-orange-200 bg-[var(--warn-t)] px-3 py-2 text-sm">
-              On-chain state unavailable: {overview.onchain_state.message}. DB terms still shown; drawability is 0 until
-              RPC is back.
+              On-chain state unavailable: {overview.onchain_state.message} Signed terms remain visible. Spending is disabled until the deployment and network can be verified.
             </p>
           )}
           <dl className="grid gap-3 text-sm sm:grid-cols-3">
             <div>
               <dt className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Vault</dt>
-              <dd className="mt-1 text-2xl font-semibold tabular-nums text-[var(--good)]">{overview.vault_available}</dd>
+              <dd className="mt-1 text-2xl font-semibold tabular-nums text-[var(--good)]">{overview.onchain_state.status === 'available' ? overview.vault_available : 'Unavailable'}</dd>
             </div>
             <div>
               <dt className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Can draw now</dt>
@@ -217,13 +177,13 @@ export default function MandatePage() {
               <dd className="mt-1 fi-mono text-xs">{overview.terms.contract_address ?? '—'}</dd>
             </div>
             <div>
-              <dt className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Dual-gate feature</dt>
-              <dd className="mt-1 fi-mono text-sm">{dualFeature}</dd>
+              <dt className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Payment entitlement feature</dt>
+              <dd className="mt-1 fi-mono text-sm">research_fetch</dd>
             </div>
           </dl>
 
           <div>
-            <h3 className="text-sm font-semibold">Agents on this mandate</h3>
+            <h3 className="text-sm font-semibold">Agents authorized by this permission</h3>
             {overview.agents.length === 0 ? (
               <p className="mt-2 text-sm text-[var(--muted)]">No agents yet — connect via MCP.</p>
             ) : (

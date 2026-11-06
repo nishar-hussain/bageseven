@@ -53,7 +53,27 @@ describe('live payment and worker binding', () => {
   });
 });
 
-describe('paid work dual gate', () => {
+describe('prepaid access without a spending mandate', () => {
+  it('auto-selects an unbound paid grant for the authenticated holder without a payment worker', async () => {
+    const capacity = vi.fn();
+    const { app, store } = await fixture({ resolveMandateCapacity: capacity });
+    try {
+      await store.mint({ holder: 'another-holder', feature: 'ocr', remaining: '999', ttl_seconds: 120 });
+      const mine = await store.mint({ holder: 'my-holder', feature: 'ocr', remaining: '2', ttl_seconds: 120 });
+      const res = await app.inject({ method: 'POST', url: '/internal/grants/paid-run',
+        headers: { 'x-bagseven-actor': 'my-holder' }, payload: { feature: 'ocr', worker_id: 'unregistered-agent', amount: '1' } });
+      expect(res.statusCode).toBe(200); expect(res.json().grant).toMatchObject({ id: mine.id, remaining: '1' });
+      expect(capacity).not.toHaveBeenCalled();
+    } finally { await app.close(); }
+  });
+  it('rejects another feature even when the caller supplies a valid grant id', async () => {
+    const { app, store, grant } = await fixture();
+    try {
+      const res = await app.inject({ method: 'POST', url: '/internal/grants/paid-run', payload: { grant_id: grant.id, feature: 'research_fetch' } });
+      expect(res.statusCode).toBe(403); expect(res.json().error.code).toBe('FEATURE_MISMATCH');
+      expect((await store.get(grant.id))?.remaining).toBe('3');
+    } finally { await app.close(); }
+  });
   it.each(['mint', 'buy-credits'])('binds dashboard %s grants to the configured worker and runs without a worker payload', async (route) => {
     vi.stubEnv('BAGSEVEN_MCP_WORKER', 'configured-worker');
     const resolve = vi.fn(async () => ({ ok: true }));
@@ -72,9 +92,9 @@ describe('paid work dual gate', () => {
       vi.stubEnv('BAGSEVEN_MCP_WORKER', 'different-worker');
       const response = await app.inject({ method: 'POST', url: '/internal/grants/paid-run', payload: { grant_id: grant.id, amount: '1' } });
       expect(response.statusCode).toBe(200);
-      expect(resolve).toHaveBeenCalledWith('configured-worker', '1');
+      expect(resolve).not.toHaveBeenCalled();
       expect(response.json().grant.remaining).toBe('2');
-      expect(response.json().dual_gate).toEqual({ mandate: 'ok', grant: 'ok' });
+      expect(response.json().dual_gate).toEqual({ mandate: 'not_required', grant: 'ok' });
     } finally { await app.close(); }
   });
 
@@ -99,63 +119,67 @@ describe('paid work dual gate', () => {
       expect(grant.worker_id).toBeUndefined();
       const response = await app.inject({ method: 'POST', url: '/internal/grants/paid-run', payload: { grant_id: grant.id } });
       expect(response.statusCode).toBe(200);
-      expect(resolve).toHaveBeenCalledWith('configured-worker', '1');
+      expect(resolve).not.toHaveBeenCalled();
       expect(response.json().grant.remaining).toBe('2');
     } finally { await app.close(); }
   });
 
-  it('checks an explicitly requested worker instead of silently using the default', async () => {
+  it('uses prepaid credits without resolving the requested worker spending budget', async () => {
     vi.stubEnv('BAGSEVEN_MCP_WORKER', 'configured-worker');
     const resolve = vi.fn(async () => ({ ok: false, reason: 'worker unavailable' }));
     const { app, store, grant } = await fixture({ resolveMandateCapacity: resolve });
     try {
       const response = await app.inject({ method: 'POST', url: '/internal/grants/paid-run', payload: { grant_id: grant.id, worker_id: 'explicit-worker' } });
-      expect(response.statusCode).toBe(403);
-      expect(resolve).toHaveBeenCalledExactlyOnceWith('explicit-worker', '1');
-      expect((await store.get(grant.id))?.remaining).toBe('3');
+      expect(response.statusCode).toBe(200);
+      expect(resolve).not.toHaveBeenCalled();
+      expect((await store.get(grant.id))?.remaining).toBe(response.json().grant.remaining);
+      expect(Number(response.json().grant.remaining)).toBeLessThan(3);
     } finally { await app.close(); }
   });
 
-  it('preserves credits when the configured worker has insufficient mandate capacity', async () => {
+  it('allows prepaid access when the configured worker has no mandate capacity', async () => {
     vi.stubEnv('BAGSEVEN_MCP_WORKER', 'configured-worker');
     const resolve = vi.fn(async () => ({ ok: false, reason: 'mandate unavailable' }));
     const { app, store, grant } = await fixture({ resolveMandateCapacity: resolve });
     try {
       const response = await app.inject({ method: 'POST', url: '/internal/grants/paid-run', payload: { grant_id: grant.id, amount: '2' } });
-      expect(response.statusCode).toBe(403);
-      expect(response.json().error.message).toContain('MANDATE_EMPTY');
-      expect(resolve).toHaveBeenCalledWith('configured-worker', '2');
-      expect((await store.get(grant.id))?.remaining).toBe('3');
+      expect(response.statusCode).toBe(200);
+      expect(response.json().dual_gate.mandate).toBe('not_required');
+      expect(resolve).not.toHaveBeenCalled();
+      expect((await store.get(grant.id))?.remaining).toBe(response.json().grant.remaining);
+      expect(Number(response.json().grant.remaining)).toBeLessThan(3);
     } finally { await app.close(); }
   });
 
-  it('rejects a missing worker even when the request asks to skip the mandate gate', async () => {
+  it('allows prepaid access without a registered payment worker', async () => {
     const { app, store, grant } = await fixture({ resolveMandateCapacity: async () => ({ ok: true }) });
     try {
       const response = await app.inject({ method: 'POST', url: '/internal/grants/paid-run', payload: { grant_id: grant.id, skip_mandate_gate: true } });
-      expect(response.statusCode).toBe(403);
-      expect(response.json().error.message).toContain('MANDATE_REQUIRED');
-      expect((await store.get(grant.id))?.remaining).toBe('3');
+      expect(response.statusCode).toBe(200);
+      expect(response.json().dual_gate.mandate).toBe('not_required');
+      expect((await store.get(grant.id))?.remaining).toBe(response.json().grant.remaining);
+      expect(Number(response.json().grant.remaining)).toBeLessThan(3);
     } finally { await app.close(); }
   });
 
-  it('fails closed when mandate resolution is unavailable', async () => {
+  it('uses prepaid access when mandate resolution is unavailable', async () => {
     vi.stubEnv('BAGSEVEN_MCP_WORKER', 'configured-worker');
     const { app, grant } = await fixture();
     try {
       const response = await app.inject({ method: 'POST', url: '/internal/grants/paid-run', payload: { grant_id: grant.id } });
-      expect(response.statusCode).toBe(403);
+      expect(response.statusCode).toBe(200);
     } finally { await app.close(); }
   });
 
-  it('checks the requested amount and preserves credits when mandate capacity is denied', async () => {
+  it('treats amount as credits rather than a USDT spending limit', async () => {
     const resolve = vi.fn(async () => ({ ok: false, reason: 'window exhausted' }));
     const { app, store, grant } = await fixture({ resolveMandateCapacity: resolve });
     try {
       const response = await app.inject({ method: 'POST', url: '/internal/grants/paid-run', payload: { grant_id: grant.id, worker_id: 'worker', amount: '2' } });
-      expect(response.statusCode).toBe(403);
-      expect(resolve).toHaveBeenCalledWith('worker', '2');
-      expect((await store.get(grant.id))?.remaining).toBe('3');
+      expect(response.statusCode).toBe(200);
+      expect(resolve).not.toHaveBeenCalled();
+      expect((await store.get(grant.id))?.remaining).toBe(response.json().grant.remaining);
+      expect(Number(response.json().grant.remaining)).toBeLessThan(3);
     } finally { await app.close(); }
   });
 
@@ -228,7 +252,7 @@ describe('paid work dual gate', () => {
         payload: { feature: 'ocr', amount: '1', idempotencyKey: 'human-1' },
       });
       expect(humanConsume.statusCode).toBe(200);
-      expect(humanConsume.json().dual_gate.mandate).toBe('skipped');
+      expect(humanConsume.json().dual_gate.mandate).toBe('not_required');
       expect(humanConsume.json().entitlement.remaining).toBe('3');
 
       const agentConsume = await app.inject({
@@ -238,8 +262,8 @@ describe('paid work dual gate', () => {
         payload: { feature: 'ocr', holder: 'sdk-human', amount: '1', idempotencyKey: 'agent-1' },
       });
       expect(agentConsume.statusCode).toBe(200);
-      expect(resolve).toHaveBeenCalled();
-      expect(agentConsume.json().dual_gate).toEqual({ mandate: 'ok', grant: 'ok' });
+      expect(resolve).not.toHaveBeenCalled();
+      expect(agentConsume.json().dual_gate).toEqual({ mandate: 'not_required', grant: 'ok' });
 
       const credits = await app.inject({
         method: 'POST',

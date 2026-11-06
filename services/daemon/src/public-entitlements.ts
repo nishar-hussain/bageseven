@@ -183,6 +183,7 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
     }
     const grant = await store.get(grantId);
     if (!grant) throw new ApiError(404, 'GRANT_NOT_FOUND', 'grant not found');
+    if (grant.feature !== body.feature) throw new ApiError(403, 'FEATURE_MISMATCH', 'grant does not cover the requested feature');
     if (grant.holder !== holder) throw new ApiError(403, 'HOLDER_MISMATCH', 'grant holder does not match');
 
     // Boolean features are on/off until TTL — check/access, do not burn credits.
@@ -192,29 +193,19 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
       return {
         entitlement: view,
         grant,
-        dual_gate: { mandate: 'skipped', grant: 'ok' },
+        dual_gate: { mandate: 'not_required', grant: 'ok' },
         note: 'boolean_feature',
       };
     }
 
-    const dualGate = principal.kind === 'sk';
-    if (dualGate && deps.resolveMandateCapacity) {
-      const worker = grant.worker_id?.trim() || process.env.BAGSEVEN_MCP_WORKER?.trim();
-      if (!worker) {
-        throw new ApiError(403, 'DUAL_GATE', 'MANDATE_REQUIRED: paid consume needs a worker bound to a funded mandate');
-      }
-      const capacity = await deps.resolveMandateCapacity(worker, body.amount);
-      if (!capacity.ok) {
-        throw new ApiError(403, 'DUAL_GATE', `MANDATE_EMPTY: ${capacity.reason ?? 'mandate capacity insufficient'}`, capacity);
-      }
-    }
-
+    // Prepaid credits are access, regardless of whether a human or an agent
+    // uses them. New payments are authorized on the worker spending path.
     const key = (body.idempotencyKey ?? body.idempotency_key)!.trim();
     const next = await store.consume(grantId, body.amount, key);
     return {
       entitlement: entitlementView(next, next.feature),
       grant: next,
-      dual_gate: dualGate ? { mandate: 'ok', grant: 'ok' } : { mandate: 'skipped', grant: 'ok' },
+      dual_gate: { mandate: 'not_required', grant: 'ok' },
     };
   });
 

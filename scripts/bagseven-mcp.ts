@@ -50,10 +50,10 @@ async function daemon(method: string, path: string, body?: unknown): Promise<unk
 
 const text = (value: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }] });
 
-function buildServer(): McpServer {
-  if (!WORKER) throw new Error('BAGSEVEN_MCP_WORKER must bind this MCP instance to one worker');
+export function buildServer(worker = WORKER, callDaemon = daemon): McpServer {
+  if (!worker) throw new Error('BAGSEVEN_MCP_WORKER must bind this MCP instance to one worker');
   const server = new McpServer({ name: 'bagseven-mcp', version: '0.1.0' }, { capabilities: { tools: {} } });
-  registerManagementTools(server, WORKER, daemon);
+  registerManagementTools(server, worker, callDaemon);
 
   server.registerTool(
     'bagseven_status',
@@ -65,18 +65,18 @@ function buildServer(): McpServer {
     },
     async () => {
       try {
-        return text(await daemon('POST', `/internal/workers/${encodeURIComponent(WORKER)}/status`));
+        return text(await callDaemon('POST', `/internal/workers/${encodeURIComponent(worker)}/status`));
       } catch (error) {
         const message = (error as Error).message;
         if (!/NOT_FOUND|no agent found/i.test(message)) throw error;
-        const tracks = await daemon('GET', '/internal/mumbai/status');
+        const tracks = await callDaemon('GET', '/internal/mumbai/status');
         // All living entitlements — do not force OCR filter
-        const grants = await daemon('GET', '/internal/grants/live');
+        const grants = await callDaemon('GET', '/internal/grants/live');
         return text({
           mode: 'entitlements_only',
-          worker: WORKER,
+          worker: worker,
           note:
-            'This BAGSEVEN_MCP_WORKER is not registered as a policy agent. Grant reads and minting still work. Register a mandate/agent for paid_run and bagseven_fetch mandate spend.',
+            'This BAGSEVEN_MCP_worker is not registered as a policy agent. Grant reads and minting still work. Prepaid paid_run remains available. Register a spending permission/agent for new payments through bagseven_fetch.',
           tracks,
           grants,
         });
@@ -111,7 +111,7 @@ function buildServer(): McpServer {
             recipient: recipient?.trim() || undefined,
             reason: reason?.trim() || undefined, idempotency_key,
           };
-      return text(await daemon('POST', `/internal/workers/${encodeURIComponent(WORKER)}/fetch`, request));
+      return text(await callDaemon('POST', `/internal/workers/${encodeURIComponent(worker)}/fetch`, request));
     },
   );
 
@@ -129,8 +129,8 @@ function buildServer(): McpServer {
       },
     },
     async ({ mandate_id, parent_agent_id, operator_address, share_percent, signature }) => {
-      const current = await daemon('POST', `/internal/workers/${encodeURIComponent(WORKER)}/status`) as { mandate: { id: string } };
-      return text(await daemon('POST', `/internal/workers/${encodeURIComponent(WORKER)}/spawn`, { mandate_id: mandate_id ?? current.mandate.id, parent_agent_id: parent_agent_id ?? WORKER, operator_address, share_percent, signature }));
+      const current = await callDaemon('POST', `/internal/workers/${encodeURIComponent(worker)}/status`) as { mandate: { id: string } };
+      return text(await callDaemon('POST', `/internal/workers/${encodeURIComponent(worker)}/spawn`, { mandate_id: mandate_id ?? current.mandate.id, parent_agent_id: parent_agent_id ?? worker, operator_address, share_percent, signature }));
     },
   );
 
@@ -152,7 +152,7 @@ function buildServer(): McpServer {
       if (holder) params.set('holder', holder);
       if (feature?.trim()) params.set('feature', feature.trim());
       const qs = params.toString();
-      return text(await daemon('GET', `/internal/grants/live${qs ? `?${qs}` : ''}`));
+      return text(await callDaemon('GET', `/internal/grants/live${qs ? `?${qs}` : ''}`));
     },
   );
 
@@ -163,12 +163,12 @@ function buildServer(): McpServer {
       description: 'Choose a provider plan and open a real wallet checkout. World consent is handled during OAuth; never paste World tokens or private keys. If no plan is selected, returns matching plans.',
       inputSchema: { plan_id: z.string().optional(), feature: z.string().default('ocr'), holder: z.string().optional() },
     }, async ({ plan_id, feature, holder }) => {
-      const plans = await daemon('GET', '/v1/plans') as { plans: Array<{ id: string; feature: string; active: boolean }> };
+      const plans = await callDaemon('GET', '/v1/plans') as { plans: Array<{ id: string; feature: string; active: boolean }> };
       const matching = plans.plans.filter(plan => plan.active && plan.feature === feature);
       if (!plan_id) return text({ requires_plan: true, plans: matching, next_step: 'Choose plan_id and call this tool again to open wallet checkout.' });
       if (!matching.some(plan => plan.id === plan_id)) throw new Error('Choose an active provider plan for this feature');
-      const bound = await daemon('POST', `/internal/workers/${encodeURIComponent(WORKER)}/status`) as { mandate: { owner_address: string } };
-      const result = await daemon('POST', '/v1/checkout-sessions', { plan_id, holder: holder ?? `wallet:${bound.mandate.owner_address.toLowerCase()}`, worker_id: WORKER }) as { session: { id: string } };
+      const bound = await callDaemon('POST', `/internal/workers/${encodeURIComponent(worker)}/status`) as { mandate: { owner_address: string } };
+      const result = await callDaemon('POST', '/v1/checkout-sessions', { plan_id, holder: holder ?? `wallet:${bound.mandate.owner_address.toLowerCase()}`, worker_id: worker }) as { session: { id: string } };
       const base = (process.env.NEXT_PUBLIC_CONSOLE_URL || 'http://localhost:3000').replace(/\/$/, '');
       return text({ ...result, checkout_url: `${base}/checkout?session=${encodeURIComponent(result.session.id)}`, requires_wallet_payment: true });
     });
@@ -189,7 +189,7 @@ function buildServer(): McpServer {
       },
     },
     async (input) => {
-      const result = await daemon('POST', '/v1/checkout-sessions', { ...input, worker_id: input.worker_id ?? WORKER }) as { session: { id: string } };
+      const result = await callDaemon('POST', '/v1/checkout-sessions', { ...input, worker_id: input.worker_id ?? worker }) as { session: { id: string } };
       const consoleUrl = (process.env.NEXT_PUBLIC_CONSOLE_URL || 'http://localhost:3000').replace(/\/$/, '');
       return text({ ...result, checkout_url: `${consoleUrl}/checkout?session=${encodeURIComponent(result.session.id)}` });
     },
@@ -206,9 +206,9 @@ function buildServer(): McpServer {
       },
     },
     async ({ feature, holder }) => {
-      const params = new URLSearchParams({ feature, worker_id: WORKER });
+      const params = new URLSearchParams({ feature, worker_id: worker });
       if (holder) params.set('holder', holder);
-      const live = (await daemon('GET', `/internal/grants/live?${params.toString()}`)) as { grants?: Array<{ remaining: string; enabled?: boolean; paid_through?: string; id: string; feature: string }> };
+      const live = (await callDaemon('GET', `/internal/grants/live?${params.toString()}`)) as { grants?: Array<{ remaining: string; enabled?: boolean; paid_through?: string; id: string; feature: string }> };
       const ranked = [...(live.grants ?? [])].sort((a, b) => Number(b.remaining) - Number(a.remaining));
       const grant = ranked[0];
       const enabled = Boolean(grant && Number(grant.remaining) > 0);
@@ -238,13 +238,13 @@ function buildServer(): McpServer {
     },
     async (input) =>
       text(
-        await daemon('POST', '/internal/grants/paid-run', {
+        await callDaemon('POST', '/internal/grants/paid-run', {
           feature: input.feature,
           holder: input.holder,
           amount: input.amount,
           idempotency_key: input.idempotency_key ?? `mcp-consume-${Date.now()}`,
           grant_id: input.grant_id,
-          worker_id: WORKER,
+          worker_id: worker,
         }),
       ),
   );
@@ -252,9 +252,9 @@ function buildServer(): McpServer {
   server.registerTool(
     'paid_run',
     {
-      title: 'Dual-gate paid work unit',
+      title: 'Use prepaid service credits',
       description:
-        'Spend one unit of a living entitlement. Pass feature to target a SKU, or omit to auto-pick the richest living grant. Pass grant_id only when targeting a specific grant.',
+        'Use credits from a living entitlement without making a new payment or requiring a spending mandate. Pass feature to target a SKU, or omit to auto-pick the richest living grant. Pass grant_id only when targeting a specific grant.',
       inputSchema: {
         feature: z.string().optional().describe('Feature SKU (ocr | research_fetch); omit to auto-pick any'),
         grant_id: z.string().optional().describe('Optional specific grant UUID; omit to auto-pick'),
@@ -265,13 +265,13 @@ function buildServer(): McpServer {
     },
     async (input) =>
       text(
-        await daemon('POST', '/internal/grants/paid-run', {
+        await callDaemon('POST', '/internal/grants/paid-run', {
           feature: input.feature?.trim() || undefined,
           grant_id: input.grant_id?.trim() || undefined,
           amount: input.amount,
           work: input.work,
           idempotency_key: input.idempotency_key,
-          worker_id: WORKER,
+          worker_id: worker,
         }),
       ),
   );
@@ -283,27 +283,28 @@ function buildServer(): McpServer {
       description: 'Turns renewal off without killing access. Grant stays queryable until paid_through (three-clock rule).',
       inputSchema: { grant_id: z.string().min(1) },
     },
-    async ({ grant_id }) => text(await daemon('POST', `/internal/grants/${encodeURIComponent(grant_id)}/cancel-renewal`)),
+    async ({ grant_id }) => text(await callDaemon('POST', `/internal/grants/${encodeURIComponent(grant_id)}/cancel-renewal`)),
   );
 
   server.registerTool(
     'explain_denial',
     {
-      title: 'Explain dual-gate denial',
-      description: 'Structured why: World / expired / empty / mandate — without performing the action.',
+      title: 'Explain access or payment denial',
+      description: 'Explain access refusal. Choose operation=payment to also check the agent spending permission, without sending a payment.',
       inputSchema: {
         grant_id: z.string().optional(),
         feature: z.string().optional(),
         holder: z.string().optional(),
         amount: z.string().default('1'),
+        operation: z.enum(['access', 'payment']).default('access'),
         world_proof_id: z.string().optional(),
         world_denied: z.boolean().optional(),
         outcome: z.enum(['ok', 'denied', 'expired', 'cancelled', 'invalid']).optional(),
       },
     },
-    async (input) => text(await daemon('POST', '/internal/grants/explain-denial', {
+    async (input) => text(await callDaemon('POST', '/internal/grants/explain-denial', {
       ...input,
-      worker_id: WORKER,
+      worker_id: worker,
     })),
   );
 
@@ -483,7 +484,7 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
+if (import.meta.url === `file://${process.argv[1]}`) main().catch((err) => {
   console.error('[bagseven-mcp] fatal', err);
   process.exit(1);
 });

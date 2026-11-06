@@ -1,3 +1,4 @@
+import { readMandateAvailability, readMandateSnapshot, type ChainState } from './mandate-state.js';
 import { toUnits, fromUnits } from './usdt-units.js';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -7,7 +8,7 @@ import { agents, mandates, providers, refusals, reservations, transactions, vaul
 import { validateMoney, sub, min, max } from '@bagseven/money';
 import { ApiError, idempotencyOnSend, idempotencyPreHandler, type ServiceDeps } from '@bagseven/server';
 import { canonicalMandate, canonicalSpawn, canonicalWithdraw, MandateClient, whitechainConfig, recoverEip191, recoverSpendIntentSigner, workerKey } from '@bagseven/onchain';
-import { recoverMessageAddress, type Address } from 'viem';
+import { encodeFunctionData, parseAbi, recoverMessageAddress, type Address } from 'viem';
 
 const BOUNDS: Record<number, string> = {
   1: 'MandateInactive',
@@ -93,6 +94,16 @@ function mandateClient(config: NodeJS.ProcessEnv): MandateClient {
   });
 }
 
+/** Deployment pays gas; it must not change the executor enforced by the vault. */
+function deploymentClient(config: NodeJS.ProcessEnv): MandateClient {
+  if (!config.MANDATE_DEPLOYER_KEY?.trim()) return mandateClient(config);
+  return new MandateClient(config.MANDATE_DEPLOYER_KEY.trim() as `0x${string}`, {
+    rpcUrl: config.RPC_URL ?? 'http://localhost:8545',
+    rpcFallbackUrl: config.RPC_FALLBACK_URL,
+    chainId: Number(config.CHAIN_ID ?? 1874),
+  });
+}
+
 /** Owner-key client, used for owner-only on-chain actions (withdraw/revoke). */
 function ownerClient(config: NodeJS.ProcessEnv): MandateClient {
   const key = config.DAEMON_OWNER_KEY ?? config.OWNER_DEV_KEY;
@@ -142,6 +153,62 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
     return mandate;
   };
 
+  app.get('/v1/mandate-config', async () => {
+    const rail = whitechainConfig(config);
+    return { chain_id: rail.chainId, token: rail.usdt, rpc_url: rail.chainId === 1874 ? 'https://rpc.testnet.whitechain.io' : 'https://rpc.whitechain.io',
+      operator_address: mandateClient(config).address, deployer_address: deploymentClient(config).address };
+  });
+
+  app.post('/v1/mandates/prepare', async req => {
+    const body = createMandateSchema.omit({ signature: true }).parse(req.body);
+    if (body.chain_id !== Number(config.CHAIN_ID ?? 1874)) throw new ApiError(400, 'CHAIN_MISMATCH', 'Select the configured Whitechain network');
+    for (const amount of [body.budget_per_window, body.lifetime_cap, body.per_purchase_cap]) {
+      validateMoney(amount);
+      if (toUnits(amount) <= 0n) throw new ApiError(400, 'INVALID_AMOUNT', 'Spending limits must be positive');
+    }
+    return { payload: body, message: canonicalMandate({ owner: body.owner_address.toLowerCase() as Address,
+      operator: body.operator_address.toLowerCase() as Address, budgetPerWindow: body.budget_per_window,
+      windowSeconds: body.window_seconds, lifetimeCap: body.lifetime_cap, perPurchaseCap: body.per_purchase_cap,
+      perSellerPct: body.per_seller_pct, maxDepth: body.max_depth, chainId: body.chain_id }) };
+  });
+
+  app.post('/v1/mandates/:id/delegation', async req => {
+    const { id } = req.params as { id: string };
+    await getMandate(id);
+    const body = spawnSchema.omit({ signature: true }).parse(req.body);
+    if (body.chain_id !== Number(config.CHAIN_ID ?? 1874)) throw new ApiError(400, 'CHAIN_MISMATCH', 'Select the configured Whitechain network');
+    return { payload: body, message: canonicalSpawn({ mandateId: id, parentAgentId: body.parent_agent_id,
+      operator: body.operator_address.toLowerCase() as Address, sharePercent: body.share_percent, chainId: body.chain_id }) };
+  });
+
+  // Drafts only: the owner's wallet sends these transactions and pays gas.
+  app.post('/v1/mandates/:id/transaction', async req => {
+    const { id } = req.params as { id: string };
+    const body = z.object({ action: z.enum(['fund', 'withdraw', 'revoke']), amount: z.string().optional() }).parse(req.body);
+    const mandate = await getMandate(id);
+    const snapshot = await readMandateSnapshot(mandateClient(config), mandate.contractAddress as Address | null);
+    if (snapshot.chain.status === 'unavailable') throw new ApiError(409, 'MANDATE_UNAVAILABLE', snapshot.chain.message);
+    const contract = mandate.contractAddress as Address;
+    let to = contract;
+    let data: `0x${string}`;
+    if (body.action === 'revoke') {
+      data = encodeFunctionData({ abi: parseAbi(['function revoke()']), functionName: 'revoke' });
+    } else {
+      const amount = toUnits(body.amount ?? '0');
+      if (amount <= 0n) throw new ApiError(400, 'INVALID_AMOUNT', 'Amount must be greater than zero');
+      if (body.action === 'fund') {
+        if (snapshot.revoked) throw new ApiError(409, 'MANDATE_INACTIVE', 'Do not fund a revoked spending permission');
+        if (snapshot.token?.toLowerCase() !== whitechainConfig(config).usdt.toLowerCase()) throw new ApiError(409, 'MANDATE_TOKEN_MISMATCH', 'This vault uses another token');
+        to = snapshot.token!;
+        data = encodeFunctionData({ abi: parseAbi(['function transfer(address,uint256) returns(bool)']), functionName: 'transfer', args: [contract, amount] });
+      } else {
+        if (amount > snapshot.vault) throw new ApiError(409, 'VAULT_INSUFFICIENT', 'Withdrawal exceeds the available balance');
+        data = encodeFunctionData({ abi: parseAbi(['function withdraw(uint256,address)']), functionName: 'withdraw', args: [amount, mandate.ownerAddress as Address] });
+      }
+    }
+    return { chain_id: Number(config.CHAIN_ID ?? 1874), from: mandate.ownerAddress, to, data, value: '0x0' };
+  });
+
   // Create + sign a mandate: owner wallet signs the canonical payload (EIP-191),
   // the backend verifies the signer is the owner, then deploys the BagMandate
   // contract on-chain — the caps become the immutable, enforced guarantee.
@@ -169,11 +236,13 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
     }
 
     const rootAgentId = randomUUID();
-    const client = mandateClient(config);
-    const contractAddress = await client.deploy({
+    const executor = mandateClient(config);
+    const client = deploymentClient(config);
+    let contractAddress: Address;
+    try { contractAddress = await client.deploy({
       owner: body.owner_address.toLowerCase() as Address,
       operator: body.operator_address.toLowerCase() as Address,
-      enforcer: (config.DAEMON_EXECUTOR_ADDRESS ?? client.address) as Address,
+      enforcer: (config.DAEMON_EXECUTOR_ADDRESS ?? executor.address) as Address,
       usdc: whitechainConfig(config).usdt as Address,
       budgetPerWindow: toUnits(body.budget_per_window),
       windowSeconds: body.window_seconds,
@@ -183,7 +252,13 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
       maxDepth: body.max_depth,
       rootWorker: workerKey(rootAgentId),
       rootAllocation: toUnits(body.lifetime_cap),
-    });
+    }); } catch (error) {
+      const message = error instanceof Error ? error.message.toLowerCase() : '';
+      if (/insufficient funds|exceeds the balance|insufficient balance/.test(message)) {
+        throw new ApiError(503, 'DEPLOYER_GAS_INSUFFICIENT', `The deployment wallet ${client.address} needs more WBT for network gas. Fund the deployment wallet or configure MANDATE_DEPLOYER_KEY with a funded account. USDT is not used for deployment gas.`);
+      }
+      throw new ApiError(502, 'MANDATE_DEPLOYMENT_FAILED', 'Whitechain could not confirm the permission deployment. Check the deployment wallet activity before retrying to avoid creating a duplicate permission.');
+    }
 
     const mandateId = randomUUID();
     await db.transaction(async (tx) => {
@@ -229,20 +304,25 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
       orderBy: desc(mandates.createdAt),
     });
     return {
-      mandates: await Promise.all(rows.map(async (mandate) => ({
-        id: mandate.id,
-        owner_address: mandate.ownerAddress,
-        operator_address: mandate.operatorAddress,
-        contract_address: mandate.contractAddress,
-        budget_per_window: mandate.budgetPerWindow,
-        window_seconds: mandate.windowSeconds,
-        lifetime_cap: mandate.lifetimeCap,
-        per_purchase_cap: mandate.perPurchaseCap,
-        per_seller_pct: mandate.perSellerPct,
-        max_depth: mandate.maxDepth,
-        status: mandate.contractAddress && await mandateClient(config).isRevoked(mandate.contractAddress as Address) ? 'revoked' : mandate.status,
-        created_at: mandate.createdAt,
-      }))),
+      mandates: await Promise.all(rows.map(async (mandate) => {
+        const state = await readMandateAvailability(mandateClient(config), mandate.contractAddress as Address | null);
+        return {
+          id: mandate.id,
+          owner_address: mandate.ownerAddress,
+          operator_address: mandate.operatorAddress,
+          contract_address: mandate.contractAddress,
+          budget_per_window: mandate.budgetPerWindow,
+          window_seconds: mandate.windowSeconds,
+          lifetime_cap: mandate.lifetimeCap,
+          per_purchase_cap: mandate.perPurchaseCap,
+          per_seller_pct: mandate.perSellerPct,
+          max_depth: mandate.maxDepth,
+          status: state.chain.status === 'unavailable' ? 'unavailable' : state.revoked ? 'revoked' : mandate.status,
+          record_status: mandate.status,
+          onchain_state: state.chain,
+          created_at: mandate.createdAt,
+        };
+      })),
     };
   });
 
@@ -250,6 +330,7 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
     const { id } = req.params as { id: string };
     const mandate = await getMandate(id);
     const client = mandateClient(config);
+    const state = await readMandateSnapshot(client, mandate.contractAddress as Address | null);
     const tree = await db.query.agents.findMany({ where: eq(agents.mandateId, id) });
     return {
       mandate: {
@@ -263,11 +344,13 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
         per_purchase_cap: mandate.perPurchaseCap,
         per_seller_pct: mandate.perSellerPct,
         max_depth: mandate.maxDepth,
-        status: mandate.contractAddress && await client.isRevoked(mandate.contractAddress as Address) ? 'revoked' : mandate.status,
+        status: state.chain.status === 'unavailable' ? 'unavailable' : state.revoked ? 'revoked' : mandate.status,
+        record_status: mandate.status,
       },
-      token_address: mandate.contractAddress ? await client.token(mandate.contractAddress as Address) : null,
-      onchain_revoked: mandate.contractAddress ? await client.isRevoked(mandate.contractAddress as Address) : false,
-      vault_balance: mandate.contractAddress ? fromUnits(await client.vaultBalance(mandate.contractAddress as Address)) : '0.00',
+      token_address: state.token,
+      onchain_revoked: state.revoked,
+      onchain_state: state.chain,
+      vault_balance: fromUnits(state.vault),
       agents: tree,
     };
   });
@@ -277,27 +360,9 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
     const mandate = await getMandate(id);
     const client = mandateClient(config);
     const contract = mandate.contractAddress as Address | null;
-    let vault = 0n;
-    let windowSpent = 0n;
-    let lifetimeSpent = 0n;
-    let revoked = false;
-    let chainState: { status: 'available' } | { status: 'unavailable'; message: string } = { status: 'available' };
-    if (contract) {
-      try {
-        [vault, windowSpent, lifetimeSpent, revoked] = await Promise.all([
-          client.vaultBalance(contract),
-          client.spendState(contract),
-          client.lifetimeSpent(contract),
-          client.isRevoked(contract),
-        ]);
-      } catch {
-        // The overview is also the dashboard's recovery surface. An RPC outage,
-        // stale contract address, or provider rate limit must not turn the whole
-        // console into a 500. Keep the database-backed tree/terms visible, but
-        // fail closed for drawability until live chain state is available again.
-        chainState = { status: 'unavailable', message: 'live on-chain state is temporarily unavailable' };
-      }
-    }
+    const snapshot = await readMandateSnapshot(client, contract);
+    const { vault, windowSpent, lifetimeSpent, revoked } = snapshot;
+    const chainState = snapshot.chain;
 
     const windowLeft = sub(mandate.budgetPerWindow, fromUnits(windowSpent));
     const lifetimeLeft = sub(mandate.lifetimeCap, fromUnits(lifetimeSpent));
@@ -325,6 +390,7 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
       agents: tree.map((a) => ({ id: a.id, operator_address: a.operatorAddress, share_percent: a.sharePercent, allocation: a.allocation, depth: a.depth, status: a.status, parent_agent_id: a.parentAgentId, name: a.name, mcp_endpoint: a.mcpEndpoint })),
       recent_refusals: recentRefusals,
       terms: {
+        contract_address: mandate.contractAddress,
         owner_address: mandate.ownerAddress,
         operator_address: mandate.operatorAddress,
         window_seconds: mandate.windowSeconds,
@@ -354,6 +420,9 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
     if (depth > mandate.maxDepth) throw new ApiError(400, 'EXCEEDS_MAX_DEPTH', `child depth ${depth} exceeds max depth ${mandate.maxDepth}`);
     if (body.share_percent > 100) throw new ApiError(400, 'CHILD_TOO_WIDE', 'a child mandate can only be narrower than its parent (share ≤ 100%)');
 
+    const availability = await readMandateAvailability(mandateClient(config), mandate.contractAddress as Address | null);
+    if (availability.chain.status === 'unavailable') throw new ApiError(409, 'MANDATE_UNAVAILABLE', availability.chain.message);
+    if (availability.revoked) throw new ApiError(403, 'MANDATE_INACTIVE', 'This mandate is revoked');
     const allocation = fromUnits(toUnits(parent.allocation) * BigInt(body.share_percent) / 100n);
     const [agent] = await db.insert(agents).values({ mandateId: id, parentAgentId: body.parent_agent_id, operatorAddress: body.operator_address.toLowerCase(), sharePercent: String(body.share_percent), allocation, depth, status: 'active' }).returning();
     if (!agent) throw new ApiError(500, 'SPAWN_FAILED', 'agent insert returned no row');
@@ -419,6 +488,8 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
 
     const client = mandateClient(config);
     const contract = mandate.contractAddress as Address;
+    const availability = await readMandateAvailability(client, contract);
+    if (availability.chain.status === 'unavailable') throw new ApiError(409, 'MANDATE_UNAVAILABLE', availability.chain.message);
     const code = await client.checkWorker(contract, toUnits(body.amount), body.recipient as Address, workerKey(agent.id));
     const refusalId = randomUUID();
 
@@ -519,16 +590,23 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
     const mandate = await getMandate(agent.mandateId);
     const client = mandateClient(config);
     const contract = mandate.contractAddress as Address | null;
-    const [vault, w, l, revoked, state] = contract ? await Promise.all([client.vaultBalance(contract), client.spendState(contract), client.lifetimeSpent(contract), client.isRevoked(contract), client.workerState(contract, workerKey(agent.id))]) : [0n, 0n, 0n, true, null] as const;
+    const snapshot = await readMandateSnapshot(client, contract);
+    let chainState: ChainState = snapshot.chain;
+    let state: Awaited<ReturnType<MandateClient['workerState']>> | null = null;
+    if (chainState.status === 'available' && contract) {
+      try { state = await client.workerState(contract, workerKey(agent.id)); }
+      catch { chainState = { status: 'unavailable', code: 'CONTRACT_UNSUPPORTED', message: 'The agent registration could not be read from this deployment. Spending is disabled.' }; }
+    }
+    const { vault, windowSpent: w, lifetimeSpent: l, revoked } = snapshot;
     const allocationLeft = state ? fromUnits(state[2] > state[3] ? state[2] - state[3] : 0n) : '0';
     return {
       agent: { id: agent.id, operator_address: agent.operatorAddress, allocation: agent.allocation, remaining_allocation: allocationLeft, onchain_active: state?.[5] ?? false, depth: agent.depth, share_percent: agent.sharePercent, status: agent.status, name: agent.name, mcp_endpoint: agent.mcpEndpoint },
-      mandate: { id: mandate.id, owner_address: mandate.ownerAddress, operator_address: mandate.operatorAddress, contract_address: mandate.contractAddress, status: revoked ? 'revoked' : mandate.status, onchain_revoked: revoked, budget_per_window: mandate.budgetPerWindow, lifetime_cap: mandate.lifetimeCap, per_purchase_cap: mandate.perPurchaseCap, per_seller_pct: mandate.perSellerPct, max_depth: mandate.maxDepth },
+      mandate: { id: mandate.id, owner_address: mandate.ownerAddress, operator_address: mandate.operatorAddress, contract_address: mandate.contractAddress, status: chainState.status === 'unavailable' ? 'unavailable' : revoked ? 'revoked' : mandate.status, record_status: mandate.status, onchain_state: chainState, onchain_revoked: revoked, budget_per_window: mandate.budgetPerWindow, lifetime_cap: mandate.lifetimeCap, per_purchase_cap: mandate.perPurchaseCap, per_seller_pct: mandate.perSellerPct, max_depth: mandate.maxDepth },
       remaining: {
         vault_available: fromUnits(vault),
         remaining_window: sub(mandate.budgetPerWindow, fromUnits(w)),
         remaining_lifetime: sub(mandate.lifetimeCap, fromUnits(l)),
-        can_draw: revoked || !state?.[5] ? '0' : max('0', min(allocationLeft, min(mandate.perPurchaseCap, min(fromUnits(vault), min(sub(mandate.budgetPerWindow, fromUnits(w)), sub(mandate.lifetimeCap, fromUnits(l))))))),
+        can_draw: chainState.status === 'unavailable' || revoked || !state?.[5] ? '0' : max('0', min(allocationLeft, min(mandate.perPurchaseCap, min(fromUnits(vault), min(sub(mandate.budgetPerWindow, fromUnits(w)), sub(mandate.lifetimeCap, fromUnits(l))))))),
       },
     };
   });
@@ -539,7 +617,9 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
     const mandate = await getMandate(mandateId);
     if (!mandate.contractAddress) throw new ApiError(503, 'NO_CONTRACT', 'no contract');
     const client = mandateClient(config);
-    return { vault_balance: fromUnits(await client.vaultBalance(mandate.contractAddress as Address)) };
+    const state = await readMandateSnapshot(client, mandate.contractAddress as Address);
+    if (state.chain.status === 'unavailable') throw new ApiError(409, 'MANDATE_UNAVAILABLE', state.chain.message);
+    return { vault_balance: fromUnits(state.vault) };
   });
 
   app.post('/v1/vaults/:mandateId/fund', async (req) => {
@@ -549,6 +629,8 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
     const mandate = await getMandate(mandateId);
     if (!mandate.contractAddress) throw new ApiError(503, 'NO_CONTRACT', 'no contract');
     const client = mandateClient(config);
+    const availability = await readMandateAvailability(client, mandate.contractAddress as Address);
+    if (availability.chain.status === 'unavailable') throw new ApiError(409, 'MANDATE_UNAVAILABLE', availability.chain.message);
     await client.fund(mandate.contractAddress as Address, whitechainConfig(config).usdt as Address, toUnits(body.amount));
     await db.insert(transactions).values({ mandateId, amount: body.amount, type: 'fund' });
     return { vault_balance: fromUnits(await client.vaultBalance(mandate.contractAddress as Address)) };
@@ -564,6 +646,8 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
     const canonical = canonicalWithdraw({ mandateId, amount: body.amount, to: body.to_address.toLowerCase() as Address, chainId: body.chain_id });
     const signer = await recoverMessageAddress({ message: canonical, signature: body.signature as `0x${string}` }).catch(() => '');
     if (signer.toLowerCase() !== mandate.ownerAddress.toLowerCase()) throw new ApiError(403, 'SIGNATURE_MISMATCH', 'withdraw was not signed by the owner');
+    const availability = await readMandateAvailability(mandateClient(config), mandate.contractAddress as Address);
+    if (availability.chain.status === 'unavailable') throw new ApiError(409, 'MANDATE_UNAVAILABLE', availability.chain.message);
     const txHash = await ownerClient(config).withdraw(mandate.contractAddress as Address, toUnits(body.amount), body.to_address.toLowerCase() as Address);
     await db.insert(transactions).values({ mandateId, amount: body.amount, type: 'withdraw' });
     return { tx_hash: txHash, vault_balance: fromUnits(await mandateClient(config).vaultBalance(mandate.contractAddress as Address)) };

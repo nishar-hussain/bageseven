@@ -198,7 +198,7 @@ async function executeSpend(config: NodeJS.ProcessEnv, resolved: ResolvedWorker,
   }
 }
 
-function buildRoutes(app: FastifyInstance, { config, redis, db }: ServiceDeps): void {
+export function buildRoutes(app: FastifyInstance, { config, redis, db }: ServiceDeps): void {
   app.addHook('preHandler', async (req, reply) => {
     if (isPublicEntitlementPath(req.url)) return;
     const token = config.DAEMON_AUTH_TOKEN?.trim();
