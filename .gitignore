@@ -12,3 +12,5 @@ apps/console/.env.local
 dump.rdb
 *.rdb
 .bagseven-bin
+.data/
+services/daemon/.data/

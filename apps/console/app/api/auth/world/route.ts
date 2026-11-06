@@ -1,12 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'node:crypto';
 import { worldIdKitConfig, worldMocksAllowed } from '@bagseven/world';
-import { attachSessionCookie } from '../../../../lib/auth';
+import {
+  WORLD_IDENTITY_COOKIE,
+  attachSessionCookie,
+  readWorldIdentityCookie,
+} from '../../../../lib/auth';
 import { daemonJson } from '../../../../lib/daemon-bff';
 
 /** Public configuration contains IDs and readiness only, never signing keys. */
-export async function GET() {
+export async function GET(req: NextRequest) {
   const cfg = worldIdKitConfig();
+  const canResume = Boolean(readWorldIdentityCookie(req.cookies.get(WORLD_IDENTITY_COOKIE)?.value));
   return NextResponse.json(
     {
       app_id: cfg.app_id,
@@ -18,6 +23,7 @@ export async function GET() {
       mock_proofs: cfg.mock_proofs,
       idkit: cfg.idkit && cfg.signing_configured,
       signing_configured: cfg.signing_configured,
+      device_resume: canResume,
     },
     { headers: { 'cache-control': 'no-store' } },
   );
@@ -29,7 +35,35 @@ export async function POST(req: NextRequest) {
     id_token?: string;
     mock?: boolean;
     challenge_nonce?: string;
+    /** Resume a previously verified World human on this browser after nullifier_replayed. */
+    device_resume?: boolean;
   };
+
+  if (body.device_resume) {
+    const human = readWorldIdentityCookie(req.cookies.get(WORLD_IDENTITY_COOKIE)?.value);
+    if (!human) {
+      return NextResponse.json(
+        { error: 'No saved World identity on this device. Scan World ID once to create one.' },
+        { status: 401 },
+      );
+    }
+    const doneAt = Math.floor(Date.now() / 1000);
+    return attachSessionCookie(
+      NextResponse.json({
+        ok: true,
+        mode: 'idkit',
+        world_human_id: human,
+        returning: true,
+        needs_onboarding: false,
+      }),
+      {
+        world_human_id: human,
+        mock: false,
+        onboarding_done_at: doneAt,
+      },
+    );
+  }
+
   if (body.mock) {
     if (!worldMocksAllowed()) return NextResponse.json({ error: 'Mock World login is disabled' }, { status: 403 });
     const human = `mock:${randomUUID()}`;
@@ -77,8 +111,6 @@ export async function POST(req: NextRequest) {
     }
     const human = result.body.nullifier || result.body.human_id;
     const returning = Boolean(result.body.returning);
-    // Returning humans already finished (or skipped) onboarding once — skip the wizard.
-    // Brand-new World sessions go through skippable email + optional wallet.
     const onboardingDoneAt = returning ? Math.floor(Date.now() / 1000) : null;
     const res = attachSessionCookie(
       NextResponse.json({

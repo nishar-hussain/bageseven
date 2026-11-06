@@ -1,9 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { StatusBadges } from '../../../components/app/StatusBadges';
-import { useOperator } from '../../../lib/use-operator';
 import { connectWhitechainWallet } from '@bagseven/sdk/wallet';
+import { PageHeader, PrimaryButton, SecondaryButton, SoftCard, StatusPill } from '../../../components/app/ui';
+import { useOperator } from '../../../lib/use-operator';
 
 export default function AccountPage() {
   const op = useOperator();
@@ -16,6 +16,14 @@ export default function AccountPage() {
   useEffect(() => {
     if (op.walletAddress) setWallet(op.walletAddress);
   }, [op.walletAddress]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const hash = window.location.hash.replace('#', '');
+    if (hash === 'email' || hash === 'wallet') {
+      document.getElementById(hash)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, []);
 
   const startOtp = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -46,7 +54,8 @@ export default function AccountPage() {
       setMsg(json.error ?? 'Invalid code');
       return;
     }
-    setMsg(`Email verified: ${json.email}. Refresh the page.`);
+    setMsg(`Email verified: ${json.email}`);
+    window.location.reload();
   };
 
   const saveWallet = async (address: string) => {
@@ -66,40 +75,37 @@ export default function AccountPage() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-5">
-      <div>
-        <h1 className="text-[2rem] font-semibold tracking-tight">Account</h1>
-        <p className="mt-1 text-sm text-[var(--muted)]">
-          World is primary. Email and payout wallet are optional — add them whenever you want.
-        </p>
-        <div className="mt-4">
-          <StatusBadges />
-        </div>
-      </div>
+      <PageHeader title="Account" description="World identity. Email and wallet are optional." />
 
-      <section className="rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)] space-y-2 text-sm">
-        <h2 className="text-base font-semibold">World identity</h2>
-        <div>
-          Holder: <code className="fi-mono text-xs">{op.holder || '—'}</code>
+      <SoftCard className="space-y-3 p-5 text-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-[15px] font-semibold">Identity</h2>
+          {!op.emailVerified ? <StatusPill tone="warn">Email pending</StatusPill> : <StatusPill tone="good">Email verified</StatusPill>}
+          {!op.walletAddress && !wallet ? <StatusPill tone="warn">Wallet pending</StatusPill> : <StatusPill tone="good">Wallet set</StatusPill>}
         </div>
         <div>
-          World human id: <code className="fi-mono text-xs">{op.worldHumanId || '—'}</code>
+          Holder <code className="fi-mono ml-1 text-xs">{op.holder || '—'}</code>
         </div>
         <div>
-          Email: {op.email ?? 'not set'} {op.emailVerified ? '(verified)' : op.email ? '(unverified)' : ''}
+          World <code className="fi-mono ml-1 text-xs">{op.worldHumanId || '—'}</code>
         </div>
+        <div>Email {op.email ?? 'not set'}</div>
         <div>
-          Wallet:{' '}
+          Wallet{' '}
           {op.walletAddress || wallet ? (
             <code className="fi-mono text-xs">{op.walletAddress || wallet}</code>
           ) : (
             'not set'
           )}
         </div>
-      </section>
+      </SoftCard>
 
-      <section className="rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)] space-y-3">
-        <h2 className="text-base font-semibold">Email</h2>
-        <p className="text-sm text-[var(--muted)]">For receipts and recovery. Not required to operate.</p>
+      <SoftCard id="email" className="scroll-mt-20 space-y-3 p-5">
+        <div className="flex items-center gap-2">
+          <h2 className="text-[15px] font-semibold">Email</h2>
+          {!op.emailVerified ? <StatusPill tone="warn">Recommended</StatusPill> : null}
+        </div>
+        <p className="text-[13px] text-[var(--muted)]">For receipts and recovery. Not required to operate.</p>
         <form onSubmit={(e) => void startOtp(e)} className="flex gap-2">
           <input
             type="email"
@@ -109,9 +115,7 @@ export default function AccountPage() {
             placeholder="you@company.com"
             className="flex-1 rounded-xl border border-[var(--line)] px-3 py-2 text-sm"
           />
-          <button type="submit" className="rounded-full border border-[var(--line)] px-4 text-sm font-semibold">
-            Send OTP
-          </button>
+          <SecondaryButton type="submit">Send code</SecondaryButton>
         </form>
         {challenge ? (
           <form onSubmit={(e) => void verifyOtp(e)} className="flex gap-2">
@@ -122,29 +126,26 @@ export default function AccountPage() {
               className="flex-1 rounded-xl border border-[var(--line)] px-3 py-2 text-sm"
               required
             />
-            <button type="submit" className="rounded-full bg-[var(--ink)] px-4 text-sm font-semibold text-white">
-              Verify
-            </button>
+            <PrimaryButton type="submit">Verify</PrimaryButton>
           </form>
         ) : null}
-      </section>
+      </SoftCard>
 
-      <section className="rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)] space-y-3">
-        <h2 className="text-base font-semibold">Payout wallet</h2>
-        <p className="text-sm text-[var(--muted)]">
-          Whitechain / injected EVM wallet for plan payouts. Connect or paste an address.
-        </p>
-        <button
-          type="button"
-          className="rounded-full border border-[var(--line)] px-4 py-2 text-sm font-semibold"
+      <SoftCard id="wallet" className="scroll-mt-20 space-y-3 p-5">
+        <div className="flex items-center gap-2">
+          <h2 className="text-[15px] font-semibold">Payout wallet</h2>
+          {!op.walletAddress && !wallet ? <StatusPill tone="warn">Recommended</StatusPill> : null}
+        </div>
+        <p className="text-[13px] text-[var(--muted)]">Whitechain / injected EVM for plan payouts.</p>
+        <SecondaryButton
           onClick={() =>
             void connectWhitechainWallet()
               .then(({ address }) => saveWallet(address))
               .catch((e) => setMsg(e instanceof Error ? e.message : String(e)))
           }
         >
-          Connect Whitechain wallet
-        </button>
+          Connect wallet
+        </SecondaryButton>
         <form
           className="flex gap-2"
           onSubmit={(e) => {
@@ -158,13 +159,11 @@ export default function AccountPage() {
             placeholder="0x…"
             className="flex-1 rounded-xl border border-[var(--line)] px-3 py-2 font-mono text-sm"
           />
-          <button type="submit" className="rounded-full bg-[var(--ink)] px-4 text-sm font-semibold text-white">
-            Save
-          </button>
+          <PrimaryButton type="submit">Save</PrimaryButton>
         </form>
-      </section>
+      </SoftCard>
 
-      {msg && <p className="text-sm text-[var(--muted)] whitespace-pre-wrap">{msg}</p>}
+      {msg ? <p className="whitespace-pre-wrap text-sm text-[var(--muted)]">{msg}</p> : null}
     </div>
   );
 }

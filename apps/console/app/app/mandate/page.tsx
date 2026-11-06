@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
-import { StatusBadges } from '../../../components/app/StatusBadges';
+import { PageHeader } from '../../../components/app/ui';
 import { entitlementsApi, type Grant, type MumbaiStatus } from '../../../lib/entitlements-client';
 import { mandateApi, type MandateOverview, type MandateSummary } from '../../../lib/mandate-client';
 import { featureLabel, shortId } from '../../../lib/use-operator';
@@ -68,19 +68,7 @@ export default function MandatePage() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-5">
-      <div>
-        <h1 className="text-[2rem] font-semibold tracking-tight">Mandate</h1>
-        <p className="mt-1 text-sm text-[var(--muted)]">
-          Agent spend ceiling (vault + window + lifetime caps) — ArcenAuth-style money gate. Humans buy access via{' '}
-          <Link href="/app/embed" className="font-medium text-[var(--blue)] underline">
-            Embed
-          </Link>
-          ; agents spend only when mandate capacity <em>and</em> a living entitlement both pass.
-        </p>
-        <div className="mt-4">
-          <StatusBadges />
-        </div>
-      </div>
+      <PageHeader title="Mandate" description="Agent spend ceiling. Needs a living entitlement too." />
 
       <div
         className={`rounded-2xl border px-4 py-3 text-sm ${

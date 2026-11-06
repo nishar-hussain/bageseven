@@ -18,6 +18,7 @@ import {
 import { settleWhitechainUsdt } from './whitechain-settle.js';
 import type { GrantRouteDeps } from './grants.js';
 import { claimSettlement } from './payment-ledger.js';
+import { getFeatureValueType } from './feature-registry.js';
 
 const consumeBody = z.object({
   feature: z.string().min(1),
@@ -67,16 +68,21 @@ export function isPublicEntitlementPath(url: string): boolean {
 }
 
 export function entitlementView(grant: Grant | null, feature: string) {
+  const valueType = getFeatureValueType(feature);
+  const notExpired = Boolean(grant) && new Date(grant!.paid_through).getTime() > Date.now();
   const live =
     Boolean(grant) &&
     grant!.enabled &&
-    new Date(grant!.paid_through).getTime() > Date.now() &&
-    Number(grant!.remaining) > 0;
+    notExpired &&
+    (valueType === 'boolean' ? true : Number(grant!.remaining) > 0);
   return {
     feature,
+    value_type: valueType,
     enabled: live,
-    remaining: grant?.remaining ?? '0',
-    allocation: grant?.remaining ?? '0',
+    /** ArcenPay-style boolean value — same as enabled for boolean features. */
+    value: live,
+    remaining: valueType === 'boolean' ? (live ? '1' : '0') : (grant?.remaining ?? '0'),
+    allocation: valueType === 'boolean' ? (live ? '1' : '0') : (grant?.remaining ?? '0'),
     paid_through: grant?.paid_through ?? null,
     grant_id: grant?.id ?? null,
     arkiv_entity_key: grant?.arkiv_entity_key,
@@ -113,8 +119,7 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
     assertCanRead(principal, holder);
     const live = await store.findLive({ feature: q.feature, holder });
     const grant = [...live].sort((a, b) => Number(b.remaining) - Number(a.remaining))[0] ?? null;
-    const view = entitlementView(grant, q.feature);
-    return { ...view, value: view.enabled };
+    return entitlementView(grant, q.feature);
   });
 
   app.get('/v1/entitlements', async (req) => {
@@ -160,6 +165,18 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
     const grant = await store.get(grantId);
     if (!grant) throw new ApiError(404, 'GRANT_NOT_FOUND', 'grant not found');
     if (grant.holder !== holder) throw new ApiError(403, 'HOLDER_MISMATCH', 'grant holder does not match');
+
+    // Boolean features are on/off until TTL — check/access, do not burn credits.
+    if (getFeatureValueType(body.feature) === 'boolean') {
+      const view = entitlementView(grant, grant.feature);
+      if (!view.enabled) throw new ApiError(403, 'FEATURE_OFF', `${body.feature} is not active`);
+      return {
+        entitlement: view,
+        grant,
+        dual_gate: { mandate: 'skipped', grant: 'ok' },
+        note: 'boolean_feature',
+      };
+    }
 
     const dualGate = principal.kind === 'sk';
     if (dualGate && deps.resolveMandateCapacity) {

@@ -1,24 +1,29 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { IDKitRequestWidget, proofOfHuman, type RpContext } from '@worldcoin/idkit';
 import { payUsdtOnWhitechain } from '@bagseven/sdk/wallet';
-import { StatusBadges } from '../../../components/app/StatusBadges';
+import { PageHeader, SoftCard } from '../../../components/app/ui';
 import { entitlementsApi } from '../../../lib/entitlements-client';
-import { FEATURE_OPTIONS, TTL_PRESETS, featureLabel, shortId, useOperator } from '../../../lib/use-operator';
+import { TTL_PRESETS, shortId, useOperator } from '../../../lib/use-operator';
+import { featureLabel, useFeatures } from '../../../lib/use-features';
 
-export default function MintPage() {
+function MintForm() {
   const op = useOperator();
+  const { features } = useFeatures();
+  const params = useSearchParams();
   const APP_ID = (op.status?.tracks.world.app_id || '') as `app_${string}`;
   const RP_ID = op.status?.tracks.world.rp_id || '';
   const ACTION = op.status?.tracks.world.action || 'bagseven-mint';
   const ENVIRONMENT = op.status?.tracks.world.environment || 'production';
   const router = useRouter();
-  const [feature, setFeature] = useState('ocr');
+  const [feature, setFeature] = useState(params.get('feature') || 'ocr');
   const [credits, setCredits] = useState('5');
   const [ttl, setTtl] = useState(900);
+  const selectedFeature = useMemo(() => features.find((f) => f.id === feature), [features, feature]);
+  const isBoolean = selectedFeature?.value_type === 'boolean';
   const [msg, setMsg] = useState('');
   const [lastLabel, setLastLabel] = useState('');
   const [busy, setBusy] = useState(false);
@@ -31,6 +36,17 @@ export default function MintPage() {
   const mockAllowed = op.status?.tracks.world.mock_proofs === true;
   const verifiedSession = Boolean(op.worldHumanId && !op.mock && !op.worldHumanId.startsWith('email:'));
 
+  useEffect(() => {
+    const q = params.get('feature');
+    if (q) setFeature(q);
+  }, [params]);
+
+  useEffect(() => {
+    if (!features.some((f) => f.id === feature) && features[0]) {
+      setFeature(features[0].id);
+    }
+  }, [features, feature]);
+
   /** End-to-end create: Whitechain settle + Arkiv grant for the signed-in operator. */
   const createEntitlement = async (opts?: { idkit_response?: unknown; id_token?: string; world_proof_id?: string }) => {
     if (!op.holder) {
@@ -38,10 +54,11 @@ export default function MintPage() {
       return;
     }
     setBusy(true);
-    setMsg('Creating living entitlement (Whitechain settle → Arkiv write)…');
+    setMsg('Creating living Arkiv entitlement (Whitechain settle → Arkiv write)…');
     try {
+      const mintRemaining = isBoolean ? '1' : credits;
       let payment: { payment_tx?: string; customer_wallet?: string; payment_signature?: string } = {};
-      const context = `entitlement:${op.holder}:${feature}:${credits}`;
+      const context = `entitlement:${op.holder}:${feature}:${mintRemaining}`;
       const rail = op.status?.tracks.whitechain;
       if (!rail) throw new Error('Payment configuration is still loading');
       if (!rail.demo_settle) {
@@ -49,8 +66,8 @@ export default function MintPage() {
         if (pendingPayment && pendingPayment.context !== context) throw new Error('Finish the existing payment before changing the feature or credit amount');
         if (pendingPayment) payment = pendingPayment;
         else {
-          setMsg(`Confirm ${credits} USDT.e in your Whitechain wallet…`);
-          const paid = await payUsdtOnWhitechain({ merchantWallet: rail.pay_to, amount: credits, usdt: rail.usdt, chainId: rail.chain_id, context });
+          setMsg(`Confirm ${mintRemaining} USDT.e in your Whitechain wallet…`);
+          const paid = await payUsdtOnWhitechain({ merchantWallet: rail.pay_to, amount: mintRemaining, usdt: rail.usdt, chainId: rail.chain_id, context });
           payment = paid;
           setPendingPayment({ context, ...paid });
         }
@@ -58,7 +75,7 @@ export default function MintPage() {
       const r = await entitlementsApi.mint({
         feature,
         holder: op.holder,
-        remaining: credits,
+        remaining: mintRemaining,
         ttl_seconds: ttl,
         settlement_network: 'whitechain',
         ...payment,
@@ -70,12 +87,19 @@ export default function MintPage() {
           ? { world_proof_id: `world:ok:${op.holder}` }
           : {}),
       });
-      setLastLabel(`${featureLabel(r.grant.feature)} · ${r.grant.remaining} credits · ${shortId(r.grant.id)}`);
+      setLastLabel(
+        isBoolean
+          ? `${featureLabel(r.grant.feature)} · boolean on · Arkiv · ${shortId(r.grant.id)}`
+          : `${featureLabel(r.grant.feature)} · ${r.grant.remaining} credits · ${shortId(r.grant.id)}`,
+      );
       setPendingPayment(null);
       setMsg(
-        `Done. Entitlement for feature “${featureLabel(feature)}” is live (${r.grant.remaining} credits).` +
-          (r.settlement?.explorer_url ? `\nWhitechain: ${r.settlement.explorer_url}` : '') +
-          `\nOpen Entitlements to spend it, or Connect agent so MCP can call paid_run.`,
+        isBoolean
+          ? `Done. Boolean entitlement for “${featureLabel(feature)}” is live on Arkiv until TTL.` +
+              (r.settlement?.explorer_url ? `\nWhitechain: ${r.settlement.explorer_url}` : '')
+          : `Done. Entitlement for feature “${featureLabel(feature)}” is live (${r.grant.remaining} credits).` +
+              (r.settlement?.explorer_url ? `\nWhitechain: ${r.settlement.explorer_url}` : '') +
+              `\nOpen Entitlements to spend it, or Connect agent so MCP can call paid_run.`,
       );
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));
@@ -162,40 +186,18 @@ export default function MintPage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-5">
-      <div>
-        <h1 className="text-[2rem] font-semibold tracking-tight">Create entitlement</h1>
-        <p className="mt-1 text-sm text-[var(--muted)]">
-          Schematic-style: pick a <strong>feature</strong>, then mint the <strong>entitlement</strong> (credits + TTL) that
-          lets agents use it. OCR is only a demo feature — not the product.
-        </p>
-        <div className="mt-4">
-          <StatusBadges />
-        </div>
-      </div>
+      <PageHeader
+        title="Create entitlement"
+        description={
+          op.loading
+            ? 'Loading…'
+            : op.holder
+              ? `Mint living Arkiv access for ${op.holder}. Boolean = on/off · Numeric = credits.`
+              : 'Sign in first'
+        }
+      />
 
-      <ol className="space-y-3 rounded-2xl border border-[var(--line)] bg-white p-5 text-sm shadow-[var(--sh)]">
-        <li>
-          <strong className="text-[var(--ink)]">1. You are signed in</strong>
-          <div className="mt-1 text-[var(--muted)]">
-            {op.loading ? 'Loading…' : op.holder ? <>Holder = <span className="font-medium text-[var(--ink)]">{op.holder}</span></> : 'Sign in first'}
-          </div>
-        </li>
-        <li>
-          <strong className="text-[var(--ink)]">2. Choose the feature to entitle</strong>
-          <p className="mt-1 text-[var(--muted)]">
-            A feature is a capability you gate (like Schematic). Choosing OCR does not mean you already have OCR access —
-            it means the entitlement you create will cover that feature key.
-          </p>
-        </li>
-        <li>
-          <strong className="text-[var(--ink)]">3. Mint the living entitlement</strong>
-          <p className="mt-1 text-[var(--muted)]">
-            World verifies the human → Whitechain stamps payment → Arkiv stores the grant. Then agents spend via MCP.
-          </p>
-        </li>
-      </ol>
-
-      <div className="space-y-4 rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
+      <SoftCard className="space-y-4 p-5">
         <div className="fi-field">
           <label htmlFor="feature">Feature to entitle</label>
           <select
@@ -204,19 +206,36 @@ export default function MintPage() {
             onChange={(e) => setFeature(e.target.value)}
             className="w-full rounded-xl border border-[var(--line)] bg-white px-3 py-2.5 text-sm"
           >
-            {FEATURE_OPTIONS.map((f) => (
+            {features.map((f) => (
               <option key={f.id} value={f.id}>
-                {f.label} — {f.blurb}
+                {f.label} ({f.value_type}) — {f.blurb}
               </option>
             ))}
           </select>
+          <p className="mt-1.5 text-[12px] text-[var(--muted)]">
+            {isBoolean
+              ? 'Boolean feature — access stays on until TTL evaporates from Arkiv.'
+              : 'Numeric feature — metered credits burned on consume / paid_run.'}{' '}
+            <Link href="/app/features" className="font-medium text-[var(--blue)]">
+              Manage features
+            </Link>
+          </p>
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
-          <div className="fi-field">
-            <label htmlFor="credits">Starting credits</label>
-            <input id="credits" value={credits} onChange={(e) => setCredits(e.target.value)} />
-          </div>
+          {!isBoolean ? (
+            <div className="fi-field">
+              <label htmlFor="credits">Starting credits</label>
+              <input id="credits" value={credits} onChange={(e) => setCredits(e.target.value)} />
+            </div>
+          ) : (
+            <div className="fi-field">
+              <label>Access</label>
+              <p className="rounded-xl border border-[var(--line)] bg-[var(--soft)] px-3 py-2.5 text-sm">
+                On until TTL · Arkiv-powered
+              </p>
+            </div>
+          )}
           <div className="fi-field">
             <label htmlFor="ttl">How long it stays live</label>
             <select
@@ -243,10 +262,14 @@ export default function MintPage() {
           {busy
             ? 'Creating…'
             : verifiedSession || mockAllowed
-              ? `Create entitlement for ${featureLabel(feature)}`
+              ? `Create entitlement for ${featureLabel(feature, features)}`
               : 'Verify with World ID & create entitlement'}
         </button>
-        {!op.status?.tracks.whitechain.demo_settle && <p className="text-sm text-[var(--muted)]">Your wallet pays {credits} USDT.e on Whitechain Sepolia before the entitlement is created.</p>}
+        {!op.status?.tracks.whitechain.demo_settle && (
+          <p className="text-sm text-[var(--muted)]">
+            Your wallet pays {isBoolean ? '1' : credits} USDT.e on Whitechain Sepolia before the Arkiv entitlement is created.
+          </p>
+        )}
 
         <div className="grid gap-2 sm:grid-cols-2">
           <button
@@ -307,7 +330,15 @@ export default function MintPage() {
             </button>
           </div>
         )}
-      </div>
+      </SoftCard>
     </div>
+  );
+}
+
+export default function MintPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-sm text-[var(--muted)]">Loading…</div>}>
+      <MintForm />
+    </Suspense>
   );
 }

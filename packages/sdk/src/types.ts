@@ -1,6 +1,11 @@
+/** ArcenPay / Schematic-style: boolean = on/off until TTL; numeric = metered credits on Arkiv. */
+export type FeatureValueType = 'boolean' | 'numeric';
+
 export type Entitlement = {
   feature: string;
+  /** Whether the living Arkiv grant currently grants access. */
   enabled: boolean;
+  value_type?: FeatureValueType;
   remaining: string;
   allocation: string;
   paid_through: string | null;
@@ -10,6 +15,7 @@ export type Entitlement = {
   explorer_url?: string | null;
   settlement_network?: string;
   renewal_enabled?: boolean;
+  /** Same as enabled — handy for boolean feature flags. */
   value?: boolean;
 };
 

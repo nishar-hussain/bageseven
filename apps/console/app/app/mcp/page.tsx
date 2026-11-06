@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { StatusBadges } from '../../../components/app/StatusBadges';
+import { PageHeader } from '../../../components/app/ui';
 import { shortId } from '../../../lib/use-operator';
 
 type Bootstrap = {
@@ -56,32 +56,7 @@ export default function McpPage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-5">
-      <div>
-        <h1 className="text-[2rem] font-semibold tracking-tight">Connect an agent</h1>
-        <p className="mt-1 text-sm text-[var(--muted)]">
-          Agents spend living entitlements through MCP (feature + credits). They never hold World ID.
-        </p>
-        <div className="mt-4">
-          <StatusBadges />
-        </div>
-      </div>
-
-      <section className="space-y-3 rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
-        <h2 className="text-base font-semibold">How it works</h2>
-        <ol className="list-decimal space-y-2 pl-5 text-sm text-[var(--muted)]">
-          <li>
-            <strong className="text-[var(--ink)]">You</strong> create an entitlement for a feature (World + Whitechain + Arkiv).
-          </li>
-          <li>
-            <strong className="text-[var(--ink)]">Your agent</strong> connects via MCP (one agent slot per process).
-          </li>
-          <li>
-            Paid tools pick a living entitlement by feature key — e.g.{' '}
-            <code className="fi-mono text-xs">feature: ocr</code> or <code className="fi-mono text-xs">research_fetch</code>{' '}
-            (no grant UUID needed).
-          </li>
-        </ol>
-      </section>
+      <PageHeader title="Connect an agent" description="MCP slot for agents. They never hold World credentials." />
 
       <section className="space-y-4 rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
         <div className="flex flex-wrap items-center justify-between gap-3">

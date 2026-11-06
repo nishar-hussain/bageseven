@@ -5,6 +5,7 @@ async function api<T>(method: string, path: string, body?: unknown): Promise<T> 
     method,
     headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
     body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(12_000),
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -61,8 +62,28 @@ export type Grant = {
   human_id?: string;
 };
 
+export type FeatureValueType = 'boolean' | 'numeric';
+
+export type FeatureDef = {
+  id: string;
+  label: string;
+  blurb: string;
+  value_type: FeatureValueType;
+  actions: string[];
+  builtin: boolean;
+  created_at?: string;
+};
+
 export const entitlementsApi = {
   status: () => api<MumbaiStatus>('GET', 'mumbai/status'),
+  features: () => api<{ features: FeatureDef[] }>('GET', 'features'),
+  createFeature: (body: {
+    id: string;
+    label?: string;
+    blurb?: string;
+    value_type?: FeatureValueType;
+    actions?: string[];
+  }) => api<{ feature: FeatureDef }>('POST', 'features', body),
   live: (q?: { holder?: string; feature?: string }) => {
     const params = new URLSearchParams();
     if (q?.holder) params.set('holder', q.holder);

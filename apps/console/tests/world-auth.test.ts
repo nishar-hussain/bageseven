@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { GET, POST } from '../app/api/auth/world/route';
 import { POST as challenge } from '../app/api/auth/world/challenge/route';
 const daemon = vi.hoisted(() => vi.fn());
@@ -14,9 +14,32 @@ function request(body: unknown, cookie?: string) {
 }
 describe('public World sign-in', () => {
   it('returns public configuration before login without exposing the RP signing key', async () => {
-    const res = await GET(); const data = await res.json();
+    const res = await GET(new NextRequest('http://localhost:3000/api/auth/world'));
+    const data = await res.json();
     expect(data).toMatchObject({ app_id: 'app_test', rp_id: 'rp_test', mock_proofs: false });
     expect(JSON.stringify(data)).not.toContain('server-key-not-returned');
+  });
+  it('resumes a returning device from the signed World identity cookie', async () => {
+    const { attachWorldIdentityCookie, WORLD_IDENTITY_COOKIE } = await import('../lib/auth');
+    const seed = new NextResponse();
+    attachWorldIdentityCookie(seed, '0xreturninghuman');
+    const cookie = seed.cookies.get(WORLD_IDENTITY_COOKIE)?.value;
+    expect(cookie).toBeTruthy();
+    const res = await POST(
+      new NextRequest('http://localhost:3000/api/auth/world', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie: `${WORLD_IDENTITY_COOKIE}=${cookie}` },
+        body: JSON.stringify({ device_resume: true }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      ok: true,
+      returning: true,
+      needs_onboarding: false,
+      world_human_id: '0xreturninghuman',
+    });
+    expect(res.headers.get('set-cookie')).toContain('bagseven_session=');
   });
   it('issues a browser-bound challenge without an existing operator session', async () => {
     daemon.mockResolvedValue({ ok: true, status: 200, body: { nonce: 'nonce', sig: 'signature' } });

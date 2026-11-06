@@ -17,7 +17,8 @@ export async function daemonFetch(path: string, init?: RequestInit & { skipDaemo
     for (const [k, v] of Object.entries(auth)) headers.set(k, v as string);
   }
   if (rest.body && !headers.has('content-type')) headers.set('content-type', 'application/json');
-  return fetch(`${daemonBase()}${path}`, { ...rest, headers, cache: 'no-store' });
+  const signal = rest.signal ?? AbortSignal.timeout(15_000);
+  return fetch(`${daemonBase()}${path}`, { ...rest, headers, cache: 'no-store', signal });
 }
 
 export async function daemonJson<T = unknown>(path: string, init?: RequestInit): Promise<{ ok: boolean; status: number; body: T }> {

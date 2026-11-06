@@ -9,7 +9,6 @@ import {
   useEntitlement,
   useFlag,
 } from '@bagseven/sdk/react';
-import { StatusBadges } from '../../../components/app/StatusBadges';
 import { useOperator } from '../../../lib/use-operator';
 
 const PK = process.env.NEXT_PUBLIC_BAGSEVEN_PUBLISHABLE_KEY ?? '';
@@ -31,7 +30,8 @@ function LiveGuard() {
         <code className="fi-mono text-xs">useFlag(&apos;ocr&apos;)</code> → <strong>{String(enabled)}</strong>
       </div>
       <div className="mt-1">
-        remaining {ent.remaining} · TTL {ent.paid_through ?? 'none'}
+        type {ent.value_type ?? 'numeric'} · remaining {ent.remaining} · TTL {ent.paid_through ?? 'none'} · Arkiv{' '}
+        {ent.grant_id ? 'live' : 'empty'}
       </div>
       <FeatureFlagGuard feature="ocr" fallback={<p className="mt-2 text-[var(--muted)]">OCR gated off — mint an entitlement first.</p>}>
         <p className="mt-2 font-medium text-[var(--good)]">OCR is entitled. FeatureFlagGuard rendered this.</p>
@@ -61,26 +61,29 @@ export default function SdkPage() {
     if (op.holder) void issue();
   }, [op.holder, issue]);
 
-  const snippet = `import { BagsevenProvider, FeatureFlagGuard, BagsevenEmbed } from "@bagseven/sdk/react";
+  const snippet = `// React — flags + embed
+import { BagsevenProvider, FeatureFlagGuard, useFlag, BagsevenEmbed } from "@bagseven/sdk/react";
 
 <BagsevenProvider publishableKey="${PK || 'pk_test_…'}">
-  <FeatureFlagGuard feature="ocr"><OcrButton /></FeatureFlagGuard>
+  <FeatureFlagGuard feature="api_access"><Premium /></FeatureFlagGuard>
   <BagsevenEmbed accessToken={token} initialView="portal" />
-  <BagsevenEmbed checkoutSessionId={cs} initialView="checkout" />
-</BagsevenProvider>`;
+</BagsevenProvider>
+
+// Server — Node
+import { BagsevenClient } from "@bagseven/sdk/node";
+const client = new BagsevenClient({ apiKey: process.env.BAGSEVEN_SECRET_KEY! });
+const on = await client.checkFlag("api_access", { holder }); // boolean or numeric
+const rem = await client.getRemaining("ocr", { holder });`;
 
   const iframe = `<iframe src="${origin}/embed?token=…" style="border:0;width:100%;min-height:420px"></iframe>`;
 
   return (
     <div className="mx-auto max-w-4xl space-y-5">
       <div>
-        <h1 className="text-[2rem] font-semibold tracking-tight">Entitlement SDK</h1>
-        <p className="mt-1 text-sm text-[var(--muted)]">
-          Schematic-style check / consume / embed for humans. Agents use the same verbs over MCP.
+        <h1 className="text-[1.75rem] font-semibold tracking-tight md:text-[2rem]">SDK</h1>
+        <p className="mt-1.5 text-[13.5px] text-[var(--muted)]">
+          Check, consume, and embed entitlements in your app. Agents use the same verbs over MCP.
         </p>
-        <div className="mt-4">
-          <StatusBadges />
-        </div>
       </div>
 
       {msg && <p className="text-sm text-[var(--deny)]">{msg}</p>}

@@ -5,11 +5,11 @@ import {
   assertKnownFeature,
   DEFAULT_FEATURE_ID,
   explorerUrl,
-  FEATURE_CATALOG,
   featureForAction,
   getGrantStore,
   MintGrantInputSchema,
 } from '@bagseven/entitlements';
+import { createFeature, getFeatureValueType, listFeatures } from './feature-registry.js';
 import {
   assertWorldCallbackIssuer,
   buildWorldAuthorizeUrl,
@@ -127,11 +127,22 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
   function takeChallenge(response: unknown, purpose: 'login' | 'mint'): string {
     const nonce = (response as { nonce?: unknown } | null)?.nonce;
     const challenge = typeof nonce === 'string' ? challenges.get(nonce) : undefined;
-    if (!challenge || challenge.purpose !== purpose || challenge.expires <= Date.now()) {
-      throw new ApiError(403, 'WORLD_CHALLENGE_INVALID', 'Start a new World ID verification; the request is missing, expired, or already used');
+    if (challenge && challenge.purpose === purpose && challenge.expires > Date.now()) {
+      challenges.delete(nonce as string);
+      return challenge.action;
     }
-    challenges.delete(nonce as string);
-    return challenge.action;
+    // Login returning-user path: in-memory challenge can be lost (daemon restart) or
+    // already consumed while World still returns a valid uniqueness proof / nullifier_replayed.
+    // Console already binds the proof nonce via bagseven_world_nonce cookie.
+    if (purpose === 'login') {
+      const cfg = worldIdKitConfig();
+      const action = (response as { action?: unknown } | null)?.action;
+      if (typeof action === 'string' && action === cfg.login_action) {
+        if (typeof nonce === 'string') challenges.delete(nonce);
+        return action;
+      }
+    }
+    throw new ApiError(403, 'WORLD_CHALLENGE_INVALID', 'Start a new World ID verification; the request is missing, expired, or already used');
   }
 
   app.get('/internal/mumbai/status', async () => {
@@ -179,10 +190,40 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
         require_grant: (process.env.BAGSEVEN_REQUIRE_GRANT ?? 'true').toLowerCase() !== 'false',
         /** @deprecated Prefer `features` — scalar kept for older clients. */
         feature: process.env.BAGSEVEN_GRANT_FEATURE ?? DEFAULT_FEATURE_ID,
-        features: FEATURE_CATALOG.map((f) => ({ id: f.id, label: f.label, actions: [...f.actions] })),
+        features: listFeatures().map((f) => ({
+          id: f.id,
+          label: f.label,
+          actions: f.actions,
+          builtin: f.builtin,
+          value_type: f.value_type,
+        })),
         fetch_feature: featureForAction('fetch'),
       },
     };
+  });
+
+  /** Built-in + operator-created feature SKUs (Schematic / ArcenPay-style catalog). */
+  app.get('/internal/features', async () => ({ features: listFeatures() }));
+
+  app.post('/internal/features', async (req) => {
+    const body = z
+      .object({
+        id: z.string().min(2).max(64),
+        label: z.string().max(80).optional(),
+        blurb: z.string().max(200).optional(),
+        value_type: z.enum(['boolean', 'numeric']).optional(),
+        actions: z.array(z.string().min(1)).max(12).optional(),
+      })
+      .parse(req.body ?? {});
+    try {
+      const feature = createFeature(body);
+      return { feature };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.startsWith('FEATURE_EXISTS')) throw new ApiError(409, 'FEATURE_EXISTS', msg);
+      if (msg.startsWith('INVALID_FEATURE')) throw new ApiError(400, 'INVALID_FEATURE', msg);
+      throw e;
+    }
   });
 
   // PKCE verifiers + nonce stay server-side only (World IdP OIDC / Agent Pass).
@@ -479,7 +520,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
         access: 'Arkiv-queryable grant until paid_through / ExpirationTime',
       },
       store: store.describe(),
-      features: FEATURE_CATALOG.map((f) => f.id),
+      features: listFeatures().map((f) => f.id),
     };
   });
 
@@ -522,10 +563,15 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
         req,
       });
 
+      const valueType = getFeatureValueType(body.feature);
+      // Boolean = on/off access on Arkiv until TTL. Numeric = metered credits.
+      const remaining = valueType === 'boolean' ? '1' : body.remaining;
+      const settleAmount = valueType === 'boolean' ? (body.remaining === '1' ? '1' : body.remaining) : body.remaining;
+
       let settlement: Awaited<ReturnType<typeof settleWhitechainUsdt>> | null = null;
       if (body.settlement_network !== 'local') {
         settlement = await settleWhitechainUsdt({
-          amount: body.remaining,
+          amount: settleAmount,
           feature: body.feature,
           holder: body.holder,
           payment_tx: body.payment_tx,
@@ -537,6 +583,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
 
       const grant = await store.mint({
         ...body,
+        remaining,
         worker_id: resolveWorkerId(body.worker_id),
         human_id: world.human_id,
         world_proof_id: world.world_proof_id,
@@ -547,11 +594,14 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
       void notifyOperator(
         'grant_minted',
         'Entitlement minted',
-        'A living Arkiv grant is on the query surface.',
+        valueType === 'boolean'
+          ? 'Boolean Arkiv entitlement is live until paid_through.'
+          : 'A living Arkiv grant is on the query surface.',
         {
           grant_id: grant.id,
           holder: grant.holder,
           remaining: grant.remaining,
+          value_type: valueType,
           paid_through: grant.paid_through,
           payment_tx: grant.payment_tx ?? '',
         },
@@ -707,7 +757,8 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
       if (new Date(grant.paid_through).getTime() <= now) {
         throw new ApiError(403, 'DUAL_GATE', 'GRANT_EXPIRED: access left the query surface');
       }
-      if (!gte(grant.remaining, body.amount)) {
+      const valueType = getFeatureValueType(grant.feature);
+      if (valueType === 'numeric' && !gte(grant.remaining, body.amount)) {
         throw new ApiError(403, 'DUAL_GATE', 'GRANT_EMPTY: remaining credits insufficient');
       }
 
@@ -728,6 +779,16 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
           `MANDATE_EMPTY: ${capacity.reason ?? 'mandate capacity insufficient'}`,
           capacity,
         );
+      }
+
+      // Boolean features: access check only — do not burn Arkiv remaining.
+      if (valueType === 'boolean') {
+        return {
+          grant,
+          work_echo: body.work ?? null,
+          dual_gate: { mandate: 'ok', grant: 'ok' },
+          note: 'Boolean entitlement active on Arkiv until paid_through',
+        };
       }
 
       const key = body.idempotency_key ?? randomUUID();

@@ -38,7 +38,7 @@ export default function SettingsPage() {
           need: status.tracks.whitechain.demo_settle
             ? 'Buyer wallet pay works with demo confirm until you set WHITECHAIN_DEMO_SETTLE=false, WHITECHAIN_PAY_TO, WHITECHAIN_USDT. Operator Credits also need WHITECHAIN_PRIVATE_KEY.'
             : 'Live settle path configured.',
-          action: '/app/checkouts',
+          action: '/app/credits',
         },
         {
           id: 'arkiv',
@@ -55,10 +55,9 @@ export default function SettingsPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-5">
       <div>
-        <h1 className="text-[2rem] font-semibold tracking-tight">Tracks</h1>
-        <p className="mt-1 text-sm text-[var(--muted)]">
-          Track readiness from server env — secrets never in the browser. Full checklist:{' '}
-          <code className="fi-mono text-xs">docs/LIVE.md</code>
+        <h1 className="text-[1.75rem] font-semibold tracking-tight md:text-[2rem]">Tracks</h1>
+        <p className="mt-1.5 text-[13.5px] text-[var(--muted)]">
+          Infrastructure readiness from server env. Secrets never leave the server.
         </p>
         <div className="mt-4">
           <StatusBadges />

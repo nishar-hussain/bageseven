@@ -3,12 +3,14 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { authorizeWhitechainPayment, payUsdtOnWhitechain } from '@bagseven/sdk/wallet';
-import { StatusBadges } from '../../../components/app/StatusBadges';
+import { PageHeader, SoftCard } from '../../../components/app/ui';
 import { entitlementsApi } from '../../../lib/entitlements-client';
-import { FEATURE_OPTIONS, TTL_PRESETS, featureLabel, shortId, useOperator } from '../../../lib/use-operator';
+import { TTL_PRESETS, shortId, useOperator } from '../../../lib/use-operator';
+import { featureLabel, useFeatures } from '../../../lib/use-features';
 
 export default function CreditsPage() {
   const op = useOperator();
+  const { features } = useFeatures();
   const [feature, setFeature] = useState('ocr');
   const [amount, setAmount] = useState('1.00');
   const [remaining, setRemaining] = useState('10');
@@ -50,7 +52,7 @@ export default function CreditsPage() {
       });
       setPaymentTx('');
       setMsg(
-        `Topped up ${featureLabel(feature)} for ${op.holder}. ` +
+        `Topped up ${featureLabel(feature, features)} for ${op.holder}. ` +
           `${r.settlement?.mode ?? 'settle'} · grant ${shortId(r.grant.id)} · ${r.grant.remaining} credits left` +
           (r.settlement?.explorer_url ? `\n${r.settlement.explorer_url}` : ''),
       );
@@ -63,30 +65,22 @@ export default function CreditsPage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-5">
-      <div>
-        <h1 className="text-[2rem] font-semibold tracking-tight">Buy credits</h1>
-        <p className="mt-1 text-sm text-[var(--muted)]">
-          Top up credits on an existing entitlement (Whitechain settle). Pick the same feature SKU you already entitled.
-        </p>
-        <div className="mt-4">
-          <StatusBadges />
-        </div>
-      </div>
+      <PageHeader title="Buy credits" description="Top up an existing entitlement on Whitechain." />
 
-      {op.status?.tracks.whitechain.demo_settle && (
+      {op.status?.tracks.whitechain.demo_settle ? (
         <div className="rounded-2xl border border-orange-200 bg-[var(--warn-t)] px-4 py-3 text-sm text-[var(--ink)]">
-          Whitechain is in <strong>demo settle</strong> mode. Set WHITECHAIN_PRIVATE_KEY + WHITECHAIN_PAY_TO or paste a real explorer tx for a live stamp.
+          Whitechain settle is not wired. Configure operator keys on Tracks, or paste a real payment tx below.
         </div>
-      )}
+      ) : null}
 
-      <div className="space-y-4 rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
+      <SoftCard className="space-y-4 p-5">
         <p className="text-sm text-[var(--muted)]">
           Buyer: <strong className="text-[var(--ink)]">{op.holder || '…'}</strong>
         </p>
         <div className="fi-field">
           <label htmlFor="feature">Feature SKU to top up</label>
           <select id="feature" value={feature} onChange={(e) => setFeature(e.target.value)} className="w-full rounded-xl border border-[var(--line)] bg-white px-3 py-2.5 text-sm">
-            {FEATURE_OPTIONS.map((f) => (
+            {features.map((f) => (
               <option key={f.id} value={f.id}>
                 {f.label} — {f.blurb}
               </option>
@@ -131,7 +125,7 @@ export default function CreditsPage() {
           </div>
         )}
         {msg && <pre className="whitespace-pre-wrap text-sm text-[var(--muted)]">{msg}</pre>}
-      </div>
+      </SoftCard>
     </div>
   );
 }

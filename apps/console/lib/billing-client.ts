@@ -5,6 +5,7 @@ async function api<T>(method: string, path: string, body?: unknown): Promise<T> 
     method,
     headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
     body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(12_000),
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {

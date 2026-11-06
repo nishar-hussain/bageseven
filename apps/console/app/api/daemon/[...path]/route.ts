@@ -7,6 +7,8 @@ type Ctx = { params: Promise<{ path: string[] }> };
 /** Product BFF surface — never proxy arbitrary daemon internals. */
 const ALLOWED: Array<{ method: string; match: (parts: string[]) => boolean }> = [
   { method: 'GET', match: (p) => p[0] === 'mumbai' && p[1] === 'status' && p.length === 2 },
+  { method: 'GET', match: (p) => p[0] === 'features' && p.length === 1 },
+  { method: 'POST', match: (p) => p[0] === 'features' && p.length === 1 },
   { method: 'GET', match: (p) => p[0] === 'world' && p[1] === 'authorize' && p.length === 2 },
   { method: 'POST', match: (p) => p[0] === 'world' && p[1] === 'callback' && p.length === 2 },
   { method: 'POST', match: (p) => p[0] === 'world' && p[1] === 'rp-signature' && p.length === 2 },

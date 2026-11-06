@@ -88,12 +88,12 @@ export const FEATURE_OPTIONS = [
   {
     id: 'ocr',
     label: 'OCR',
-    blurb: 'Demo metered feature — burn 1 credit per OCR-style paid_run',
+    blurb: 'Metered OCR-style paid_run — 1 credit per call',
   },
   {
     id: 'research_fetch',
     label: 'Research fetch',
-    blurb: 'Demo metered feature — burn credits on bagseven_fetch / paid URL fetch',
+    blurb: 'Metered URL fetch via bagseven_fetch',
   },
 ] as const;
 

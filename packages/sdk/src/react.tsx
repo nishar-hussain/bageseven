@@ -112,12 +112,19 @@ export function useEntitlement(feature: string): Entitlement {
     entitlements.find((e) => e.feature === feature) ?? {
       feature,
       enabled: false,
+      value_type: 'numeric',
       remaining: '0',
       allocation: '0',
       paid_through: null,
       grant_id: null,
+      value: false,
     }
   );
+}
+
+/** Numeric credits remaining; boolean features surface `'1'` while live. */
+export function useRemaining(feature: string): string {
+  return useEntitlement(feature).remaining;
 }
 
 export function useConsumeEntitlement(): {
@@ -362,7 +369,9 @@ export function BagsevenEmbed({
             <div key={e.grant_id ?? e.feature} style={{ borderTop: '1px solid #eee', padding: '10px 0' }}>
               <strong>{e.feature}</strong>
               <div style={{ fontSize: 13, color: '#555' }}>
-                {e.remaining} credits · TTL {e.paid_through ?? '—'}
+                {e.value_type === 'boolean'
+                  ? `${e.enabled ? 'On' : 'Off'} · Arkiv until ${e.paid_through ?? '—'}`
+                  : `${e.remaining} credits · TTL ${e.paid_through ?? '—'}`}
                 {e.explorer_url ? (
                   <>
                     {' · '}

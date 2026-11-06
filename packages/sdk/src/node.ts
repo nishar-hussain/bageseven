@@ -41,9 +41,16 @@ export class BagsevenClient {
     return json as T;
   }
 
+  /** Boolean-style flag check (ArcenPay / Schematic). Works for boolean and numeric features. */
   async checkFlag(feature: string, opts: { holder: string }): Promise<boolean> {
     const r = await this.checkEntitlement(feature, opts);
     return r.enabled;
+  }
+
+  /** Numeric remaining (credits). Boolean features return `'1'` / `'0'`. */
+  async getRemaining(feature: string, opts: { holder: string }): Promise<string> {
+    const r = await this.checkEntitlement(feature, opts);
+    return r.remaining;
   }
 
   async checkEntitlement(feature: string, opts: { holder: string }): Promise<Entitlement> {

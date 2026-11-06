@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { entitlementsApi, type Grant } from '../../lib/entitlements-client';
 import { featureLabel, shortId } from '../../lib/use-operator';
+import { useFeatures } from '../../lib/use-features';
 
 function useTtl(paidThrough: string) {
   const [label, setLabel] = useState('…');
@@ -24,8 +25,8 @@ function useTtl(paidThrough: string) {
       else setLabel(m > 0 ? `${m}m ${s % 60}s` : `${s}s`);
     };
     tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
   }, [paidThrough]);
   return { label, dead };
 }
@@ -38,6 +39,7 @@ function GrantRow({
   onPaidRun,
   onCancel,
   busy,
+  valueType,
 }: {
   grant: Grant;
   network: string;
@@ -46,10 +48,12 @@ function GrantRow({
   onPaidRun: () => void;
   onCancel: () => void;
   busy: boolean;
+  valueType: 'boolean' | 'numeric';
 }) {
   const { label, dead } = useTtl(grant.paid_through);
   const host = network === 'mainnet' ? 'https://explorer.whitechain.io' : 'https://explorer.testnet.whitechain.io';
   const explorer = grant.payment_tx ? `${host}/tx/${grant.payment_tx}` : null;
+  const isBoolean = valueType === 'boolean';
   return (
     <div
       className={`border-t border-[var(--line)] py-4 first:border-t-0 first:pt-0 ${selected ? 'bg-[var(--tint)]/40 -mx-2 px-2 rounded-xl' : ''}`}
@@ -57,7 +61,12 @@ function GrantRow({
       <button type="button" onClick={onSelect} className="w-full text-left">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <div>
-            <div className="font-medium">{featureLabel(grant.feature)} entitlement</div>
+            <div className="font-medium">
+              {featureLabel(grant.feature)} entitlement
+              <span className="ml-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">
+                {isBoolean ? 'boolean · Arkiv' : 'numeric · Arkiv'}
+              </span>
+            </div>
             <div className="text-xs text-[var(--muted)]">
               {grant.holder}
               <span className="fi-mono ml-2 opacity-60" title={grant.id}>
@@ -70,7 +79,15 @@ function GrantRow({
       </button>
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-[var(--muted)]">
         <span>
-          <strong className="text-[var(--ink)]">{grant.remaining}</strong> credits left
+          {isBoolean ? (
+            <>
+              <strong className="text-[var(--ink)]">{dead ? 'Off' : 'On'}</strong> until TTL
+            </>
+          ) : (
+            <>
+              <strong className="text-[var(--ink)]">{grant.remaining}</strong> credits left
+            </>
+          )}
         </span>
         <span>Renewal {grant.renewal_enabled ? 'on' : 'off'}</span>
         {explorer && (
@@ -78,14 +95,16 @@ function GrantRow({
             Whitechain
           </a>
         )}
-        <button
-          type="button"
-          disabled={busy || dead}
-          onClick={() => onPaidRun()}
-          className="rounded-full border border-[var(--line)] px-3 py-1 text-xs font-semibold disabled:opacity-50"
-        >
-          Spend 1 credit
-        </button>
+        {!isBoolean ? (
+          <button
+            type="button"
+            disabled={busy || dead}
+            onClick={() => onPaidRun()}
+            className="rounded-full border border-[var(--line)] px-3 py-1 text-xs font-semibold disabled:opacity-50"
+          >
+            Spend 1 credit
+          </button>
+        ) : null}
         <button
           type="button"
           disabled={busy || !grant.renewal_enabled}
@@ -119,6 +138,7 @@ export function GrantList({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState('');
   const [localSelected, setLocalSelected] = useState<string | undefined>(selectedId);
+  const { features } = useFeatures();
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -140,8 +160,6 @@ export function GrantList({
   useEffect(() => {
     setLoading(true);
     void refresh();
-    const id = setInterval(() => void refresh(), 10_000);
-    return () => clearInterval(id);
   }, [refresh]);
 
   useEffect(() => {
@@ -215,12 +233,12 @@ export function GrantList({
       {error && <p className="text-sm text-[var(--deny)]">{error}</p>}
       {!loading && !error && grants.length === 0 && (
         <div className="py-10 text-center">
-          <p className="font-medium text-[var(--ink)]">No entitlements yet.</p>
+          <p className="font-medium text-[var(--ink)]">No entitlements yet</p>
           <p className="mt-2 text-sm text-[var(--muted)]">
-            Entitlement = right to use a feature (credits + expiry). OCR is one demo feature, not the product.
+            Create living Arkiv access — boolean on/off or numeric credits, both with TTL.
           </p>
-          <Link href="/app/mint" className="mt-5 inline-flex rounded-full bg-[var(--blue)] px-5 py-2 text-sm font-semibold text-white">
-            Create entitlement →
+          <Link href="/app/mint" className="mt-5 inline-flex rounded-full bg-[var(--ink)] px-5 py-2 text-sm font-semibold text-white">
+            Create entitlement
           </Link>
         </div>
       )}
@@ -229,6 +247,7 @@ export function GrantList({
           key={g.id}
           grant={g}
           network={network}
+          valueType={features.find((f) => f.id === g.feature)?.value_type ?? 'numeric'}
           selected={selectable && localSelected === g.id}
           busy={busyId === g.id}
           onSelect={() => {
