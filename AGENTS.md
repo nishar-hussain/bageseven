@@ -26,7 +26,7 @@ Do **not** add another web app, revive `bag-dashboard`, or put an inspector on `
 | Renewal | `grant.renewal_enabled` (cancel does **not** kill `paid_through`) |
 | Access | Arkiv grant `remaining` + `paid_through` (queryable object, not a private `/check`) |
 
-`paid_run` / `bagseven_fetch` fail closed without both mandate capacity and a living grant (`BAGSEVEN_REQUIRE_GRANT=true`). When `BAGSEVEN_MCP_WORKER` is not a policy agent, MCP status is `entitlements_only` — grant tools still work; mandate spend via `bagseven_fetch` needs agent registration.
+`paid_run` / `bagseven_fetch` fail closed without both mandate capacity and a living grant (`BAGSEVEN_REQUIRE_GRANT=true`). When `BAGSEVEN_MCP_WORKER` is not a policy agent, MCP status is `entitlements_only` — grant reads and minting still work; `paid_run` and mandate spend via `bagseven_fetch` need agent registration.
 
 ## Auth + email
 

@@ -22,7 +22,6 @@ try {
 
 const DAEMON = process.env.DAEMON_URL ?? 'http://localhost:4001';
 const WORKER = process.env.BAGSEVEN_MCP_WORKER;
-const RESEARCH_PROVIDER = process.env.RESEARCH_PROVIDER_URL ?? 'http://127.0.0.1:4010';
 
 async function daemon(method: string, path: string, body?: unknown): Promise<unknown> {
   const headers: Record<string, string> = {};
@@ -36,7 +35,7 @@ async function daemon(method: string, path: string, body?: unknown): Promise<unk
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch (error) {
-    throw new Error(`Bagseven daemon is unreachable at ${DAEMON}; start the daemon on port 4001 (${(error as Error).message})`);
+    throw new Error(`Bagseven daemon is unreachable at ${DAEMON}; start the daemon on port 4001 (${(error as Error).message})`, { cause: error });
   }
   const raw = await response.text();
   const payload = raw ? JSON.parse(raw) : undefined;
@@ -77,27 +76,11 @@ function buildServer(): McpServer {
           mode: 'entitlements_only',
           worker: WORKER,
           note:
-            'This BAGSEVEN_MCP_WORKER is not registered as a policy agent. Grant tools (grant_status, paid_run, mint_with_world) still work. Register a mandate/agent for bagseven_fetch mandate spend.',
+            'This BAGSEVEN_MCP_WORKER is not registered as a policy agent. Grant reads and minting still work. Register a mandate/agent for paid_run and bagseven_fetch mandate spend.',
           tracks,
           grants,
         });
       }
-    },
-  );
-
-  server.registerTool(
-    'bagseven_search',
-    {
-      title: 'Bagseven research search',
-      description: 'Search research providers available to this Bagseven agent.',
-      inputSchema: { query: z.string().min(1).max(500) },
-    },
-    async ({ query }) => {
-      const response = await fetch(`${RESEARCH_PROVIDER}/v1/providers?query=${encodeURIComponent(query)}`);
-      if (!response.ok) throw new Error(`research provider search failed (${response.status})`);
-      const catalog = await response.json() as { providers?: Array<{ resources?: Array<{ id: string; title: string; category: string; price: string; provider: string; free: boolean; summary: string }> }> };
-      const resources = (catalog.providers ?? []).flatMap((provider) => provider.resources ?? []).filter((resource) => `${resource.title} ${resource.category} ${resource.summary}`.toLowerCase().includes(query.toLowerCase()) || query.toLowerCase().includes('electric vehicle'));
-      return text({ query, resources });
     },
   );
 
@@ -232,18 +215,10 @@ function buildServer(): McpServer {
         idempotency_key: z.string().optional(),
       },
     },
-    async (input) => {
-      const prod = (process.env.NODE_ENV ?? 'development') === 'production';
-      // Local/demo: console also skips mandate when the MCP worker is not a policy agent.
-      // Production always enforces mandate capacity via the daemon (skip forced off).
-      return text(
-        await daemon('POST', '/internal/grants/paid-run', {
-          ...input,
-          worker_id: WORKER,
-          skip_mandate_gate: prod ? false : true,
-        }),
-      );
-    },
+    async (input) => text(await daemon('POST', '/internal/grants/paid-run', {
+      ...input,
+      worker_id: WORKER,
+    })),
   );
 
   server.registerTool(

@@ -63,7 +63,7 @@ TLS on the proxy. Copy `.env` onto the box; do not commit it.
 ## Path B — Docker data + process split
 
 ```bash
-pnpm db:up          # Postgres 55432, Redis 6379
+pnpm db:up          # Postgres 55432, Redis 56379
 # run Node services on the host or in your own containers
 ```
 

@@ -20,7 +20,7 @@ services:
   redis:
     image: valkey/valkey:8
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-56379}:6379"
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
       interval: 5s
@@ -47,5 +47,20 @@ services:
       - "9092:9092"
       - "9644:9644"
 
+  anvil:
+    image: ghcr.io/foundry-rs/foundry:stable
+    entrypoint: ["anvil"]
+    command: ["--host", "0.0.0.0", "--chain-id", "43113", "--state", "/data/state.json", "--state-interval", "1"]
+    ports:
+      - "127.0.0.1:58545:8545"
+    volumes:
+      - anvil-data:/data
+    healthcheck:
+      test: ["CMD", "cast", "block-number", "--rpc-url", "http://127.0.0.1:8545"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   pgdata:
+  anvil-data:

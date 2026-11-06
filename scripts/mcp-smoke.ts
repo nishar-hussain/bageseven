@@ -21,7 +21,7 @@ async function main(): Promise<void> {
     await client.connect(transport);
     const status = await call(client, 'bagseven_status');
     console.log(JSON.stringify({ test: 'bagseven_status', result: status }, null, 2));
-    const grants = await call(client, 'grant_status', { feature: 'ocr' });
+    const grants = await call(client, 'grant_status', { feature: process.env.BAGSEVEN_GRANT_FEATURE ?? 'ocr' });
     console.log(JSON.stringify({ test: 'grant_status', result: grants }, null, 2));
     try {
       const search = await call(client, 'bagseven_search', { query: process.env.MCP_SMOKE_QUERY ?? 'research' });

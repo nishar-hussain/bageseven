@@ -16,7 +16,7 @@ Sign-in is a magic link to **any email** (`/app/login`). Mail is sent from `bags
 ## Start
 
 ```bash
-pnpm run setup      # .env, docker postgres/redis, build, migrate
+pnpm run setup      # .env, postgres/redis/anvil, build, migrate, funded local worker
 pnpm start:local    # landing + dashboard + gateway + policy + daemon
 # pnpm dev is the same command
 ```
@@ -25,9 +25,19 @@ If `pnpm` itself errors with a missing global path, your shell shim is broken �
 
 Then: landing → **Start free** → email → Overview → Mint / Credits / Grants.
 
+Setup creates a funded mandate and saves `BAGSEVEN_MCP_WORKER` in `.env`. World proofs and Hedera settlement use local mock modes; Arkiv uses memory. The isolated Anvil chain runs on `58545` with local USDC, without real funds.
+
+Verify the full local flow without sending email:
+
+```bash
+NOTIFY_MODE=log pnpm start:local
+# In another terminal:
+NOTIFY_MODE=log pnpm smoke:e2e
+```
+
 **What ships + demo + World vs MCP auth:** [docs/PRODUCT.md](./docs/PRODUCT.md)
 
-Docs: [docs/](./docs/README.md) · [AGENTS.md](./AGENTS.md) · [llms.txt](./llms.txt)
+Docs: [docs/](./docs/README.md) · [docs/DEVELOPERS.md](./docs/DEVELOPERS.md) · [docs/HOSTING.md](./docs/HOSTING.md) · [llms.txt](./llms.txt) · [AGENTS.md](./AGENTS.md)
 
 ## Dual-gate
 

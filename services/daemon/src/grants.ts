@@ -11,12 +11,17 @@ import {
 import { gte } from '@bagseven/money';
 import type { FastifyInstance } from 'fastify';
 import { settleHederaX402, buildHcsJoin } from './hedera-x402.js';
-import { notifyOperator } from '@bagseven/notify';
+import { notifyConfigured, notifyOperator } from '@bagseven/notify';
 
 function actorEmail(req: { headers: { [key: string]: string | string[] | undefined } }): string | undefined {
   const raw = req.headers['x-bagseven-actor'];
   const v = Array.isArray(raw) ? raw[0] : raw;
   return typeof v === 'string' && v.includes('@') ? v.trim().toLowerCase() : undefined;
+}
+
+/** Keep dashboard grants on the same worker as the server's MCP instance. */
+function resolveWorkerId(requested?: string, bound?: string): string | undefined {
+  return requested?.trim() || bound?.trim() || process.env.BAGSEVEN_MCP_WORKER?.trim() || undefined;
 }
 
 const consumeSchema = z.object({
@@ -25,8 +30,6 @@ const consumeSchema = z.object({
   idempotency_key: z.string().min(1).optional(),
   work: z.string().max(2000).optional(),
   worker_id: z.string().optional(),
-  /** When true, skip mandate capacity check (tests only). */
-  skip_mandate_gate: z.boolean().optional(),
 });
 
 const holdSchema = z.object({
@@ -73,7 +76,7 @@ export type MandateCapacity = {
 
 export type GrantRouteDeps = {
   /** Dual-gate: mandate money ceiling for a worker. */
-  resolveMandateCapacity?: (workerId: string) => Promise<MandateCapacity>;
+  resolveMandateCapacity?: (workerId: string, amount?: string) => Promise<MandateCapacity>;
 };
 
 function mapGrantError(error: unknown): never {
@@ -95,6 +98,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
     const hasArkiv = Boolean(process.env.ARKIV_ACCESS_KEY && (process.env.ARKIV_PRIVATE_KEY || process.env.PRIVATE_KEY));
     const hederaNetwork = process.env.HEDERA_NETWORK === 'mainnet' ? 'mainnet' : 'testnet';
     return {
+      notifications: { delivery: notifyConfigured() ? 'resend' : 'log' },
       tracks: {
         world: {
           enabled: (process.env.WORLD_AGENT_PASS_ENABLED ?? 'true').toLowerCase() !== 'false',
@@ -224,6 +228,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
 
       const grant = await store.mint({
         ...body,
+        worker_id: resolveWorkerId(body.worker_id),
         human_id: world.human_id,
         world_proof_id: world.world_proof_id,
         payment_tx: settlement?.payment_tx ?? body.payment_tx,
@@ -296,7 +301,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
         world_proof_id: world.world_proof_id,
         payment_tx: settlement.payment_tx,
         settlement_network: 'hedera',
-        worker_id: body.worker_id,
+        worker_id: resolveWorkerId(body.worker_id),
         mandate_id: body.mandate_id,
         renewal_enabled: true,
       });
@@ -353,18 +358,18 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
         throw new ApiError(403, 'DUAL_GATE', 'GRANT_EMPTY: remaining credits insufficient');
       }
 
-      const prod = (process.env.NODE_ENV ?? 'development') === 'production';
-      const skipMandate = prod ? false : Boolean(body.skip_mandate_gate);
-      if (!skipMandate && body.worker_id && deps.resolveMandateCapacity) {
-        const capacity = await deps.resolveMandateCapacity(body.worker_id);
-        if (!capacity.ok) {
-          throw new ApiError(
-            403,
-            'DUAL_GATE',
-            `MANDATE_EMPTY: ${capacity.reason ?? 'mandate capacity insufficient'}`,
-            capacity,
-          );
-        }
+      const worker = resolveWorkerId(body.worker_id, grant.worker_id);
+      if (!worker || !deps.resolveMandateCapacity) {
+        throw new ApiError(403, 'DUAL_GATE', 'MANDATE_REQUIRED: paid work requires a worker with mandate capacity');
+      }
+      const capacity = await deps.resolveMandateCapacity(worker, body.amount);
+      if (!capacity.ok) {
+        throw new ApiError(
+          403,
+          'DUAL_GATE',
+          `MANDATE_EMPTY: ${capacity.reason ?? 'mandate capacity insufficient'}`,
+          capacity,
+        );
       }
 
       const key = body.idempotency_key ?? randomUUID();
@@ -450,7 +455,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
     }
 
     if (body.worker_id && deps.resolveMandateCapacity) {
-      const capacity = await deps.resolveMandateCapacity(body.worker_id);
+      const capacity = await deps.resolveMandateCapacity(body.worker_id, body.amount);
       if (!capacity.ok) {
         reasons.push({ code: 'MANDATE_EMPTY', detail: capacity.reason ?? 'mandate capacity insufficient' });
       }

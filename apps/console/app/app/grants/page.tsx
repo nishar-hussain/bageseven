@@ -19,7 +19,6 @@ export default function GrantsPage() {
         grant_id: grantId,
         amount,
         work,
-        skip_mandate_gate: true, // console demo: grant gate only until worker/mandate bound
       });
       setMsg(`OK remaining=${r.grant.remaining}`);
     } catch (e) {
@@ -67,7 +66,7 @@ export default function GrantsPage() {
       <div className="rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)] space-y-4">
         <div>
           <h2 className="text-base font-semibold">Dual-gate actions</h2>
-          <p className="mt-1 text-sm text-[var(--muted)]">Paste a grant id. Paid run burns credits (local mandate skip when worker missing).</p>
+          <p className="mt-1 text-sm text-[var(--muted)]">Paste a grant id. Paid run checks worker mandate capacity before using grant credits.</p>
         </div>
         <div className="grid gap-3 md:grid-cols-3">
           <div className="fi-field">

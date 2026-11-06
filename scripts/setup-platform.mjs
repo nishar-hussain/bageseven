@@ -3,9 +3,9 @@
  * One-shot local platform setup:
  *   pnpm setup
  *
- * - creates .env (Anvil/dev keys + Mumbai defaults)
+ * - creates .env (local development keys)
  * - ensures deps installed
- * - docker compose up (postgres + redis; redpanda unless --light)
+ * - docker compose up (postgres + redis + local mandate chain; optional --with-redpanda)
  * - turbo build
  * - db migrate
  */
@@ -15,7 +15,6 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash, randomBytes } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { privateKeyToAccount } from 'viem/accounts';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const envPath = resolve(root, '.env');
@@ -24,7 +23,8 @@ const examplePath = resolve(root, '.env.example');
 const FORCE = process.argv.includes('--force');
 const SKIP_DOCKER = process.argv.includes('--skip-docker');
 const SKIP_BUILD = process.argv.includes('--skip-build');
-const LIGHT = process.argv.includes('--light');
+const WITH_REDPANDA = process.argv.includes('--with-redpanda');
+let privateKeyToAccount;
 
 function log(msg) {
   console.log(`\n▸ ${msg}`);
@@ -59,9 +59,12 @@ function buildEnvContents() {
 
   const pairs = {
     DATABASE_URL: 'postgres://bagseven:bagseven@localhost:55432/bagseven',
-    REDIS_URL: 'redis://localhost:6379',
+    REDIS_PORT: '56379',
+    REDIS_URL: 'redis://localhost:56379',
     DEV_MODE: 'true',
     SIGNER_MODE: 'dev',
+    RPC_URL: 'http://localhost:58545',
+    CHAIN_ID: '43113',
     DAEMON_OWNER_KEY: KEYS.owner,
     OWNER_DEV_KEY: KEYS.owner,
     DAEMON_OPERATOR_KEY: KEYS.operator,
@@ -77,8 +80,6 @@ function buildEnvContents() {
     WORLD_AGENT_PASS_ENABLED: 'true',
     BAGSEVEN_REQUIRE_GRANT: 'true',
     BAGSEVEN_GRANT_FEATURE: 'ocr',
-    SIGNER_MODE: 'dev',
-    WORLD_AGENT_PASS_ENABLED: 'true',
     NEXT_PUBLIC_GATEWAY_URL: 'http://localhost:4000',
     NEXT_PUBLIC_DAEMON_URL: 'http://localhost:4001',
     DAEMON_URL: 'http://localhost:4001',
@@ -108,7 +109,13 @@ function buildEnvContents() {
   return raw;
 }
 
-async function waitHealthy(container, seconds = 60) {
+async function waitHealthy(service, seconds = 60) {
+  const result = spawnSync('docker', ['compose', '-f', 'deploy/docker-compose.yml', 'ps', '-q', service], {
+    cwd: root,
+    encoding: 'utf8',
+  });
+  const container = result.stdout?.trim();
+  if (result.status !== 0 || !container) return false;
   for (let i = 0; i < seconds; i++) {
     const r = spawnSync('docker', ['inspect', '--format', '{{.State.Health.Status}}', container], {
       encoding: 'utf8',
@@ -125,10 +132,12 @@ async function main() {
 
   if (!existsSync(resolve(root, 'node_modules', '.bin', 'turbo'))) {
     log('Installing dependencies');
-    run('pnpm install');
+    run('pnpm install --frozen-lockfile');
   } else {
     log('Dependencies already installed');
   }
+
+  ({ privateKeyToAccount } = await import('viem/accounts'));
 
   if (!existsSync(envPath) || FORCE) {
     log(FORCE && existsSync(envPath) ? 'Rewriting .env (--force)' : 'Creating .env from .env.example + dev keys');
@@ -137,18 +146,21 @@ async function main() {
     log('.env already exists (use --force to regenerate)');
   }
 
+  process.loadEnvFile(envPath);
+  // Next builds and runs from the app directory, not the repository root.
+  writeFileSync(resolve(root, 'apps/console/.env.local'), readFileSync(envPath));
+
   if (!SKIP_DOCKER) {
-    log(LIGHT ? 'Starting postgres + redis (--light)' : 'Starting postgres + redis + redpanda');
-    if (LIGHT) {
-      run('docker compose -f deploy/docker-compose.yml up -d postgres redis');
-    } else {
+    log(WITH_REDPANDA ? 'Starting postgres + redis + anvil + redpanda' : 'Starting postgres + redis + anvil');
+    if (WITH_REDPANDA) {
       run('pnpm db:up');
+    } else {
+      run('docker compose -f deploy/docker-compose.yml up -d postgres redis anvil');
     }
-    log('Waiting for postgres/redis healthy…');
-    const pgOk = await waitHealthy('bagseven-postgres-1', 90);
-    const rdOk = await waitHealthy('bagseven-redis-1', 90);
-    if (!pgOk || !rdOk) {
-      console.warn('⚠️  Docker health check timed out — continuing; migrate may fail if DB is down');
+    log('Waiting for postgres/redis/anvil healthy…');
+    const healthy = await Promise.all(['postgres', 'redis', 'anvil'].map((service) => waitHealthy(service, 90)));
+    if (healthy.some((ok) => !ok)) {
+      throw new Error('Postgres/Redis/Anvil did not become healthy. Check: docker compose -f deploy/docker-compose.yml logs');
     }
   }
 
@@ -159,6 +171,12 @@ async function main() {
 
   log('Running database migrations');
   run('pnpm db:migrate');
+
+  if (process.env.DEV_MODE === 'true' && process.env.RPC_URL === 'http://localhost:58545') {
+    log('Preparing local token, funded mandate, and MCP worker');
+    run('node scripts/seed-local.mjs');
+    writeFileSync(resolve(root, 'apps/console/.env.local'), readFileSync(envPath));
+  }
 
   const operator = privateKeyToAccount(KEYS.operator);
   const owner = privateKeyToAccount(KEYS.owner);
@@ -183,10 +201,10 @@ Then open:
 Sign in at /app/login (magic link). Without RESEND_API_KEY the link is printed on the page.
 
 MCP (optional):
-  Set BAGSEVEN_MCP_WORKER=<uuid> in .env
+  Local setup saves BAGSEVEN_MCP_WORKER in .env
   pnpm mcp:local
 
-Options: --force  --light  --skip-docker  --skip-build
+Options: --force  --with-redpanda  --skip-docker  --skip-build
 `);
 }
 

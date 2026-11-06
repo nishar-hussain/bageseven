@@ -28,7 +28,7 @@ function dashboardUrl(): string {
 }
 
 export function notifyConfigured(): boolean {
-  return Boolean(process.env.RESEND_API_KEY?.trim());
+  return process.env.NOTIFY_MODE !== 'log' && Boolean(process.env.RESEND_API_KEY?.trim());
 }
 
 function htmlEmail(title: string, body: string, href: string, meta?: NotifyPayload['meta']): string {
@@ -56,9 +56,10 @@ function htmlEmail(title: string, body: string, href: string, meta?: NotifyPaylo
 
 export async function sendNotify(payload: NotifyPayload): Promise<{ ok: boolean; id?: string; skipped?: string; error?: string }> {
   const key = process.env.RESEND_API_KEY?.trim();
-  if (!key) {
-    console.log(`[notify] skip ${payload.event} → ${payload.to} (RESEND_API_KEY unset)`);
-    return { ok: true, skipped: 'RESEND_API_KEY' };
+  if (!key || process.env.NOTIFY_MODE === 'log') {
+    const reason = process.env.NOTIFY_MODE === 'log' ? 'NOTIFY_MODE=log' : 'RESEND_API_KEY unset';
+    console.log(`[notify] skip ${payload.event} → ${payload.to} (${reason})`);
+    return { ok: true, skipped: reason };
   }
   const resend = new Resend(key);
   const subject = payload.subject ?? `[Bagseven] ${payload.title}`;

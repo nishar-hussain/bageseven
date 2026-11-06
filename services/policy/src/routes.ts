@@ -292,7 +292,7 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
           client.spendState(contract),
           client.lifetimeSpent(contract),
         ]);
-      } catch (error) {
+      } catch {
         // The overview is also the dashboard's recovery surface. An RPC outage,
         // stale contract address, or provider rate limit must not turn the whole
         // console into a 500. Keep the database-backed tree/terms visible, but

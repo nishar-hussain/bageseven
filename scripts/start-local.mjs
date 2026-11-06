@@ -128,6 +128,7 @@ const child = spawn(
     turboBin,
     'run',
     'dev',
+    '--env-mode=loose',
     '--filter=@bagseven/gateway',
     '--filter=@bagseven/policy',
     '--filter=@bagseven/daemon',

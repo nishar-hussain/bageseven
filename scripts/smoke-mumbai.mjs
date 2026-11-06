@@ -4,23 +4,11 @@
  * Usage: pnpm smoke
  * Requires daemon on DAEMON_URL (default http://127.0.0.1:4001).
  */
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const envPath = resolve(root, '.env');
-if (existsSync(envPath)) {
-  for (const line of readFileSync(envPath, 'utf8').split('\n')) {
-    if (!line || line.startsWith('#')) continue;
-    const i = line.indexOf('=');
-    if (i <= 0) continue;
-    const k = line.slice(0, i);
-    let v = line.slice(i + 1);
-    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
-    if (process.env[k] === undefined) process.env[k] = v;
-  }
-}
+const envPath = fileURLToPath(new URL('../.env', import.meta.url));
+if (existsSync(envPath)) process.loadEnvFile(envPath);
 
 const base = (process.env.DAEMON_URL ?? 'http://127.0.0.1:4001').replace(/\/$/, '');
 const auth = process.env.DAEMON_AUTH_TOKEN
@@ -46,6 +34,8 @@ async function j(method, path, body) {
 
 async function main() {
   console.log(`smoke → ${base}`);
+  const worker = process.env.BAGSEVEN_MCP_WORKER;
+  if (!worker) throw new Error('BAGSEVEN_MCP_WORKER is required; run pnpm run setup to create the local worker');
   const status = await j('GET', '/internal/mumbai/status');
   console.log('status', JSON.stringify(status.tracks));
 
@@ -57,6 +47,7 @@ async function main() {
     settlement_network: 'hedera',
     world_proof_id: 'world:ok:smoke-human',
     renewal_enabled: true,
+    worker_id: worker,
   });
   console.log('mint', mint.grant?.id, mint.world?.mode);
 
@@ -91,7 +82,7 @@ async function main() {
     grant_id: mint.grant.id,
     amount: '1',
     work: 'smoke',
-    skip_mandate_gate: true,
+    worker_id: worker,
   });
   console.log('paid_run remaining', run.grant?.remaining);
 

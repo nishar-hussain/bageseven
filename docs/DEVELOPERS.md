@@ -16,6 +16,8 @@ Three clocks, all independent:
 
 **Dual-gate:** a paid tool call (`paid_run`, `bagseven_fetch`) needs mandate remaining **and** a living grant. Fail closed.
 
+The daemon uses `BAGSEVEN_MCP_WORKER` as the default worker for dashboard mint and credit purchases, storing the binding on the grant. Paid runs use an explicit `worker_id`, then the grant's saved worker, then this server default for older unbound grants. Every paid run still checks mandate capacity; missing or unavailable workers cannot bypass the gate. Set this variable on the daemon as well as the MCP process.
+
 The LLM never authorizes money. Policy issues a spend token; daemon executes. See [DECISIONS.md](./DECISIONS.md).
 
 ## Repo map
@@ -39,6 +41,10 @@ Do not add a third UI.
 pnpm run setup
 pnpm start:local   # same as pnpm dev
 ```
+
+Requires Node 24+, pnpm 10.33.0, and a running Docker engine. Setup installs locked dependencies, creates local secrets, starts isolated Postgres (`55432`), Redis (`56379`), and Anvil (`58545`), builds the workspace, and applies migrations. It preserves an existing `.env`; use `--force` only to replace it. Redpanda is optional (`pnpm run setup --with-redpanda`).
+
+Anvil uses chain ID `43113` to exercise the supported mandate contract path with local tokens. Setup deploys a local USDC faucet, funds a mandate, and writes its worker UUID to `BAGSEVEN_MCP_WORKER`. Reruns reuse the worker; chain state persists in a Docker volume. This is a local chain, not the public Fuji testnet. An existing environment needs `RPC_URL=http://localhost:58545` and `CHAIN_ID=43113` to opt into local seeding; custom RPC configurations are preserved.
 
 | URL | Surface |
 | --- | --- |
@@ -75,7 +81,7 @@ Email + DNS: [HOSTING.md](./HOSTING.md).
 1. Landing → Start free → email → Overview  
 2. Mint (World mock locally) → grant appears on Entitlements  
 3. Credits (Hedera demo settle locally)  
-4. MCP page → bind `BAGSEVEN_MCP_WORKER` → `pnpm mcp:local`  
+4. MCP page → use the `BAGSEVEN_MCP_WORKER` from `.env` → `pnpm mcp:local`
 5. Agent calls `paid_run` / `bagseven_fetch` under dual-gate  
 
 Live tracks: set World / Hedera / Arkiv keys in `.env`. Leave mock flags **off** in production.
@@ -101,3 +107,5 @@ pnpm smoke
 pnpm --filter @bagseven/console typecheck
 pnpm --filter @bagseven/daemon typecheck
 ```
+
+For full HTTP and MCP checks, run `NOTIFY_MODE=log pnpm start:local`, then `NOTIFY_MODE=log pnpm smoke:e2e` in another terminal. This checks authentication, dashboard routes, World mint/deny, Hedera demo credits, funded worker resolution, paid work under both gates, a local token payment, renewal cancellation, and expiry. `NOTIFY_MODE=log` preserves Resend configuration while suppressing delivery. Restart normally to resume email delivery. Browser automation is separate from these HTTP checks.

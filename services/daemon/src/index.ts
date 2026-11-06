@@ -376,13 +376,15 @@ function buildRoutes(app: FastifyInstance, { config, redis }: ServiceDeps): void
 
   // Public entitlement layer (Arkiv physics + World mint gate). Lives beside mandate spend.
   registerGrantRoutes(app, {
-    resolveMandateCapacity: async (workerId) => {
+    resolveMandateCapacity: async (workerId, amount = '1') => {
       try {
         const resolved = await resolveWorker(config, workerId);
-        const windowOk = Number(resolved.remaining.remaining_window) > 0;
-        const lifeOk = Number(resolved.remaining.remaining_lifetime) > 0;
-        const vaultOk = Number(resolved.remaining.vault_available) > 0;
-        const ok = resolved.mandate.status === 'active' && (windowOk || lifeOk) && vaultOk;
+        const ok = resolved.agent.status === 'active' && resolved.mandate.status === 'active'
+          && gte(resolved.remaining.remaining_window, amount)
+          && gte(resolved.remaining.remaining_lifetime, amount)
+          && gte(resolved.remaining.vault_available, amount)
+          && gte(resolved.remaining.can_draw, amount)
+          && gte(resolved.mandate.per_purchase_cap, amount);
         return {
           ok,
           reason: ok
