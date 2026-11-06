@@ -1,11 +1,40 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { createDb } from '@bagseven/db';
 import { Redis } from 'ioredis';
 import { ApiError, rateLimit, createService } from '@bagseven/server';
 import cors from '@fastify/cors';
 
+function gatewayToken(cfg: NodeJS.ProcessEnv): string | undefined {
+  return cfg.GATEWAY_AUTH_TOKEN?.trim() || cfg.POLICY_INTERNAL_TOKEN?.trim() || undefined;
+}
+
+function bearerMatches(header: string | string[] | undefined, expected: string): boolean {
+  if (typeof header !== 'string' || !header.startsWith('Bearer ')) return false;
+  const got = header.slice('Bearer '.length).trim();
+  const a = Buffer.from(got);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function assertGatewayAuth(req: FastifyRequest, cfg: NodeJS.ProcessEnv): void {
+  if ((cfg.GATEWAY_ALLOW_UNAUTHENTICATED ?? '').toLowerCase() === 'true') {
+    if (cfg.NODE_ENV === 'production') {
+      throw new ApiError(503, 'MISCONFIGURED', 'GATEWAY_ALLOW_UNAUTHENTICATED is forbidden in production');
+    }
+    return;
+  }
+  const token = gatewayToken(cfg);
+  if (!token) {
+    throw new ApiError(503, 'MISCONFIGURED', 'Set GATEWAY_AUTH_TOKEN or POLICY_INTERNAL_TOKEN to authenticate the gateway');
+  }
+  if (!bearerMatches(req.headers.authorization, token)) {
+    throw new ApiError(401, 'UNAUTHORIZED', 'gateway authentication required');
+  }
+}
+
 async function proxy(req: FastifyRequest, reply: FastifyReply, cfg: NodeJS.ProcessEnv): Promise<unknown> {
+  assertGatewayAuth(req, cfg);
   const baseUrl = cfg.MANDATE_URL ?? cfg.POLICY_URL;
   if (!baseUrl) throw new Error('MANDATE_URL not configured');
   const body = req.body === undefined ? undefined : JSON.stringify(req.body);
@@ -14,6 +43,15 @@ async function proxy(req: FastifyRequest, reply: FastifyReply, cfg: NodeJS.Proce
   };
   if (typeof req.headers['content-type'] === 'string') headers['content-type'] = req.headers['content-type'];
   if (typeof req.headers['idempotency-key'] === 'string') headers['idempotency-key'] = req.headers['idempotency-key'];
+  // Forward the same service token to policy (vault/internal routes require it).
+  const token = gatewayToken(cfg);
+  if (token) headers.authorization = `Bearer ${token}`;
+  // Never forward browser actor headers as authoritative to policy from the open internet —
+  // only the authenticated console BFF should set these after session checks.
+  if (typeof req.headers['x-bagseven-actor'] === 'string') headers['x-bagseven-actor'] = req.headers['x-bagseven-actor'];
+  if (typeof req.headers['x-bagseven-world-human'] === 'string') {
+    headers['x-bagseven-world-human'] = req.headers['x-bagseven-world-human'];
+  }
 
   let res: Response;
   try {

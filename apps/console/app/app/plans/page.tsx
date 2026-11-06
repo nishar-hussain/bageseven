@@ -56,7 +56,11 @@ export default function PlansPage() {
       <div>
         <h1 className="text-[2rem] font-semibold tracking-tight">Plans</h1>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          Set your price, credits, and provider payout wallet. Customers pay your wallet directly; the 0.1% platform fee is billed separately.
+          Catalog SKUs (Schematic / ArcenPay): price, feature, credits, TTL, payout wallet. Customers buy through{' '}
+          <a href="/app/builder" className="font-medium text-[var(--blue)] underline">
+            Builder
+          </a>{' '}
+          embed — 0.1% platform fee is billed separately.
         </p>
         <div className="mt-4">
           <StatusBadges />

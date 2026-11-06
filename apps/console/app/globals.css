@@ -310,7 +310,8 @@
     background: var(--good-t);
   }
 
-  .fi-badge-mock {
+  .fi-badge-mock,
+  .fi-badge-warn {
     border-color: var(--line);
     color: var(--muted);
   }

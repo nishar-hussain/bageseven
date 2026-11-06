@@ -3,6 +3,7 @@ import {
   attachSessionCookie,
   consumeOtpChallenge,
   getSession,
+  mergeSessionIdentity,
   sessionIsValid,
 } from '../../../../../lib/auth';
 
@@ -26,10 +27,11 @@ export async function POST(req: NextRequest) {
     world_human_id: session.world_human_id,
     holder: email,
   });
-  return attachSessionCookie(res, {
-    world_human_id: session.world_human_id,
-    email,
-    email_verified_at: Math.floor(Date.now() / 1000),
-    mock: session.mock,
-  });
+  return attachSessionCookie(
+    res,
+    mergeSessionIdentity(session, {
+      email,
+      email_verified_at: Math.floor(Date.now() / 1000),
+    }),
+  );
 }

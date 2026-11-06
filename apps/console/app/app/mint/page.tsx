@@ -117,7 +117,7 @@ export default function MintPage() {
       if (!auth.authorize_url) {
         setMsg(
           auth.note ||
-            `Agent Pass unavailable (mode=${auth.mode ?? 'unknown'}). Use Create entitlement (mock/IDKit) until auth.world.org/portal allowlists your Google.`,
+            `Agent Pass unavailable (mode=${auth.mode ?? 'unknown'}). Use Create entitlement with World IDKit until auth.world.org/portal allowlists your Google.`,
         );
         setBusy(false);
         return;

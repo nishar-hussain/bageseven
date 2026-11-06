@@ -14,7 +14,8 @@ export type RpSignature = {
 /** Server-only: sign an IDKit proof request with the Developer Portal RP signing key. */
 export function signWorldIdKitRequest(input: {
   signingKeyHex: string;
-  action: string;
+  /** Omit for session-only proofs (World ID 4.0 returning-user checks). */
+  action?: string;
   ttl?: number;
   expectedSignerAddress?: string;
 }): RpSignature {
@@ -25,7 +26,7 @@ export function signWorldIdKitRequest(input: {
   }
   const { sig, nonce, createdAt, expiresAt } = signRequest({
     signingKeyHex: key,
-    action: input.action,
+    ...(input.action ? { action: input.action } : {}),
     ttl: input.ttl ?? 300,
   });
   return {
@@ -40,11 +41,13 @@ export const IdKitResultSchema = z
   .object({
     protocol_version: z.enum(['3.0', '4.0']),
     nonce: z.string().min(1),
-    action: z.string().min(1),
+    action: z.string().min(1).optional(),
+    session_id: z.string().optional(),
     environment: z.string().optional(),
     responses: z.array(z.record(z.string(), z.unknown())).min(1),
   })
-  .passthrough();
+  .passthrough()
+  .refine((v) => Boolean(v.action || v.session_id), { message: 'IDKit result needs action or session_id' });
 
 export type IdKitResult = z.infer<typeof IdKitResultSchema>;
 
@@ -56,6 +59,8 @@ export type IdKitVerifyOk = {
   world_proof_id: string;
   environment: string;
   verification: Record<string, unknown>;
+  returning?: boolean;
+  session_id?: string;
 };
 
 export type IdKitVerifyFail = {
@@ -77,13 +82,19 @@ function extractNullifier(result: IdKitResult): string | null {
 
 /**
  * Forward IDKit result to Developer Portal verify API and require success.
- * Caller must enforce nullifier uniqueness (replay protection).
+ * Caller must enforce nullifier uniqueness for one-time mint actions.
+ *
+ * Login may set `allowReturningUser`: World ID 4.0 uniqueness nullifiers are
+ * one-shot per action. A second login yields `nullifier_replayed` — docs say
+ * treat that as already-verified for returning users (docs.world.org error codes).
  */
 export async function verifyWorldIdKitProof(input: {
   rpId: string;
   idkitResponse: unknown;
   expectedEnvironment?: string;
   expectedAction?: string;
+  /** When true, nullifier_replayed / max_verifications_reached still signs the human in. */
+  allowReturningUser?: boolean;
 }): Promise<IdKitVerifyOk | IdKitVerifyFail> {
   const expectedEnvironment = input.expectedEnvironment ?? 'production';
   let parsed: IdKitResult;
@@ -100,7 +111,7 @@ export async function verifyWorldIdKitProof(input: {
       detail: `IDKit environment mismatch (got ${parsed.environment}, want ${expectedEnvironment})`,
     };
   }
-  if (input.expectedAction && parsed.action !== input.expectedAction) {
+  if (input.expectedAction && parsed.action && parsed.action !== input.expectedAction) {
     return {
       ok: false,
       code: 'WORLD_IDKIT_FAILED',
@@ -121,19 +132,42 @@ export async function verifyWorldIdKitProof(input: {
   } catch {
     return { ok: false, code: 'WORLD_IDKIT_FAILED', detail: `Verify API non-JSON (${response.status})` };
   }
+
+  const portalCode = typeof verification.code === 'string' ? verification.code : '';
+  const returningCodes = new Set(['nullifier_replayed', 'max_verifications_reached']);
+
+  if ((!response.ok || verification.success !== true) && input.allowReturningUser && returningCodes.has(portalCode)) {
+    const nullifier = extractNullifier(parsed);
+    if (!nullifier) {
+      return { ok: false, code: 'WORLD_DENIED', detail: portalCode };
+    }
+    // Portal already recognized this nullifier for the action — proof was accepted before uniqueness reject.
+    const action = parsed.action || input.expectedAction || 'login';
+    const session_id = typeof parsed.session_id === 'string' ? parsed.session_id : undefined;
+    return {
+      ok: true,
+      returning: true,
+      nullifier,
+      action,
+      human_id: `world:nullifier:${nullifier}`,
+      world_proof_id: `world:idkit:${action}:${nullifier}`,
+      environment: expectedEnvironment,
+      verification,
+      session_id,
+    };
+  }
+
   if (!response.ok || verification.success !== true) {
     const detail =
       typeof verification.detail === 'string'
         ? verification.detail
-        : typeof verification.code === 'string'
-          ? verification.code
-          : `Verify API failed (${response.status})`;
+        : portalCode || `Verify API failed (${response.status})`;
     return { ok: false, code: 'WORLD_DENIED', detail };
   }
   if (verification.environment && verification.environment !== expectedEnvironment) {
     return { ok: false, code: 'WORLD_IDKIT_FAILED', detail: 'Verify response environment mismatch' };
   }
-  if (verification.action && verification.action !== parsed.action) {
+  if (verification.action && parsed.action && verification.action !== parsed.action) {
     return { ok: false, code: 'WORLD_IDKIT_FAILED', detail: 'Verify response action mismatch' };
   }
 
@@ -145,6 +179,12 @@ export async function verifyWorldIdKitProof(input: {
     return { ok: false, code: 'WORLD_IDKIT_FAILED', detail: 'Verify response nullifier mismatch' };
   }
   const action = parsed.action || input.expectedAction || 'unknown';
+  const session_id =
+    typeof verification.session_id === 'string'
+      ? verification.session_id
+      : typeof parsed.session_id === 'string'
+        ? parsed.session_id
+        : undefined;
   return {
     ok: true,
     nullifier,
@@ -153,5 +193,6 @@ export async function verifyWorldIdKitProof(input: {
     world_proof_id: `world:idkit:${action}:${nullifier}`,
     environment: expectedEnvironment,
     verification,
+    session_id,
   };
 }

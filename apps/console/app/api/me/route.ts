@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getSession, sessionHolder, sessionIsValid } from '../../../lib/auth';
+import { getSession, needsOnboarding, sessionHolder, sessionIsValid } from '../../../lib/auth';
+import { operatorOwnerAddresses } from '../../../lib/operator-scope';
 
 export async function GET() {
   const session = await getSession();
@@ -12,7 +13,11 @@ export async function GET() {
     email_verified: Boolean(session.email_verified_at),
     email_verified_at: session.email_verified_at ?? null,
     world_human_id: session.world_human_id ?? null,
+    wallet_address: session.wallet_address ?? null,
+    onboarding_done_at: session.onboarding_done_at ?? null,
+    needs_onboarding: needsOnboarding(session),
     mock: Boolean(session.mock),
     holder,
+    operator_wallets: operatorOwnerAddresses(),
   });
 }

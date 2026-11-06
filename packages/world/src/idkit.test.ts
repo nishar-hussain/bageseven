@@ -37,4 +37,24 @@ describe('live World verification', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ success: false }), { status: 403 })));
     expect((await verifyWorldIdKitProof({ rpId: 'rp_test', idkitResponse: proof, expectedAction: proof.action })).ok).toBe(false);
   });
+  it('treats nullifier_replayed as returning-user success when allowReturningUser is set', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ success: false, code: 'nullifier_replayed', detail: 'already used' }), {
+            status: 400,
+          }),
+      ),
+    );
+    const denied = await verifyWorldIdKitProof({ rpId: 'rp_test', idkitResponse: proof, expectedAction: proof.action });
+    expect(denied.ok).toBe(false);
+    const returning = await verifyWorldIdKitProof({
+      rpId: 'rp_test',
+      idkitResponse: proof,
+      expectedAction: proof.action,
+      allowReturningUser: true,
+    });
+    expect(returning).toMatchObject({ ok: true, returning: true, nullifier: '0x123456' });
+  });
 });

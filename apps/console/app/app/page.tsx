@@ -65,9 +65,9 @@ export default function OverviewPage() {
 
   const attentionBits: string[] = [];
   if (grants.length === 0) attentionBits.push('no entitlements yet — create one for a feature');
-  if (status && !status.tracks.arkiv.live) attentionBits.push('Arkiv on memory store');
-  if (status?.tracks.whitechain.demo_settle) attentionBits.push('Whitechain demo settle');
-  if (status?.tracks.world.mock_proofs) attentionBits.push('World mock proofs on (hackathon create path)');
+  if (status && !status.tracks.arkiv.live) attentionBits.push('Arkiv using local store');
+  if (status?.tracks.whitechain.demo_settle) attentionBits.push('Whitechain settle not wired');
+  if (status?.tracks.world.mock_proofs) attentionBits.push('World live proofs disabled');
 
   return (
     <div className="mx-auto max-w-6xl space-y-5">

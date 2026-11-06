@@ -8,7 +8,15 @@ function CheckoutInner() {
   const params = useSearchParams();
   const session = params.get('session') ?? '';
   if (!session) {
-    return <div className="p-8 text-sm text-[var(--muted)]">Missing checkout session id. Open one from /app/checkouts.</div>;
+    return (
+      <div className="p-8 text-sm text-[var(--muted)]">
+        Missing checkout session id. Mint a preview from{' '}
+        <a className="font-medium text-[var(--blue)] underline" href="/app/builder">
+          Builder
+        </a>
+        , or create a session in your backend when opening BagsevenEmbed.
+      </div>
+    );
   }
   return (
     <div className="min-h-screen bg-white p-6">

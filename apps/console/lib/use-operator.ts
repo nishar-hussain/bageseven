@@ -7,6 +7,7 @@ export type Operator = {
   email: string | null;
   emailVerified: boolean;
   worldHumanId: string | null;
+  walletAddress: string | null;
   mock: boolean;
   holder: string;
   status: MumbaiStatus | null;
@@ -14,11 +15,12 @@ export type Operator = {
   loading: boolean;
 };
 
-/** Signed-in World identity (+ optional email) for human-friendly defaults. */
+/** Signed-in World identity (+ optional email / wallet) for human-friendly defaults. */
 export function useOperator(): Operator {
   const [email, setEmail] = useState<string | null>(null);
   const [emailVerified, setEmailVerified] = useState(false);
   const [worldHumanId, setWorldHumanId] = useState<string | null>(null);
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [mock, setMock] = useState(false);
   const [holder, setHolder] = useState('');
   const [status, setStatus] = useState<MumbaiStatus | null>(null);
@@ -35,6 +37,7 @@ export function useOperator(): Operator {
                   email?: string | null;
                   email_verified?: boolean;
                   world_human_id?: string | null;
+                  wallet_address?: string | null;
                   mock?: boolean;
                   holder?: string;
                 })
@@ -46,6 +49,7 @@ export function useOperator(): Operator {
         setEmail(meRes?.email ?? null);
         setEmailVerified(Boolean(meRes?.email_verified));
         setWorldHumanId(meRes?.world_human_id ?? null);
+        setWalletAddress(meRes?.wallet_address ?? null);
         setMock(Boolean(meRes?.mock));
         setHolder(meRes?.holder ?? meRes?.email ?? '');
         setStatus(st);
@@ -62,6 +66,7 @@ export function useOperator(): Operator {
     email,
     emailVerified,
     worldHumanId,
+    walletAddress,
     mock,
     holder,
     status,

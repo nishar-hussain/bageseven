@@ -65,10 +65,10 @@ pnpm integrations:check
 
 `integrations:check` reads configuration, checks that the RP key matches the public signer, verifies the RPC chain and token metadata, and checks executor gas. It does not sign a proof, transfer funds, deploy a contract, or mint a grant. It exits nonzero for missing setup instead of reporting mock success.
 
-1. Open `/app/login`, continue with World ID, and approve the request in World App. The public login challenge works without an existing console session. World verification is performed on the backend through the [official RP verification API](https://docs.world.org/api-reference/developer-portal/verify).
-2. Open Plans, enter or connect the provider payout wallet, and create a plan. Open Checkouts and create a session for the customer. Share that checkout URL; the customer signs the actual USDT transfer to the plan’s provider wallet and a confirmation binding that transaction to the purchase. The UI waits for confirmations. No global payment recipient is required.
-3. Checkouts carry the server-selected network and token to the SDK. The backend verifies that exact transaction's successful receipt, token address, payer, merchant, amount, and confirmations before creating access.
-4. Check Entitlements, then use the SDK or MCP. Paid work checks the on-chain worker state and allocation, as well as the living grant. Cancellation preserves the existing paid-through period; expiry removes access.
+1. Open `/app/login`, continue with World ID, and approve the request in World App. The public login challenge works without an existing console session. World verification uses the [official RP verify API](https://docs.world.org/api-reference/developer-portal/verify) (`POST https://developer.world.org/api/v4/verify/{rp_id}`) and forwards the IDKit result as-is ([integrate](https://docs.world.org/world-id/idkit/integrate)).
+2. Platform auth: console session is required for `/app/*`, `/api/daemon/*`, `/api/billing/*`, and `/api/policy/*`. Gateway `:4000` requires `Authorization: Bearer` (`GATEWAY_AUTH_TOKEN` or `POLICY_INTERNAL_TOKEN`). Mock World login only when `WORLD_MOCK_PROOFS=true` outside production.
+3. Open Plans, enter or connect the provider payout wallet, and create a plan. Customers buy via Builder/Embed (sessions minted by your backend) — not a payment-link catalog.
+4. Check Entitlements, then use the SDK or MCP. Paid work checks mandate capacity and the living grant (dual-gate).
 5. MCP OAuth requires a fresh World proof; knowing a holder's email or finding a grant is not authentication.
 
 Plans and checkout sessions are stored in PostgreSQL. Console lists and creation are scoped to the signed-in provider; the server-side SDK secret remains an administrative credential and must never be shared with providers. Legacy records without a provider owner remain administrative-only.

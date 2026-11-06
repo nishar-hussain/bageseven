@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { authSecretFromEnv, verifySessionToken } from './lib/session-crypto';
+import { authSecretFromEnv, sessionNeedsOnboarding, verifySessionToken } from './lib/session-crypto';
 
 const COOKIE = 'bagseven_session';
 
@@ -26,6 +26,21 @@ export async function middleware(req: NextRequest) {
     url.searchParams.set('next', pathname);
     return NextResponse.redirect(url);
   }
+
+  const onOnboarding = pathname === '/app/onboarding' || pathname.startsWith('/app/onboarding/');
+  if (sessionNeedsOnboarding(session) && !onOnboarding) {
+    const url = req.nextUrl.clone();
+    url.pathname = '/app/onboarding';
+    url.searchParams.set('next', pathname.startsWith('/app') ? pathname : '/app');
+    return NextResponse.redirect(url);
+  }
+  if (!sessionNeedsOnboarding(session) && onOnboarding) {
+    const url = req.nextUrl.clone();
+    url.pathname = '/app';
+    url.search = '';
+    return NextResponse.redirect(url);
+  }
+
   return NextResponse.next();
 }
 

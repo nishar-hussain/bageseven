@@ -39,7 +39,8 @@ const results = [];
 let cookie;
 let nextNonce = Date.now();
 async function req(base, path, { body, headers = {}, status = 200, auth = false } = {}) {
-    const res = await fetch(base + path, { method: body === undefined ? 'GET' : 'POST', redirect: 'manual', headers: { ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...(auth ? { authorization: `Bearer ${cfg.DAEMON_AUTH_TOKEN}` } : {}), ...headers }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(20000) });
+    const gatewayAuth = base === gateway && cfg.POLICY_INTERNAL_TOKEN ? { authorization: `Bearer ${cfg.POLICY_INTERNAL_TOKEN}` } : {};
+    const res = await fetch(base + path, { method: body === undefined ? 'GET' : 'POST', redirect: 'manual', headers: { ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...(auth ? { authorization: `Bearer ${cfg.DAEMON_AUTH_TOKEN}` } : {}), ...gatewayAuth, ...headers }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(20000) });
     const raw = await res.text();
     let data;
     try {

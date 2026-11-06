@@ -153,8 +153,11 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
           /** IDKit Developer Portal app (proof of human). */
           app_id: process.env.WORLD_APP_ID || null,
           rp_id: process.env.WORLD_RP_ID || null,
-          action: process.env.WORLD_IDKIT_ACTION || 'bagseven-mint',
+          action: worldConfig.action,
+          login_action: worldConfig.login_action,
+          login_signal: worldConfig.login_signal,
           environment: worldConfig.environment,
+          signing_configured: worldConfig.signing_configured,
           /** World IdP OIDC client (Agent Pass) — separate from app_id. */
           oidc_client_id: process.env.WORLD_CLIENT_ID || null,
         },
@@ -293,26 +296,44 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
 
   /** IDKit RP signature — never expose WORLD_RP_SIGNING_KEY to the browser. */
   app.post('/internal/world/rp-signature', async (req) => {
-    const body = z.object({ action: z.string().min(1).optional(), purpose: z.enum(['login', 'mint']).default('mint') }).parse(req.body ?? {});
+    const body = z
+      .object({
+        action: z.string().min(1).optional(),
+        purpose: z.enum(['login', 'mint', 'session']).default('mint'),
+      })
+      .parse(req.body ?? {});
     const signingKey = process.env.WORLD_RP_SIGNING_KEY?.trim();
     const config = worldIdKitConfig();
-    if (!signingKey || !config.idkit) throw new ApiError(503, 'WORLD_NOT_CONFIGURED', 'Configure WORLD_APP_ID, WORLD_RP_ID, and WORLD_RP_SIGNING_KEY on the server');
-    const action = config.action;
-    if (body.action && body.action !== action) throw new ApiError(400, 'WORLD_ACTION_INVALID', 'Action does not match the configured World app');
-    const sig = signWorldIdKitRequest({ signingKeyHex: signingKey, action, expectedSignerAddress: process.env.WORLD_SIGNER_ADDRESS });
+    if (!signingKey || !config.idkit) {
+      throw new ApiError(503, 'WORLD_NOT_CONFIGURED', 'Configure WORLD_APP_ID, WORLD_RP_ID, and WORLD_RP_SIGNING_KEY on the server');
+    }
+    // Login and mint use different actions so mint uniqueness does not burn login (and vice versa).
+    const action =
+      body.purpose === 'session' ? undefined : body.purpose === 'login' ? config.login_action : config.action;
+    if (body.action && action && body.action !== action) {
+      throw new ApiError(400, 'WORLD_ACTION_INVALID', 'Action does not match the configured World app');
+    }
+    const sig = signWorldIdKitRequest({
+      signingKeyHex: signingKey,
+      action,
+      expectedSignerAddress: process.env.WORLD_SIGNER_ADDRESS,
+    });
     for (const [nonce, challenge] of challenges) if (challenge.expires <= Date.now()) challenges.delete(nonce);
     if (challenges.size >= 5000) throw new ApiError(429, 'WORLD_BUSY', 'Too many pending World verifications; try again shortly');
-    challenges.set(sig.nonce, { action, purpose: body.purpose, expires: sig.expires_at * 1000 });
+    const purpose = body.purpose === 'session' ? 'login' : body.purpose;
+    challenges.set(sig.nonce, { action: action ?? config.login_action, purpose, expires: sig.expires_at * 1000 });
     return {
       ...sig,
-      action,
+      action: action ?? null,
+      login_action: config.login_action,
       rp_id: config.rp_id,
       app_id: config.app_id,
       environment: config.environment,
+      purpose: body.purpose,
     };
   });
 
-  /** Verify IDKit proof via Developer Portal and register nullifier for mint. */
+  /** Verify IDKit login proof. Returning users may hit nullifier_replayed — that is OK for login. */
   app.post('/internal/world/verify-idkit', async (req) => {
     const body = z
       .object({
@@ -328,18 +349,19 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
       idkitResponse: body.idkit_response,
       expectedEnvironment: process.env.WORLD_IDKIT_ENVIRONMENT || 'production',
       expectedAction: action,
+      allowReturningUser: true,
     });
     if (!verified.ok) {
       throw new ApiError(403, verified.code, verified.detail);
     }
-    // Login consumes its challenge, not the human's mint eligibility. Returning
-    // humans may sign in again with a fresh, independently verified request.
     return {
       ok: true,
       human_id: verified.human_id,
       world_proof_id: verified.world_proof_id,
       nullifier: verified.nullifier,
       action: verified.action,
+      session_id: verified.session_id ?? null,
+      returning: Boolean(verified.returning),
       mode: 'idkit',
     };
   });
@@ -465,6 +487,10 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
     const { id } = req.params as { id: string };
     const grant = await store.get(id);
     if (!grant) throw new ApiError(404, 'GRANT_NOT_FOUND', 'grant not found');
+    const actor = typeof req.headers['x-bagseven-actor'] === 'string' ? req.headers['x-bagseven-actor'] : '';
+    if (actor && grant.holder.toLowerCase() !== actor.toLowerCase()) {
+      throw new ApiError(403, 'FORBIDDEN', 'grant belongs to another holder');
+    }
     const ttl_ms = Math.max(0, new Date(grant.paid_through).getTime() - Date.now());
     return {
       grant,
@@ -664,6 +690,16 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
       const grant = await store.get(grantId);
       if (!grant) throw new ApiError(404, 'GRANT_NOT_FOUND', 'grant not found');
 
+      const actor = typeof req.headers['x-bagseven-actor'] === 'string' ? req.headers['x-bagseven-actor'].trim() : '';
+      if (actor) {
+        if (grant.holder.toLowerCase() !== actor.toLowerCase()) {
+          throw new ApiError(403, 'FORBIDDEN', 'cannot spend another holder’s entitlement');
+        }
+        if (body.holder?.trim() && body.holder.trim().toLowerCase() !== actor.toLowerCase()) {
+          throw new ApiError(403, 'FORBIDDEN', 'holder does not match authenticated actor');
+        }
+      }
+
       const now = Date.now();
       if (!grant.enabled) {
         throw new ApiError(403, 'DUAL_GATE', 'GRANT_DISABLED: grant is disabled');
@@ -792,6 +828,13 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
   });
 
   app.post('/internal/grants/:id/cancel-renewal', async (req) => {
+    const actor = typeof req.headers['x-bagseven-actor'] === 'string' ? req.headers['x-bagseven-actor'].trim() : '';
+    if (actor) {
+      const existing = await store.get((req.params as { id: string }).id);
+      if (existing && existing.holder.toLowerCase() !== actor.toLowerCase()) {
+        throw new ApiError(403, 'FORBIDDEN', 'grant belongs to another holder');
+      }
+    }
     try {
       const { id } = req.params as { id: string };
       const grant = await store.cancelRenewal(id);

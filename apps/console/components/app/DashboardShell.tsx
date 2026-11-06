@@ -13,7 +13,6 @@ import {
   Search,
   Settings2,
   Shield,
-  ShoppingBag,
   SquareStack,
   Terminal,
   UserRound,
@@ -23,11 +22,11 @@ import { entitlementsApi } from '../../lib/entitlements-client';
 
 type NavItem = { href: string; label: string; icon: React.ElementType; badge?: number };
 
+/** Schematic / ArcenPay-shaped: catalog + living access + embed. No payment-link Checkouts nav. */
 const primary: NavItem[] = [
   { href: '/app', label: 'Overview', icon: LayoutDashboard },
   { href: '/app/grants', label: 'Entitlements', icon: CreditCard },
   { href: '/app/plans', label: 'Plans', icon: WalletCards },
-  { href: '/app/checkouts', label: 'Checkouts', icon: ShoppingBag },
   { href: '/app/builder', label: 'Builder', icon: SquareStack },
   { href: '/app/mint', label: 'Create entitlement', icon: Fingerprint },
   { href: '/app/credits', label: 'Buy credits', icon: Coins },
@@ -84,11 +83,15 @@ function Group({ title, items, pathname }: { title: string; items: NavItem[]; pa
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [attention, setAttention] = useState(0);
-  const [networkLabel, setNetworkLabel] = useState('Mock');
-  const isLogin = pathname === '/app/login' || pathname.startsWith('/app/login/');
+  const [networkLabel, setNetworkLabel] = useState('Connecting…');
+  const isBare =
+    pathname === '/app/login' ||
+    pathname.startsWith('/app/login/') ||
+    pathname === '/app/onboarding' ||
+    pathname.startsWith('/app/onboarding/');
 
   useEffect(() => {
-    if (isLogin) return;
+    if (isBare) return;
     void (async () => {
       try {
         const [status, live] = await Promise.all([
@@ -97,24 +100,22 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           entitlementsApi.live().catch(() => ({ grants: [] })),
         ]);
         const liveCount = live.grants?.length ?? 0;
-        // Settings → Needs attention badge: empty entitlements or mock tracks
+        // Settings → Needs attention badge: empty entitlements or offline tracks
         let n = 0;
         if (liveCount === 0) n += 1;
         if (status && !status.tracks.arkiv.live) n += 1;
         if (status?.tracks.world.mock_proofs) n += 1;
         setAttention(n);
         if (status) {
+          const worldOk =
+            status.tracks.world.mode === 'dual' ||
+            status.tracks.world.mode === 'idkit' ||
+            status.tracks.world.mode === 'agent_pass' ||
+            status.tracks.world.mode === 'live' ||
+            status.tracks.world.mode === 'oidc';
           const parts = [
-            status.tracks.world.mode === 'dual'
-              ? 'World dual'
-              : status.tracks.world.mode === 'idkit'
-                ? 'World IDKit'
-                : status.tracks.world.mode === 'agent_pass'
-                  ? 'World Agent Pass'
-                  : status.tracks.world.mode === 'live' || status.tracks.world.mode === 'oidc'
-                    ? 'World live'
-                    : status.tracks.world.mode === 'mock' ? 'World mock' : 'World not configured',
-            status.tracks.arkiv.live ? 'Arkiv live' : 'Memory',
+            worldOk ? 'World · live' : 'World · setup needed',
+            status.tracks.arkiv.live ? 'Arkiv · live' : 'Arkiv · local',
           ];
           setNetworkLabel(parts.join(' · '));
         }
@@ -122,21 +123,18 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         /* ignore */
       }
     })();
-  }, [pathname, isLogin]);
+  }, [pathname, isBare]);
 
   const withBadge = primary;
   const settingsWithBadge = settings.map((p) => (p.href === '/app/attention' ? { ...p, badge: attention } : p));
 
-  if (isLogin) return <>{children}</>;
+  if (isBare) return <>{children}</>;
 
   return (
     <div className="min-h-screen bg-[var(--dash-bg,#f2f2f2)] text-[var(--ink)]">
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-[260px] flex-col border-r border-[var(--line)] bg-[var(--soft)] px-3 py-4 lg:flex">
         <Link href="/app" className="flex items-center gap-2 px-2 pb-4">
           <span className="text-[17px] font-semibold tracking-tight text-[var(--blue)]">Bagseven</span>
-          <span className="rounded-md bg-[var(--tint)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--blue)]">
-            Beta
-          </span>
         </Link>
 
         <div className="mx-1 mb-3 flex items-center gap-2.5 rounded-2xl border border-[var(--line)] bg-white px-3 py-2.5 shadow-[var(--sh)]">
@@ -144,12 +142,9 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             B7
           </div>
           <div className="min-w-0 flex-1">
-            <div className="truncate text-[13px] font-semibold">Operator workspace</div>
+            <div className="truncate text-[13px] font-semibold">Workspace</div>
             <div className="truncate text-[11px] text-[var(--muted)]">{networkLabel}</div>
           </div>
-          <span className="rounded-full border border-[var(--line)] px-2 py-0.5 text-[10px] font-medium text-[var(--muted)]">
-            Test
-          </span>
         </div>
 
         <nav className="flex-1 overflow-y-auto px-0.5 pb-4">

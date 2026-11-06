@@ -43,6 +43,8 @@ export default function BuilderPage() {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [previewSession, setPreviewSession] = useState('');
 
   useEffect(() => {
     void billingApi
@@ -56,6 +58,27 @@ export default function BuilderPage() {
 
   const plan = plans.find((p) => p.id === planId) ?? plans[0];
   const selectedBlock = blocks.find((b) => b.id === selected) ?? null;
+
+  const mintPreviewSession = async () => {
+    if (!plan) {
+      setMsg('Create a plan under Plans first.');
+      return;
+    }
+    setBusy(true);
+    setMsg('');
+    try {
+      const r = await billingApi.createCheckout({
+        plan_id: plan.id,
+        holder: op.holder || undefined,
+      });
+      setPreviewSession(r.session.id);
+      setMsg('Preview session ready — open it below. In production your backend mints this when Embed opens.');
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const moveBlock = useCallback((from: number, to: number) => {
     setBlocks((prev) => {
@@ -121,16 +144,17 @@ export default function BuilderPage() {
   return (
     <div className="mx-auto max-w-6xl space-y-5">
       <div>
-        <h1 className="text-[2rem] font-semibold tracking-tight">Embed builder</h1>
+        <h1 className="text-[2rem] font-semibold tracking-tight">Builder</h1>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          Drag blocks into a checkout / entitlement page. Preview updates live. Drop into your SaaS via snippet or iframe — not a separate site builder.
+          Compose the embedded billing surface for your app (ArcenPay Embed / Schematic customer portal). Customers pay
+          inside your product — not via a separate payment-link page.
         </p>
         <div className="mt-4">
           <StatusBadges />
         </div>
       </div>
 
-      {msg && <p className="text-sm text-[var(--deny)]">{msg}</p>}
+      {msg && <p className="text-sm text-[var(--muted)]">{msg}</p>}
 
       <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-[var(--line)] bg-white p-4 shadow-[var(--sh)]">
         <label className="text-xs font-semibold uppercase text-[var(--muted)]">
@@ -151,9 +175,24 @@ export default function BuilderPage() {
         <Link href="/app/plans" className="text-sm font-semibold text-[var(--blue)] underline">
           Manage plans
         </Link>
-        <Link href="/app/checkouts" className="text-sm font-semibold text-[var(--blue)] underline">
-          Open checkout session
-        </Link>
+        <button
+          type="button"
+          disabled={busy || !plan}
+          onClick={() => void mintPreviewSession()}
+          className="rounded-full bg-[var(--ink)] px-3.5 py-2 text-sm font-semibold text-white disabled:opacity-50"
+        >
+          {busy ? 'Minting…' : 'Mint preview session'}
+        </button>
+        {previewSession && (
+          <a
+            href={`/checkout?session=${encodeURIComponent(previewSession)}`}
+            target="_blank"
+            rel="noreferrer"
+            className="text-sm font-semibold text-[var(--blue)] underline"
+          >
+            Open preview →
+          </a>
+        )}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[200px_1fr_280px]">

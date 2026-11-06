@@ -18,5 +18,7 @@ export async function GET(req: NextRequest) {
     email,
     email_verified_at: Math.floor(Date.now() / 1000),
     world_human_id: `email:${email}`,
+    // Recovery is not new-user onboarding — skip the email/wallet wizard.
+    onboarding_done_at: Math.floor(Date.now() / 1000),
   });
 }

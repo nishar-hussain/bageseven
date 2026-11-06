@@ -12,7 +12,7 @@ const ALLOWED: Array<{ method: string; match: (parts: string[]) => boolean }> = 
   { method: 'POST', match: (p) => p[0] === 'world' && p[1] === 'rp-signature' && p.length === 2 },
   { method: 'POST', match: (p) => p[0] === 'world' && p[1] === 'verify-idkit' && p.length === 2 },
   { method: 'GET', match: (p) => p[0] === 'grants' && p[1] === 'live' && p.length === 2 },
-  { method: 'GET', match: (p) => p[0] === 'grants' && p.length === 2 },
+  // Intentionally no GET /grants/:id — cross-tenant grant detail IDOR.
   { method: 'POST', match: (p) => p[0] === 'grants' && p[1] === 'mint' && p.length === 2 },
   { method: 'POST', match: (p) => p[0] === 'grants' && p[1] === 'buy-credits' && p.length === 2 },
   { method: 'POST', match: (p) => p[0] === 'grants' && p[1] === 'paid-run' && p.length === 2 },
@@ -38,26 +38,38 @@ async function proxy(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
     return NextResponse.json({ error: { code: 'NOT_FOUND', message: 'Unknown API route' } }, { status: 404 });
   }
 
-  const suffix = path.map(encodeURIComponent).join('/');
+  const holder = sessionHolder(session);
   const url = new URL(req.url);
+  // Live grants: always scope to the signed-in operator (ignore client holder filters).
+  if (req.method === 'GET' && path[0] === 'grants' && path[1] === 'live') {
+    url.searchParams.set('holder', holder);
+  }
+
+  const suffix = path.map(encodeURIComponent).join('/');
   const target = `/internal/${suffix}${url.search}`;
 
   const headers = new Headers();
-  headers.set('x-bagseven-actor', sessionHolder(session));
+  headers.set('x-bagseven-actor', holder);
   if (!session.mock && session.world_human_id && !session.world_human_id.startsWith('email:')) {
     headers.set('x-bagseven-world-human', session.world_human_id);
   }
   const init: RequestInit = { method: req.method, headers };
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     init.body = await req.text();
-    if (path[0] === 'grants' && (path[1] === 'mint' || path[1] === 'buy-credits')) {
+    if (
+      path[0] === 'grants' &&
+      (path[1] === 'mint' || path[1] === 'buy-credits' || path[1] === 'paid-run' || path[1] === 'explain-denial')
+    ) {
       try {
-        const body = JSON.parse(init.body);
-        // Console purchases always belong to the signed-in operator and use
-        // the real payment rail; clients cannot request an unpaid local mint.
-        init.body = JSON.stringify({ ...body, holder: sessionHolder(session), settlement_network: 'whitechain' });
+        const body = JSON.parse(init.body || '{}') as Record<string, unknown>;
+        // Console mutations always belong to the signed-in operator.
+        init.body = JSON.stringify({
+          ...body,
+          holder,
+          ...(path[1] === 'mint' || path[1] === 'buy-credits' ? { settlement_network: 'whitechain' } : {}),
+        });
       } catch {
-        return NextResponse.json({ error: { message: 'Invalid purchase request' } }, { status: 400 });
+        return NextResponse.json({ error: { message: 'Invalid request body' } }, { status: 400 });
       }
     }
     headers.set('content-type', req.headers.get('content-type') ?? 'application/json');

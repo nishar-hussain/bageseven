@@ -58,8 +58,9 @@ export type MandateOverview = {
 };
 
 export const mandateApi = {
-  list: (scope: 'all' | 'owner' = 'all', owner?: string) => {
-    const q = new URLSearchParams({ scope });
+  /** BFF forces owner scope to the signed-in operator wallets — `scope=all` is rejected. */
+  list: (scope: 'owner' | 'all' = 'owner', owner?: string) => {
+    const q = new URLSearchParams({ scope: scope === 'all' ? 'owner' : 'owner' });
     if (owner) q.set('owner_address', owner);
     return api<{ mandates: MandateSummary[] }>(`mandates?${q}`);
   },

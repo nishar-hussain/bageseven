@@ -263,10 +263,26 @@ describe('World IDKit challenge lifecycle', () => {
     vi.stubEnv('WORLD_APP_ID', 'app_test'); vi.stubEnv('WORLD_RP_ID', 'rp_test');
     vi.stubEnv('WORLD_RP_SIGNING_KEY', `0x${'01'.repeat(32)}`); vi.stubEnv('WORLD_SIGNER_ADDRESS', '');
     vi.stubEnv('WORLD_IDKIT_ACTION', 'bagseven-mint');
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ success: true, action: 'bagseven-mint', environment: 'production' }))));
+    vi.stubEnv('WORLD_IDKIT_LOGIN_ACTION', 'bagseven-login');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: { body?: string }) => {
+        const body = init?.body ? (JSON.parse(init.body) as { action?: string }) : {};
+        return new Response(
+          JSON.stringify({ success: true, action: body.action, environment: 'production', nullifier: '0x123456' }),
+        );
+      }),
+    );
     return fixture();
   }
-  function proof(nonce: string) { return { protocol_version: '4.0', nonce, action: 'bagseven-mint', responses: [{ identifier: 'proof_of_human', nullifier: '0x123456', proof: 'verified-by-portal-in-this-unit-test' }] }; }
+  function proof(nonce: string, action = 'bagseven-login') {
+    return {
+      protocol_version: '4.0',
+      nonce,
+      action,
+      responses: [{ identifier: 'proof_of_human', nullifier: '0x123456', proof: 'verified-by-portal-in-this-unit-test' }],
+    };
+  }
   it('rejects an unissued nonce before remote verification', async () => {
     const { app } = await idkitFixture();
     try {
@@ -285,7 +301,18 @@ describe('World IDKit challenge lifecycle', () => {
         expect((await app.inject({ method: 'POST', url: '/internal/world/verify-idkit', payload })).statusCode).toBe(403);
       }
       const signed = await app.inject({ method: 'POST', url: '/internal/world/rp-signature', payload: { purpose: 'mint' } });
-      const minted = await app.inject({ method: 'POST', url: '/internal/grants/mint', payload: { feature: 'ocr', holder: 'world:human', remaining: '3', ttl_seconds: 60, settlement_network: 'local', idkit_response: proof(signed.json().nonce) } });
+      const minted = await app.inject({
+        method: 'POST',
+        url: '/internal/grants/mint',
+        payload: {
+          feature: 'ocr',
+          holder: 'world:human',
+          remaining: '3',
+          ttl_seconds: 60,
+          settlement_network: 'local',
+          idkit_response: proof(signed.json().nonce, 'bagseven-mint'),
+        },
+      });
       expect(minted.statusCode).toBe(200);
     } finally { await app.close(); vi.unstubAllGlobals(); }
   });

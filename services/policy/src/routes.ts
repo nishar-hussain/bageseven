@@ -225,8 +225,9 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
       owner_address: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional(),
       scope: z.enum(['owner', 'all']).default('owner'),
     }).parse(req.query);
-    if (query.scope === 'all' && config.DEV_MODE !== 'true') {
-      throw new ApiError(403, 'ALL_MANDATES_DISABLED', 'all-mandate discovery is only available in development mode');
+    // Cross-tenant listing is never safe on a shared policy API — even in DEV_MODE.
+    if (query.scope === 'all') {
+      throw new ApiError(403, 'ALL_MANDATES_DISABLED', 'Use scope=owner with owner_address; all-mandate discovery is disabled');
     }
     if (query.scope === 'owner' && !query.owner_address) {
       throw new ApiError(400, 'OWNER_REQUIRED', 'owner_address is required for owner-scoped mandate discovery');

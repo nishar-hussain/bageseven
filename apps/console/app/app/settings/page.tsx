@@ -57,7 +57,7 @@ export default function SettingsPage() {
       <div>
         <h1 className="text-[2rem] font-semibold tracking-tight">Tracks</h1>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          Live vs mock from server env — secrets never in the browser. Full checklist:{' '}
+          Track readiness from server env — secrets never in the browser. Full checklist:{' '}
           <code className="fi-mono text-xs">docs/LIVE.md</code>
         </p>
         <div className="mt-4">
@@ -100,7 +100,7 @@ export default function SettingsPage() {
               t: 'World',
               lines: [
                 `Mode: ${status.tracks.world.mode}`,
-                `Mock proofs: ${status.tracks.world.mock_proofs}`,
+                `Live proofs: ${!status.tracks.world.mock_proofs}`,
                 `IDKit: ${Boolean(status.tracks.world.idkit)}`,
                 `Agent Pass: ${Boolean(status.tracks.world.agent_pass)}`,
               ],

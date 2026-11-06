@@ -18,7 +18,7 @@ export default function AttentionPage() {
         const [s, live, mandates] = await Promise.all([
           entitlementsApi.status(),
           entitlementsApi.live(),
-          mandateApi.list('all').catch(() => ({ mandates: [] })),
+          mandateApi.list('owner').catch(() => ({ mandates: [] })),
         ]);
         setStatus(s);
         const next: Item[] = [];
@@ -56,8 +56,8 @@ export default function AttentionPage() {
         }
         if (s.tracks.world.mock_proofs) {
           next.push({
-            title: 'World mock proofs on',
-            detail: 'Set WORLD_MOCK_PROOFS=false and mint with World IDKit on /app/mint for live uniqueness proofs.',
+            title: 'World live proofs disabled',
+            detail: 'Set WORLD_MOCK_PROOFS=false and create entitlements with World IDKit on /app/mint.',
             href: '/app/mint',
             tone: 'info',
           });

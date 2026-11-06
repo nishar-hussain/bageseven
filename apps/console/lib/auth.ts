@@ -15,6 +15,19 @@ export type Session = {
   world_human_id?: string;
   email?: string;
   email_verified_at?: number | null;
+  /** Optional Whitechain / EVM payout wallet (0x…). */
+  wallet_address?: string | null;
+  /** Unix seconds — set when new-user onboarding is finished or skipped. */
+  onboarding_done_at?: number | null;
+  mock?: boolean;
+};
+
+export type SessionIdentity = {
+  world_human_id?: string;
+  email?: string;
+  email_verified_at?: number | null;
+  wallet_address?: string | null;
+  onboarding_done_at?: number | null;
   mock?: boolean;
 };
 
@@ -65,6 +78,16 @@ export function sessionHolder(session: Session): string {
   return 'anonymous';
 }
 
+export function needsOnboarding(session: Session | null | undefined): boolean {
+  if (!sessionIsValid(session) || !session) return false;
+  if (session.mock) return false;
+  const human = session.world_human_id?.trim() ?? '';
+  // Email-recovery holders are not World-primary new users.
+  if (!human || human.startsWith('email:') || human.startsWith('mock:')) return false;
+  // World-primary new users must see onboarding once (email + wallet are skippable).
+  return !session.onboarding_done_at;
+}
+
 function encodePayload(session: Omit<Session, 'exp' | 'k'> & { k: Session['k']; ttlSec: number }): string {
   const exp = Math.floor(Date.now() / 1000) + session.ttlSec;
   const body: Session = {
@@ -73,18 +96,15 @@ function encodePayload(session: Omit<Session, 'exp' | 'k'> & { k: Session['k']; 
     world_human_id: session.world_human_id,
     email: session.email?.toLowerCase(),
     email_verified_at: session.email_verified_at ?? null,
+    wallet_address: session.wallet_address?.toLowerCase() ?? null,
+    onboarding_done_at: session.onboarding_done_at ?? null,
     mock: session.mock,
   };
   const payload = Buffer.from(JSON.stringify(body)).toString('base64url');
   return `${payload}.${sign(payload)}`;
 }
 
-export function encodeSession(input: {
-  world_human_id?: string;
-  email?: string;
-  email_verified_at?: number | null;
-  mock?: boolean;
-}): string {
+export function encodeSession(input: SessionIdentity): string {
   if (!input.world_human_id?.trim() && !input.email?.trim()) {
     throw new Error('SESSION_REQUIRES_IDENTITY');
   }
@@ -94,6 +114,8 @@ export function encodeSession(input: {
     world_human_id: input.world_human_id,
     email: input.email,
     email_verified_at: input.email_verified_at ?? null,
+    wallet_address: input.wallet_address ?? null,
+    onboarding_done_at: input.onboarding_done_at ?? null,
     mock: input.mock,
   });
 }
@@ -128,12 +150,23 @@ export async function getSession(): Promise<Session | null> {
   return decodeSession(jar.get(SESSION_COOKIE)?.value);
 }
 
-export function attachSessionCookie(
-  res: NextResponse,
-  input: { world_human_id?: string; email?: string; email_verified_at?: number | null; mock?: boolean },
-): NextResponse {
+export function attachSessionCookie(res: NextResponse, input: SessionIdentity): NextResponse {
   res.cookies.set(SESSION_COOKIE, encodeSession(input), sessionCookieOptions());
   return res;
+}
+
+/** Merge patch into current session identity (preserves unset fields). */
+export function mergeSessionIdentity(session: Session, patch: Partial<SessionIdentity>): SessionIdentity {
+  return {
+    world_human_id: patch.world_human_id !== undefined ? patch.world_human_id : session.world_human_id,
+    email: patch.email !== undefined ? patch.email : session.email,
+    email_verified_at:
+      patch.email_verified_at !== undefined ? patch.email_verified_at : session.email_verified_at ?? null,
+    wallet_address: patch.wallet_address !== undefined ? patch.wallet_address : session.wallet_address ?? null,
+    onboarding_done_at:
+      patch.onboarding_done_at !== undefined ? patch.onboarding_done_at : session.onboarding_done_at ?? null,
+    mock: patch.mock !== undefined ? patch.mock : session.mock,
+  };
 }
 
 export function clearSessionOn(res: NextResponse): NextResponse {
@@ -141,12 +174,7 @@ export function clearSessionOn(res: NextResponse): NextResponse {
   return res;
 }
 
-export async function setSessionCookie(input: {
-  world_human_id?: string;
-  email?: string;
-  email_verified_at?: number | null;
-  mock?: boolean;
-}): Promise<void> {
+export async function setSessionCookie(input: SessionIdentity): Promise<void> {
   const jar = await cookies();
   jar.set(SESSION_COOKIE, encodeSession(input), sessionCookieOptions());
 }

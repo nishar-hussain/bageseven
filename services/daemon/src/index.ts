@@ -192,8 +192,11 @@ async function executeSpend(config: NodeJS.ProcessEnv, resolved: ResolvedWorker,
 function buildRoutes(app: FastifyInstance, { config, redis, db }: ServiceDeps): void {
   app.addHook('preHandler', async (req, reply) => {
     if (isPublicEntitlementPath(req.url)) return;
-    const token = config.DAEMON_AUTH_TOKEN;
-    if (token && req.headers.authorization !== `Bearer ${token}`) {
+    const token = config.DAEMON_AUTH_TOKEN?.trim();
+    if (!token) {
+      return reply.code(503).send({ error: { code: 'MISCONFIGURED', message: 'DAEMON_AUTH_TOKEN is required' } });
+    }
+    if (req.headers.authorization !== `Bearer ${token}`) {
       return reply.code(401).send({ error: { code: 'UNAUTHORIZED', message: 'daemon authentication required' } });
     }
   });

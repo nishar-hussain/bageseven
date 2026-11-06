@@ -21,7 +21,10 @@ describe('public World sign-in', () => {
   it('issues a browser-bound challenge without an existing operator session', async () => {
     daemon.mockResolvedValue({ ok: true, status: 200, body: { nonce: 'nonce', sig: 'signature' } });
     const res = await challenge();
-    expect(res.status).toBe(200); expect(res.headers.get('set-cookie')).toContain('bagseven_world_nonce=nonce');
+    expect(res.status).toBe(200);
+    const setCookie = res.headers.get('set-cookie') ?? '';
+    expect(setCookie).toContain('bagseven_world_nonce=nonce');
+    expect(setCookie.toLowerCase()).toContain('path=/');
     expect(daemon).toHaveBeenCalledWith('/internal/world/rp-signature', expect.objectContaining({ body: JSON.stringify({ purpose: 'login' }) }));
   });
   it.each([{ mock: true }, {}])('does not create a live session from mock or missing credentials', async (body) => {
@@ -36,6 +39,18 @@ describe('public World sign-in', () => {
     daemon.mockResolvedValue({ ok: true, status: 200, body: { ok: true, nullifier: 'human', human_id: 'world:human' } });
     const res = await POST(request({ idkit_response: { nonce: 'nonce' } }, 'bagseven_world_nonce=nonce'));
     expect(res.status).toBe(200); expect(res.headers.get('set-cookie')).toContain('bagseven_session=');
+    const data = await res.json();
+    expect(data).toMatchObject({ needs_onboarding: true, returning: false });
+  });
+  it('skips onboarding for returning World humans', async () => {
+    daemon.mockResolvedValue({
+      ok: true,
+      status: 200,
+      body: { ok: true, nullifier: 'human', human_id: 'world:human', returning: true },
+    });
+    const res = await POST(request({ idkit_response: { nonce: 'nonce' } }, 'bagseven_world_nonce=nonce'));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ needs_onboarding: false, returning: true });
   });
   it('does not fabricate an identity when Agent Pass verification is unavailable', async () => {
     vi.stubEnv('WORLD_MOCK_PROOFS', 'true');
