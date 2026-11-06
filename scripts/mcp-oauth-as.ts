@@ -7,7 +7,15 @@
  */
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { Express, NextFunction, Request, Response } from 'express';
+import QRCode from 'qrcode';
 import { verifyWorldAgentPass } from '@bagseven/world';
+import { readWorldContinuity, signWorldContinuity, WORLD_CONTINUITY_AGE } from '../apps/console/lib/world-continuity.ts';
+
+const WORLD_SESSION_COOKIE = 'bagseven_oauth_world_session';
+function savedWorldSession(req: Request): string | undefined {
+  const value = req.headers.cookie?.split(';').map(v => v.trim()).find(v => v.startsWith(`${WORLD_SESSION_COOKIE}=`))?.slice(WORLD_SESSION_COOKIE.length + 1);
+  try { return readWorldContinuity(value ? decodeURIComponent(value) : undefined); } catch { return undefined; }
+}
 
 type AuthCode = {
   clientId: string;
@@ -124,6 +132,10 @@ function authorizePage(opts: {
   label{display:block;font-size:.7rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#63636d;margin-top:1rem}
   input,textarea{width:100%;margin-top:.4rem;padding:.7rem .8rem;border:1px solid #ececf0;border-radius:12px;font:inherit;box-sizing:border-box}
   button{margin-top:1.25rem;width:100%;border:0;border-radius:999px;background:#0e0e10;color:#fff;font-weight:600;padding:.75rem;cursor:pointer}
+  button:disabled{opacity:.65;cursor:wait}
+  .qr-panel:not([hidden]){display:grid;justify-items:center;margin:1rem 0;padding:1rem;border:1px solid #ececf0;border-radius:12px;background:white}
+  .qr-panel img{display:block;width:320px;max-width:100%;height:auto}
+  .qr-panel p{margin:.5rem 0 0;text-align:center}
   .err{background:#fff1f1;color:#9b1c1c;padding:.75rem;border-radius:12px;font-size:.85rem}
   code{font-size:.75rem;background:#f6f6f8;padding:.1rem .35rem;border-radius:6px}
 </style></head><body>
@@ -134,6 +146,10 @@ function authorizePage(opts: {
     <form method="post" action="/oauth/authorize?${html(q.toString())}">
       <input type="hidden" name="idkit_response" id="world-proof" />
       <button type="button" id="verify-world">Verify with World ID</button>
+      <div id="world-qr-panel" class="qr-panel" hidden>
+        <img id="world-qr" width="320" height="320" alt="Scan this QR code with World App to authorize Bagseven" />
+        <p>Scan with World App on your phone</p>
+      </div>
       <a id="world-link" hidden>Open World App</a>
       <p id="world-status" role="status"></p>
     </form>
@@ -144,21 +160,32 @@ function authorizePage(opts: {
  document.getElementById('verify-world').onclick = async function () {
   this.disabled = true;
   const status = document.getElementById('world-status');
+  const qrPanel = document.getElementById('world-qr-panel');
+  const qr = document.getElementById('world-qr');
+  qrPanel.hidden = true;
+  document.getElementById('world-link').hidden = true;
   try {
    status.textContent = 'Starting World ID verification…';
    const response = await fetch('/oauth/world/challenge', { method: 'POST' });
    const sig = await response.json();
    if (!response.ok) throw new Error(sig.error || 'World ID is unavailable');
-   const request = await IDKit.request({ app_id: sig.app_id, action: sig.action, environment: sig.environment,
-    rp_context: { rp_id: sig.rp_id, nonce: sig.nonce, created_at: sig.created_at, expires_at: sig.expires_at, signature: sig.sig },
-    allow_legacy_proofs: true }).constraints(IDKit.CredentialRequest('proof_of_human'));
+   const config = { app_id: sig.app_id, environment: sig.environment,
+    rp_context: { rp_id: sig.rp_id, nonce: sig.nonce, created_at: sig.created_at, expires_at: sig.expires_at, signature: sig.sig } };
+   const builder = sig.existing_session_id ? IDKit.proveSession(sig.existing_session_id, config) : IDKit.createSession(config);
+   const request = await builder.constraints(IDKit.CredentialRequest('proof_of_human'));
    const link = document.getElementById('world-link'); link.href = request.connectorURI; link.hidden = false;
-   status.textContent = 'Open World App using the link above to approve verification.';
+   const qrResponse = await fetch('/oauth/world/qr', { method: 'POST',
+    headers: { 'content-type': 'application/json' }, body: JSON.stringify({ uri: request.connectorURI, nonce: sig.nonce }) });
+   if (!qrResponse.ok) throw new Error('Could not generate the QR code. Try again, or use Open World App on your phone.');
+   const qrUrl = URL.createObjectURL(await qrResponse.blob());
+   qr.onload = function () { URL.revokeObjectURL(qrUrl); };
+   qr.src = qrUrl; qrPanel.hidden = false;
+   status.textContent = 'Scan the QR code with World App, then approve on your phone.';
    const completion = await request.pollUntilCompletion();
-   if (!completion.success) throw new Error('World ID verification was cancelled or failed');
+   if (!completion.success) throw new Error('World ID verification failed (' + completion.error + '). Please try a fresh QR.');
    document.getElementById('world-proof').value = JSON.stringify(completion.result);
    document.querySelector('form').submit();
-  } catch (error) { status.textContent = error.message; this.disabled = false; }
+  } catch (error) { qrPanel.hidden = true; status.textContent = error.message; this.disabled = false; }
  };
 </script>
 </body></html>`;
@@ -198,18 +225,37 @@ export function mountMcpOAuth(app: Express): void {
   app.get('/.well-known/oauth-protected-resource', prMeta);
   app.get('/.well-known/oauth-protected-resource/mcp', prMeta);
 
+  /** Encode the connector locally; verification links never go to a third-party QR service. */
+  app.post('/oauth/world/qr', async (req, res) => {
+    const nonce = req.headers.cookie?.split(';').map(value => value.trim()).find(value => value.startsWith('bagseven_oauth_world_nonce='))?.slice('bagseven_oauth_world_nonce='.length);
+    if (req.headers.origin !== publicBase(req) || !nonce || req.body?.nonce !== nonce) {
+      res.status(403).json({ error: 'Start a new World verification in this browser' }); return;
+    }
+    const uri = req.body?.uri;
+    if (typeof uri !== 'string' || uri.length > 4096) { res.status(400).json({ error: 'Invalid World connector URL' }); return; }
+    try {
+      const url = new URL(uri);
+      if (url.protocol !== 'https:' || !['world.org', 'staging.world.org', 'sandbox.world.org'].includes(url.hostname) || url.pathname !== '/verify' || url.username || url.password) {
+        res.status(400).json({ error: 'Invalid World connector URL' }); return;
+      }
+      const png = await QRCode.toBuffer(uri, { type: 'png', width: 320, margin: 4, errorCorrectionLevel: 'M' });
+      res.setHeader('Cache-Control', 'no-store');
+      res.type('image/png').send(png);
+    } catch { res.status(400).json({ error: 'Could not generate World QR code' }); }
+  });
+
   app.post('/oauth/world/challenge', async (req, res) => {
     try {
       const daemon = (process.env.DAEMON_URL || 'http://127.0.0.1:4001').replace(/\/$/, '');
       const response = await fetch(`${daemon}/internal/world/rp-signature`, {
         method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${process.env.DAEMON_AUTH_TOKEN || ''}` },
-        body: JSON.stringify({ purpose: 'login' }), signal: AbortSignal.timeout(10000),
+        body: JSON.stringify({ purpose: 'session', existing_session_id: savedWorldSession(req) }), signal: AbortSignal.timeout(10000),
       });
       const sig = await response.json() as { nonce?: string };
       if (!response.ok || !sig.nonce) { res.status(503).json({ error: 'World ID signing credentials are not ready' }); return; }
       res.cookie('bagseven_oauth_world_nonce', sig.nonce, { httpOnly: true, sameSite: 'lax', secure: publicBase(req).startsWith('https:'), path: '/oauth', maxAge: 300000 });
       res.setHeader('Cache-Control', 'no-store');
-      res.json(sig);
+      res.json({ ...sig, existing_session_id: savedWorldSession(req) });
     } catch { res.status(503).json({ error: 'World verification is unavailable' }); }
   });
 
@@ -294,16 +340,19 @@ export function mountMcpOAuth(app: Express): void {
     let worldProofId: string;
     if (body.idkit_response) {
       try {
-        const proof = JSON.parse(body.idkit_response) as { nonce?: string };
+        const proof = JSON.parse(body.idkit_response) as { nonce?: string; session_id?: string; action?: string };
+        if (!proof.session_id || proof.action) return fail('Complete a fresh World session verification');
         const cookie = req.headers.cookie?.split(';').map((v) => v.trim()).find((v) => v.startsWith('bagseven_oauth_world_nonce='))?.slice('bagseven_oauth_world_nonce='.length);
         if (!cookie || decodeURIComponent(cookie) !== proof.nonce) return fail('World verification does not match this browser request');
         const daemon = (process.env.DAEMON_URL || 'http://127.0.0.1:4001').replace(/\/$/, '');
-        const response = await fetch(`${daemon}/internal/world/verify-idkit`, {
+        const response = await fetch(`${daemon}/internal/world/verify-idkit-session`, {
           method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${process.env.DAEMON_AUTH_TOKEN || ''}` },
           body: JSON.stringify({ idkit_response: proof }), signal: AbortSignal.timeout(20000),
         });
-        const verified = await response.json() as { ok?: boolean; human_id?: string; world_proof_id?: string };
+        const verified = await response.json() as { ok?: boolean; human_id?: string; world_proof_id?: string; session_id?: string };
         if (!response.ok || !verified.ok || !verified.human_id || !verified.world_proof_id) return fail('World ID verification failed');
+        if (verified.session_id !== proof.session_id || (savedWorldSession(req) && verified.session_id !== savedWorldSession(req))) return fail('World session does not match this account');
+        res.cookie(WORLD_SESSION_COOKIE, signWorldContinuity(verified.session_id), { httpOnly: true, sameSite: 'lax', secure: publicBase(req).startsWith('https:'), path: '/oauth', maxAge: WORLD_CONTINUITY_AGE * 1000 });
         humanId = verified.human_id;
         worldProofId = verified.world_proof_id;
         res.clearCookie('bagseven_oauth_world_nonce', { path: '/oauth' });
