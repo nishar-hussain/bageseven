@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { daemonFetch } from '../../../../lib/daemon-bff';
-import { getSession } from '../../../../lib/auth';
+import { getSession, sessionHolder, sessionIsValid } from '../../../../lib/auth';
 
 type Ctx = { params: Promise<{ path: string[] }> };
 
@@ -8,6 +8,9 @@ type Ctx = { params: Promise<{ path: string[] }> };
 const ALLOWED: Array<{ method: string; match: (parts: string[]) => boolean }> = [
   { method: 'GET', match: (p) => p[0] === 'mumbai' && p[1] === 'status' && p.length === 2 },
   { method: 'GET', match: (p) => p[0] === 'world' && p[1] === 'authorize' && p.length === 2 },
+  { method: 'POST', match: (p) => p[0] === 'world' && p[1] === 'callback' && p.length === 2 },
+  { method: 'POST', match: (p) => p[0] === 'world' && p[1] === 'rp-signature' && p.length === 2 },
+  { method: 'POST', match: (p) => p[0] === 'world' && p[1] === 'verify-idkit' && p.length === 2 },
   { method: 'GET', match: (p) => p[0] === 'grants' && p[1] === 'live' && p.length === 2 },
   { method: 'GET', match: (p) => p[0] === 'grants' && p.length === 2 },
   { method: 'POST', match: (p) => p[0] === 'grants' && p[1] === 'mint' && p.length === 2 },
@@ -26,7 +29,7 @@ function allowed(method: string, parts: string[]): boolean {
 
 async function proxy(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   const session = await getSession();
-  if (!session?.email) {
+  if (!sessionIsValid(session) || !session) {
     return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: 'Sign in required' } }, { status: 401 });
   }
 
@@ -40,7 +43,7 @@ async function proxy(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   const target = `/internal/${suffix}${url.search}`;
 
   const headers = new Headers();
-  headers.set('x-bagseven-actor', session.email);
+  headers.set('x-bagseven-actor', sessionHolder(session));
   const init: RequestInit = { method: req.method, headers };
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     init.body = await req.text();

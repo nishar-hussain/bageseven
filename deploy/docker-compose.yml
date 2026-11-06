@@ -50,7 +50,7 @@ services:
   anvil:
     image: ghcr.io/foundry-rs/foundry:stable
     entrypoint: ["anvil"]
-    command: ["--host", "0.0.0.0", "--chain-id", "43113", "--state", "/data/state.json", "--state-interval", "1"]
+    command: ["--host", "0.0.0.0", "--chain-id", "1874", "--state", "/data/state.json", "--state-interval", "1"]
     ports:
       - "127.0.0.1:58545:8545"
     volumes:

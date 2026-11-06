@@ -70,14 +70,17 @@ export async function GET() {
       'bagseven_fetch',
       'bagseven_spawn',
       'grant_status',
+      'check_entitlement',
+      'consume_entitlement',
       'mint_with_world',
       'buy_credits',
+      'create_checkout_session',
       'paid_run',
       'cancel_renewal',
       'explain_denial',
     ],
     auth: {
-      human: 'Magic-link dashboard. World Agent Pass (id_token / mock proof) gates mint + buy_credits only.',
+      human: 'World-primary dashboard login. Email OTP is verify-later. World still gates mint uniqueness.',
       agent:
         'External agents never hold World credentials. They connect via MCP bound to BAGSEVEN_MCP_WORKER; daemon auth is DAEMON_AUTH_TOKEN. Dual-gate still requires a living Arkiv grant minted by a human.',
     },

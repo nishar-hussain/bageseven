@@ -1,9 +1,9 @@
 # Bagseven
 
-Public entitlements for agents. Humans mint once (World). Access lives on Arkiv until paid_through. Spend is dual-gated: mandate remaining AND living grant. Settlement on Hedera. MCP is the product.
+Operators sign in with World. Plans + checkout sessions settle USDT on Whitechain (WhiteWallet-ready) and mint living Arkiv entitlements. Humans and agents check/consume through `@bagseven/sdk`. Agents dual-gate under a mandate.
 
-Dashboard: /app on the console host. Sign-in is a magic link (Resend).
+Dashboard: /app (World login). Plans / checkouts / account. SDK: /app/sdk. Embed: /embed?token=. Checkout: /checkout?session=.
 
-Repo docs: https://github.com — see llms.txt and docs/ at the source root.
+SDK: react (Provider, FeatureFlagGuard, BagsevenEmbed checkout) · node (createPlan, createCheckoutSession, checkEntitlement) · wallet (Whitechain)
 
-MCP tools: bagseven_status, grant_status, mint_with_world, buy_credits, paid_run, cancel_renewal, explain_denial, bagseven_fetch.
+MCP: bagseven_status, grant_status, check_entitlement, consume_entitlement, mint_with_world, buy_credits, create_checkout_session, paid_run, cancel_renewal, explain_denial, bagseven_fetch.

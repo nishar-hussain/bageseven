@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { createPublicClient, createWalletClient, fallback, http, type Address, type Hex, type PublicClient } from 'viem';
 import { privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
-import { avalancheFuji } from 'viem/chains';
+import { WHITECHAIN_CHAIN_ID, WHITECHAIN_RPC_URL, chainForId } from '@bagseven/onchain';
 import { encodePaymentSignatureHeader } from '@x402/core/http';
 import type { PaymentPayload, PaymentRequired } from '@x402/core/types';
 import type { X402Requirements } from './x402.js';
@@ -58,8 +58,7 @@ export class X402Payer {
   private readonly chainId: number;
 
   constructor(config: X402PayerConfig) {
-    const chain = config.chainId === 43113 ? avalancheFuji : undefined;
-    if (!chain) throw new Error(`unsupported chain id ${config.chainId}; expected Avalanche Fuji (43113)`);
+    const chain = chainForId(config.chainId);
     this.account = privateKeyToAccount(config.key);
     const fallbackUrl = config.rpcFallbackUrl;
     this.publicClient = createPublicClient({
@@ -130,9 +129,9 @@ export function x402PayerFromEnv(config: NodeJS.ProcessEnv, operator: string, en
   if (!config.USDC_ADDRESS) throw new Error('USDC_ADDRESS is not configured');
   const payer = new X402Payer({
     key: key as Hex,
-    rpcUrl: config.RPC_URL ?? 'https://api.avax-test.network/ext/bc/C/rpc',
-    rpcFallbackUrl: config.RPC_FALLBACK_URL ?? 'https://api.avax-test.network/ext/bc/C/rpc',
-    chainId: Number(config.CHAIN_ID ?? 43113),
+    rpcUrl: config.RPC_URL ?? WHITECHAIN_RPC_URL,
+    rpcFallbackUrl: config.RPC_FALLBACK_URL ?? WHITECHAIN_RPC_URL,
+    chainId: Number(config.CHAIN_ID ?? WHITECHAIN_CHAIN_ID),
     usdc: config.USDC_ADDRESS as Address,
   });
   if (payer.account.address.toLowerCase() === operator.toLowerCase()) throw new Error('x402 payer must not be the worker operator');

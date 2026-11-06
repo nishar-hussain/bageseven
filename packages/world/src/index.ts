@@ -8,6 +8,8 @@ export type WorldFailOutcome = z.infer<typeof WorldFailOutcomeSchema>;
 export const VerifyWorldInputSchema = z.object({
   world_proof_id: z.string().optional(),
   id_token: z.string().optional(),
+  /** Browser OIDC nonce from the authorize request — validated against id_token.nonce when present. */
+  nonce: z.string().optional(),
   outcome: z.enum(['ok', 'denied', 'expired', 'cancelled', 'invalid']).optional(),
   world_denied: z.boolean().optional(),
   human_id: z.string().optional(),
@@ -120,7 +122,11 @@ async function verifyRs256Jwt(token: string, audience: string): Promise<Record<s
   return payload;
 }
 
-/** Build World OIDC authorize URL for Agent Pass (PKCE expected by client). */
+/** World IdP authorize endpoint (from discovery — not the marketing /authorize path). */
+export const WORLD_AUTHORIZE_URL = 'https://auth.world.org/api/v1/authorize';
+export const WORLD_TOKEN_URL = 'https://auth.world.org/api/v1/token';
+
+/** Build World OIDC authorize URL for Agent Pass (S256 PKCE required). */
 export function buildWorldAuthorizeUrl(input: {
   clientId: string;
   redirectUri: string;
@@ -129,7 +135,7 @@ export function buildWorldAuthorizeUrl(input: {
   codeChallenge?: string;
   scope?: string;
 }): string {
-  const url = new URL('https://auth.world.org/authorize');
+  const url = new URL(WORLD_AUTHORIZE_URL);
   url.searchParams.set('client_id', input.clientId);
   url.searchParams.set('redirect_uri', input.redirectUri);
   url.searchParams.set('response_type', 'code');
@@ -141,6 +147,81 @@ export function buildWorldAuthorizeUrl(input: {
     url.searchParams.set('code_challenge_method', 'S256');
   }
   return url.toString();
+}
+
+/**
+ * Exchange authorization code for tokens (server-side only).
+ * Per World IdP docs: portal default is client_secret_basic; client_secret_post also supported.
+ * Set WORLD_TOKEN_AUTH_METHOD=client_secret_post|client_secret_basic (default: basic when secret set).
+ */
+export async function exchangeWorldAuthorizationCode(input: {
+  code: string;
+  redirectUri: string;
+  clientId: string;
+  clientSecret?: string;
+  codeVerifier: string;
+  authMethod?: 'client_secret_basic' | 'client_secret_post' | 'none';
+}): Promise<{ id_token: string; access_token?: string; expires_in?: number }> {
+  const body = new URLSearchParams({
+    grant_type: 'authorization_code',
+    code: input.code,
+    redirect_uri: input.redirectUri,
+    code_verifier: input.codeVerifier,
+  });
+
+  const headers: Record<string, string> = {
+    'content-type': 'application/x-www-form-urlencoded',
+    accept: 'application/json',
+  };
+
+  const method =
+    input.authMethod ??
+    (input.clientSecret
+      ? ((process.env.WORLD_TOKEN_AUTH_METHOD as 'client_secret_basic' | 'client_secret_post' | undefined) ??
+        'client_secret_basic')
+      : 'none');
+
+  if (method === 'client_secret_basic' && input.clientSecret) {
+    // Optional body client_id must match when using Basic (RFC 6749 / World IdP docs).
+    body.set('client_id', input.clientId);
+    headers.authorization = `Basic ${Buffer.from(`${input.clientId}:${input.clientSecret}`).toString('base64')}`;
+  } else if (method === 'client_secret_post' && input.clientSecret) {
+    body.set('client_id', input.clientId);
+    body.set('client_secret', input.clientSecret);
+  } else {
+    body.set('client_id', input.clientId);
+  }
+
+  const response = await fetch(WORLD_TOKEN_URL, {
+    method: 'POST',
+    headers,
+    body,
+  });
+  const raw = await response.text();
+  let json: Record<string, unknown> = {};
+  try {
+    json = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+  } catch {
+    throw new Error(`World token endpoint returned non-JSON (${response.status})`);
+  }
+  if (!response.ok) {
+    const err = typeof json.error === 'string' ? json.error : `http_${response.status}`;
+    const desc = typeof json.error_description === 'string' ? `: ${json.error_description}` : '';
+    throw new Error(`World token exchange failed (${err}${desc})`);
+  }
+  const idToken = typeof json.id_token === 'string' ? json.id_token : '';
+  if (!idToken) throw new Error('World token response missing id_token');
+  return {
+    id_token: idToken,
+    access_token: typeof json.access_token === 'string' ? json.access_token : undefined,
+    expires_in: typeof json.expires_in === 'number' ? json.expires_in : undefined,
+  };
+}
+
+/** RFC 9207: callback redirects include iss — must match discovered issuer exactly. */
+export function assertWorldCallbackIssuer(iss: string | null | undefined): void {
+  if (!iss) throw new Error('World callback missing iss (RFC 9207)');
+  if (iss !== ISSUER) throw new Error(`World callback iss mismatch (got ${iss}, want ${ISSUER})`);
 }
 
 export function pkceChallengeFromVerifier(verifier: string): string {
@@ -208,6 +289,12 @@ export async function verifyWorldAgentPass(
       }
       const sub = typeof payload.sub === 'string' ? payload.sub : '';
       if (!sub) return fail('invalid', 'id_token missing sub', 'live');
+      if (input.nonce) {
+        const tokenNonce = typeof payload.nonce === 'string' ? payload.nonce : '';
+        if (tokenNonce !== input.nonce) {
+          return fail('invalid', 'id_token nonce mismatch', 'live');
+        }
+      }
       const exp = typeof payload.exp === 'number' ? payload.exp : 0;
       return {
         ok: true,
@@ -248,3 +335,13 @@ export async function verifyWorldAgentPass(
 export function worldDeniedMessage(result: WorldVerifyFail): string {
   return `WORLD_DENIED: ${result.reason} — ${result.detail}`;
 }
+
+export {
+  signWorldIdKitRequest,
+  verifyWorldIdKitProof,
+  IdKitResultSchema,
+  type IdKitResult,
+  type IdKitVerifyOk,
+  type IdKitVerifyFail,
+  type RpSignature,
+} from './idkit.js';

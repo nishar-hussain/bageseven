@@ -12,7 +12,7 @@ export const GrantSchema = z.object({
   renewal_enabled: z.boolean(),
   paid_through: z.string().datetime(),
   payment_tx: z.string().optional(),
-  settlement_network: z.enum(['hedera', 'avalanche_fuji', 'local']).default('local'),
+  settlement_network: z.enum(['whitechain', 'local']).default('local'),
   world_proof_id: z.string().optional(),
   mandate_id: z.string().optional(),
   worker_id: z.string().optional(),
@@ -33,7 +33,7 @@ export const MintGrantInputSchema = z.object({
   remaining: z.string().default('10'),
   ttl_seconds: z.number().int().positive().default(3600),
   payment_tx: z.string().optional(),
-  settlement_network: z.enum(['hedera', 'avalanche_fuji', 'local']).default('local'),
+  settlement_network: z.enum(['whitechain', 'local']).default('whitechain'),
   world_proof_id: z.string().optional(),
   /** OIDC ID token from World Agent Pass (live mode). */
   id_token: z.string().optional(),
@@ -48,6 +48,12 @@ export const MintGrantInputSchema = z.object({
 
 export type MintGrantInput = z.infer<typeof MintGrantInputSchema>;
 
+export type GrantStoreDescribe = {
+  mode: 'memory' | 'arkiv' | 'arkiv-fallback';
+  rpcUrl?: string;
+  live?: boolean;
+};
+
 export interface GrantStore {
   mint(input: MintGrantInput): Promise<Grant>;
   get(id: string): Promise<Grant | null>;
@@ -57,4 +63,5 @@ export interface GrantStore {
   hold(id: string, amount: string, holdId: string): Promise<Grant>;
   commit(holdId: string): Promise<Grant>;
   release(holdId: string): Promise<Grant>;
+  describe(): GrantStoreDescribe;
 }

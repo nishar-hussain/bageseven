@@ -1,27 +1,71 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useCallback, useEffect, useState } from 'react';
 import { StatusBadges } from '../../../components/app/StatusBadges';
 import { entitlementsApi, type MumbaiStatus } from '../../../lib/entitlements-client';
+import { mandateApi, type MandateOverview, type MandateSummary } from '../../../lib/mandate-client';
+import { shortId } from '../../../lib/use-operator';
 
 export default function MandatePage() {
   const [status, setStatus] = useState<MumbaiStatus | null>(null);
+  const [mandates, setMandates] = useState<MandateSummary[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [overview, setOverview] = useState<MandateOverview | null>(null);
   const [err, setErr] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  const loadList = useCallback(async () => {
+    setErr('');
+    try {
+      const [s, list] = await Promise.all([
+        entitlementsApi.status().catch(() => null),
+        mandateApi.list('all'),
+      ]);
+      setStatus(s);
+      const rows = list.mandates ?? [];
+      setMandates(rows);
+      setSelectedId((prev) => {
+        if (prev && rows.some((m) => m.id === prev)) return prev;
+        return rows[0]?.id ?? null;
+      });
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    void entitlementsApi
-      .status()
-      .then(setStatus)
-      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
-  }, []);
+    void loadList();
+  }, [loadList]);
+
+  useEffect(() => {
+    if (!selectedId) {
+      setOverview(null);
+      return;
+    }
+    let cancelled = false;
+    void mandateApi
+      .overview(selectedId)
+      .then((o) => {
+        if (!cancelled) setOverview(o);
+      })
+      .catch((e) => {
+        if (!cancelled) setErr(e instanceof Error ? e.message : String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId]);
 
   return (
     <div className="mx-auto max-w-4xl space-y-5">
       <div>
         <h1 className="text-[2rem] font-semibold tracking-tight">Mandate</h1>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          Policy spend ceiling (<code className="fi-mono text-xs">SIGNER_MODE=dev</code>). Access side is Arkiv entitlements.
+          Money ceiling for agents (vault + window + lifetime caps). Dual-gate = mandate capacity{' '}
+          <em>and</em> a living entitlement.
         </p>
         <div className="mt-4">
           <StatusBadges />
@@ -29,49 +73,128 @@ export default function MandatePage() {
       </div>
 
       <div className="rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
-        <h2 className="text-base font-semibold">Live dual-gate</h2>
-        {err ? (
-          <p className="mt-2 text-sm text-[var(--deny)]">{err}</p>
-        ) : !status ? (
-          <p className="mt-2 text-sm text-[var(--muted)]">Loading track status…</p>
-        ) : (
-          <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-3">
-            <div>
-              <dt className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Require grant</dt>
-              <dd className="mt-1 font-medium">{status.dual_gate.require_grant ? 'On' : 'Off'}</dd>
-            </div>
-            <div>
-              <dt className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Feature SKU</dt>
-              <dd className="mt-1 fi-mono text-sm">{status.dual_gate.feature}</dd>
-            </div>
-            <div>
-              <dt className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Arkiv store</dt>
-              <dd className="mt-1 font-medium">{status.tracks.arkiv.live ? 'Live entities' : 'Memory fallback'}</dd>
-            </div>
-          </dl>
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h2 className="text-base font-semibold">Your mandates</h2>
+          <button
+            type="button"
+            onClick={() => void loadList()}
+            className="rounded-full border border-[var(--line)] px-3 py-1.5 text-sm font-medium"
+          >
+            Refresh
+          </button>
+        </div>
+
+        {loading && mandates.length === 0 && <p className="text-sm text-[var(--muted)]">Loading…</p>}
+        {err && <p className="text-sm text-[var(--deny)]">{err}</p>}
+        {!loading && mandates.length === 0 && !err && (
+          <div className="py-6 text-center text-sm">
+            <p className="font-medium">No mandates in the policy DB yet</p>
+            <p className="mt-2 text-[var(--muted)]">
+              Local Anvil path: run <code className="fi-mono text-xs">pnpm seed:local</code> (or{' '}
+              <code className="fi-mono text-xs">node scripts/test-mandate-flow.mjs</code>) so a funded BagMandate exists.
+              Then agents can spend under dual-gate.
+            </p>
+          </div>
         )}
-        <p className="mt-4 text-sm text-[var(--muted)]">
-          Mandate = money ceiling for the worker. Living grant = access clock. Paid agent tools need both.
-        </p>
+
+        <ul className="divide-y divide-[var(--line)]">
+          {mandates.map((m) => (
+            <li key={m.id}>
+              <button
+                type="button"
+                onClick={() => setSelectedId(m.id)}
+                className={`flex w-full items-center justify-between gap-3 py-3 text-left ${selectedId === m.id ? '' : 'opacity-80'}`}
+              >
+                <div>
+                  <div className="font-medium">{shortId(m.id)}</div>
+                  <div className="text-xs text-[var(--muted)]">
+                    {m.status} · owner {shortId(m.owner_address)} · cap {m.lifetime_cap}
+                  </div>
+                </div>
+                <div className="text-right text-xs text-[var(--muted)]">
+                  window {m.budget_per_window}
+                  <div>per buy ≤ {m.per_purchase_cap}</div>
+                </div>
+              </button>
+            </li>
+          ))}
+        </ul>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        {[
-          { t: '1. Mint access', d: 'World mint → living Arkiv grant with TTL.', href: '/app/mint', cta: 'Go to mint' },
-          { t: '2. Settle payment', d: 'Hedera buy_credits stamps HashScan payment_tx.', href: '/app/credits', cta: 'Buy credits' },
-          { t: '3. Bind MCP', d: 'Worker-bound tools under dual-gate.', href: '/app/mcp', cta: 'MCP setup' },
-          { t: '4. Overview', d: 'Living grants, TTL, paid run.', href: '/app', cta: 'Open overview' },
-        ].map((x) => (
-          <div key={x.t} className="rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
-            <div className="mb-3 h-1 w-10 rounded-full bg-[var(--blue)]" />
-            <h2 className="text-base font-semibold">{x.t}</h2>
-            <p className="mt-2 text-sm text-[var(--muted)]">{x.d}</p>
-            <Link href={x.href} className="mt-4 inline-block text-sm font-semibold text-[var(--blue)] underline">
-              {x.cta} →
+      {overview && (
+        <div className="space-y-4 rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
+          <h2 className="text-base font-semibold">Live capacity</h2>
+          {overview.onchain_state.status === 'unavailable' && (
+            <p className="rounded-xl border border-orange-200 bg-[var(--warn-t)] px-3 py-2 text-sm">
+              On-chain state unavailable: {overview.onchain_state.message}. DB terms still shown; drawability is 0 until RPC is
+              back.
+            </p>
+          )}
+          <dl className="grid gap-3 text-sm sm:grid-cols-3">
+            <div>
+              <dt className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Vault</dt>
+              <dd className="mt-1 text-2xl font-semibold tabular-nums text-[var(--good)]">{overview.vault_available}</dd>
+            </div>
+            <div>
+              <dt className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Can draw now</dt>
+              <dd className="mt-1 text-2xl font-semibold tabular-nums">{overview.can_be_drawn_now}</dd>
+            </div>
+            <div>
+              <dt className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Window spent</dt>
+              <dd className="mt-1 text-lg font-medium tabular-nums">
+                {overview.spent_this_window} / {overview.budget_per_window}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Lifetime spent</dt>
+              <dd className="mt-1 text-lg font-medium tabular-nums">
+                {overview.spent_total} / {overview.lifetime_cap}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Contract</dt>
+              <dd className="mt-1 fi-mono text-xs">{overview.terms.contract_address ?? '—'}</dd>
+            </div>
+            <div>
+              <dt className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Dual-gate grant SKU</dt>
+              <dd className="mt-1 fi-mono text-sm">{status?.dual_gate.feature ?? '…'}</dd>
+            </div>
+          </dl>
+
+          <div>
+            <h3 className="text-sm font-semibold">Agents on this mandate</h3>
+            {overview.agents.length === 0 ? (
+              <p className="mt-2 text-sm text-[var(--muted)]">No agents yet.</p>
+            ) : (
+              <ul className="mt-2 divide-y divide-[var(--line)] text-sm">
+                {overview.agents.map((a) => (
+                  <li key={a.id} className="flex justify-between gap-3 py-2">
+                    <span>
+                      <span className="font-medium">{a.name || shortId(a.id)}</span>
+                      <span className="ml-2 text-xs text-[var(--muted)]">
+                        depth {a.depth} · {a.status} · share {a.share_percent}%
+                      </span>
+                    </span>
+                    <span className="fi-mono text-xs text-[var(--muted)]">{shortId(a.operator_address)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="flex flex-wrap gap-2 pt-1">
+            <Link href="/app/mcp" className="rounded-full bg-[var(--ink)] px-4 py-2 text-sm font-semibold text-white">
+              Connect agent (MCP)
+            </Link>
+            <Link href="/app/grants" className="rounded-full border border-[var(--line)] px-4 py-2 text-sm font-medium">
+              Entitlements
+            </Link>
+            <Link href="/app/mint" className="rounded-full border border-[var(--line)] px-4 py-2 text-sm font-medium">
+              Create entitlement
             </Link>
           </div>
-        ))}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

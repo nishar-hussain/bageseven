@@ -1,6 +1,6 @@
 # Agent instructions (Bagseven)
 
-Monorepo for **Bagseven**: humans mint living Arkiv entitlements; agents spend only through MCP under a **dual-gate** (mandate remaining ∧ living grant). Prefer the live product path — no extra UIs, ports, or demo apps.
+Monorepo for **Bagseven**: humans mint living Arkiv entitlements; humans and agents `checkEntitlement` via `@bagseven/sdk`; agents spend only through MCP under a **dual-gate** (mandate remaining ∧ living grant). Prefer the live product path — no extra UIs, ports, or demo apps.
 
 ## Architecture
 
@@ -11,7 +11,7 @@ services/gateway public API         :4000
 services/daemon  grants + dual-gate :4001
 services/policy  spend tokens       :4003
 scripts/bagseven-mcp.ts  MCP HTTP/stdio  :4009  (agent surface)
-packages/        entitlements world notify db money onchain server
+packages/        sdk entitlements world notify db money onchain server
 ```
 
 Start: `pnpm run setup` then `pnpm start:local`. Design tokens: `docs/design.md` (`--blue #0002f8`, landing dark, dashboard `#f2f2f2`).
@@ -22,7 +22,7 @@ Do **not** add another web app, revive `bag-dashboard`, or put an inspector on `
 
 | Clock | Truth |
 | --- | --- |
-| Payment | Hedera `payment_tx` |
+| Payment | Whitechain `payment_tx` |
 | Renewal | `grant.renewal_enabled` (cancel does **not** kill `paid_through`) |
 | Access | Arkiv grant `remaining` + `paid_through` (queryable object, not a private `/check`) |
 
@@ -30,11 +30,15 @@ Do **not** add another web app, revive `bag-dashboard`, or put an inspector on `
 
 ## Auth + email
 
-- Dashboard: magic link in `apps/console/lib/auth.ts` (signed token; any email unless `AUTH_ALLOWLIST`). Set session cookie on the **redirect** response (`attachSessionCookie`).
+- Dashboard: **World-primary** login (`/api/auth/world`); session in `apps/console/lib/auth.ts` carries `world_human_id` + optional verified email. Email OTP verify-later via `/api/auth/email/*`. Magic link is recovery only.
 - Resend via `packages/notify` from `bags@cesthq.com`. Grant mails → signed-in actor (`x-bagseven-actor`) + optional `OPERATOR_NOTIFY_EMAIL`.
 - Production secrets: `AUTH_SECRET`, `DAEMON_AUTH_TOKEN`, `RESEND_API_KEY`. Hosting: `docs/HOSTING.md`.
 
 **World vs MCP (different doors):** World proves the **human** at mint / OAuth authorize. MCP proves the **agent** to the daemon (daemon Bearer / OAuth access token). Agents never hold World credentials.
+
+**World OIDC (live):** authorize `https://auth.world.org/api/v1/authorize` + token `…/api/v1/token`. Console `/app/mint` starts PKCE, redirects back with `?code=&state=`, daemon `POST /internal/world/callback` exchanges code (server-held verifier) → `id_token` → mint. Mock mode mints as the signed-in email with `world:ok:<email>` — no pasted proofs.
+
+**Human + agent UX:** Operators never paste grant/worker UUIDs for normal flows (select entitlements; MCP hides worker id). Agents should call `paid_run` with `feature: "ocr"` (auto-picks a living grant); `grant_id` is optional.
 
 ## MCP (local + ChatGPT)
 
@@ -43,7 +47,7 @@ BAGSEVEN_MCP_WORKER=<uuid> BAGSEVEN_MCP_PORT=4009 pnpm mcp:local
 # ChatGPT remote: HTTPS tunnel to :4009 + MCP_OAUTH_REQUIRED=true + BAGSEVEN_MCP_PUBLIC_URL=https://…
 ```
 
-Tools: `bagseven_status`, `grant_status`, `mint_with_world`, `buy_credits`, `paid_run`, `cancel_renewal`, `explain_denial`, `bagseven_fetch` (+ search/spawn when wired).
+Tools: `bagseven_status`, `grant_status`, `check_entitlement`, `consume_entitlement`, `mint_with_world`, `buy_credits`, `create_checkout_session`, `paid_run`, `cancel_renewal`, `explain_denial`, `bagseven_fetch` (+ search/spawn when wired).
 
 | Fact | Detail |
 | --- | --- |
@@ -61,7 +65,8 @@ Keep MCP alive in a long-lived process (`pnpm bagseven-mcp` / `mcp:local`). Kill
 | Concern | Where |
 | --- | --- |
 | Dual-gate + grants API | `services/daemon/src/grants.ts` |
-| Hedera settle | `services/daemon/src/hedera-x402.ts` |
+| Whitechain settle | `services/daemon/src/whitechain-settle.ts` |
+| Entitlement SDK | `packages/sdk` |
 | Arkiv store | `packages/entitlements` |
 | World verify | `packages/world` |
 | Magic link | `apps/console/lib/auth.ts` |

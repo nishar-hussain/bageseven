@@ -1,6 +1,13 @@
 /** Edge-safe session token verify (HMAC-SHA256 + base64url), shared by middleware. */
 
-export type SessionClaims = { email: string; exp: number; k?: 'session' | 'magic' };
+export type SessionClaims = {
+  exp: number;
+  k?: 'session' | 'magic' | 'otp';
+  world_human_id?: string;
+  email?: string;
+  email_verified_at?: number | null;
+  mock?: boolean;
+};
 
 function b64url(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf);
@@ -25,6 +32,10 @@ export function authSecretFromEnv(env: { AUTH_SECRET?: string; DAEMON_AUTH_TOKEN
   return env.DAEMON_AUTH_TOKEN?.trim() || 'dev-only-change-me';
 }
 
+function sessionIdentityOk(session: SessionClaims): boolean {
+  return Boolean(session.world_human_id?.trim() || session.email?.trim());
+}
+
 export async function verifySessionToken(
   token: string | undefined | null,
   secret: string,
@@ -44,9 +55,8 @@ export async function verifySessionToken(
   if (!timingSafeEqual(b64url(mac), sig)) return null;
   try {
     const session = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))) as SessionClaims;
-    if (!session.email || session.exp * 1000 < Date.now()) return null;
-    if (session.k && session.k !== kind && kind === 'session' && session.k === 'magic') return null;
-    if (kind === 'session' && session.k === 'magic') return null;
+    if (!sessionIdentityOk(session) || session.exp * 1000 < Date.now()) return null;
+    if (kind === 'session' && (session.k === 'magic' || session.k === 'otp')) return null;
     if (kind === 'magic' && session.k && session.k !== 'magic') return null;
     return session;
   } catch {

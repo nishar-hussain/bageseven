@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { StatusBadges } from '../../../components/app/StatusBadges';
+import { shortId } from '../../../lib/use-operator';
 
 type Bootstrap = {
   worker: string | null;
@@ -17,6 +18,7 @@ export default function McpPage() {
   const [data, setData] = useState<Bootstrap | null>(null);
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
+  const [showTech, setShowTech] = useState(false);
 
   const load = useCallback(async () => {
     const res = await fetch('/api/mcp/bootstrap');
@@ -36,7 +38,7 @@ export default function McpPage() {
       if (!res.ok) throw new Error(`bootstrap ${res.status}`);
       const json = (await res.json()) as Bootstrap;
       setData(json);
-      setMsg('Worker ready — copy Cursor config or start command below.');
+      setMsg('Agent slot ready — copy the Cursor config or start command.');
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));
     } finally {
@@ -50,13 +52,14 @@ export default function McpPage() {
   };
 
   const cursorJson = data?.cursorMcp ? JSON.stringify(data.cursorMcp, null, 2) : '';
+  const agentName = data?.worker ? `Agent ${shortId(data.worker)}` : null;
 
   return (
     <div className="mx-auto max-w-3xl space-y-5">
       <div>
-        <h1 className="text-[2rem] font-semibold tracking-tight">MCP</h1>
+        <h1 className="text-[2rem] font-semibold tracking-tight">Connect an agent</h1>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          How external agents (Cursor, Claude, etc.) spend under your mandate + living grant.
+          Agents spend living entitlements through MCP (feature + credits). They never hold World ID.
         </p>
         <div className="mt-4">
           <StatusBadges />
@@ -64,21 +67,18 @@ export default function McpPage() {
       </div>
 
       <section className="space-y-3 rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
-        <h2 className="text-base font-semibold">Auth model (important)</h2>
+        <h2 className="text-base font-semibold">How it works</h2>
         <ol className="list-decimal space-y-2 pl-5 text-sm text-[var(--muted)]">
           <li>
-            <strong className="text-[var(--ink)]">Human</strong> signs into the dashboard (magic link). Mint / buy credits
-            go through <strong className="text-[var(--ink)]">World</strong> (mock proof locally, or real{' '}
-            <code className="fi-mono text-xs">id_token</code> when live).
+            <strong className="text-[var(--ink)]">You</strong> create an entitlement for a feature (World + Whitechain + Arkiv).
           </li>
           <li>
-            <strong className="text-[var(--ink)]">Agent</strong> does <em>not</em> log in with World ID. It connects via
-            MCP bound to one worker UUID. Daemon auth is <code className="fi-mono text-xs">DAEMON_AUTH_TOKEN</code> from{' '}
-            <code className="fi-mono text-xs">.env</code>.
+            <strong className="text-[var(--ink)]">Your agent</strong> connects via MCP (one agent slot per process).
           </li>
           <li>
-            Every paid tool still hits the <strong className="text-[var(--ink)]">dual-gate</strong>: mandate ceiling +
-            living Arkiv grant. No grant → refuse (explain_denial).
+            Paid tools pick a living entitlement by feature key — e.g.{' '}
+            <code className="fi-mono text-xs">feature: ocr</code> or <code className="fi-mono text-xs">research_fetch</code>{' '}
+            (no grant UUID needed).
           </li>
         </ol>
       </section>
@@ -86,8 +86,16 @@ export default function McpPage() {
       <section className="space-y-4 rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-base font-semibold">Worker bind</h2>
-            <p className="mt-1 text-sm text-[var(--muted)]">One MCP process ↔ one worker id.</p>
+            <h2 className="text-base font-semibold">Agent slot</h2>
+            <p className="mt-1 text-sm text-[var(--muted)]">
+              {agentName ? (
+                <>
+                  Bound as <strong className="text-[var(--ink)]">{agentName}</strong>
+                </>
+              ) : (
+                'Create a slot, then start MCP locally or point ChatGPT at your HTTPS URL.'
+              )}
+            </p>
           </div>
           <button
             type="button"
@@ -95,113 +103,98 @@ export default function McpPage() {
             onClick={() => void ensureWorker()}
             className="rounded-full bg-[var(--ink)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
           >
-            {data?.worker ? 'Refresh config' : 'Create worker + config'}
+            {data?.worker ? 'Refresh config' : 'Create agent slot'}
           </button>
-        </div>
-        <div className="fi-field">
-          <label>Worker UUID</label>
-          <input
-            readOnly
-            className="fi-mono text-sm !rounded-xl"
-            value={data?.worker ?? ''}
-            placeholder="Click Create worker…"
-          />
         </div>
         {data?.worker && (
           <button
             type="button"
-            className="rounded-full border border-[var(--line)] px-4 py-2 text-sm font-medium"
-            onClick={() => void copy(data.worker!, 'worker UUID')}
+            className="text-xs text-[var(--muted)] underline"
+            onClick={() => setShowTech((v) => !v)}
           >
-            Copy UUID
+            {showTech ? 'Hide technical id' : 'Show technical id'}
           </button>
+        )}
+        {showTech && data?.worker && (
+          <div className="fi-field">
+            <label>Worker UUID (advanced)</label>
+            <div className="flex gap-2">
+              <input readOnly className="fi-mono text-sm !rounded-xl flex-1" value={data.worker} />
+              <button type="button" className="rounded-full border border-[var(--line)] px-3 text-sm" onClick={() => void copy(data.worker!, 'worker id')}>
+                Copy
+              </button>
+            </div>
+          </div>
         )}
       </section>
 
       {data?.cmd && (
         <section className="space-y-3 rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
-          <h2 className="text-base font-semibold">1. Start MCP locally</h2>
+          <h2 className="text-base font-semibold">1. Start MCP (Cursor / Claude)</h2>
           <pre className="fi-mono overflow-auto rounded-xl bg-[var(--hero)] p-4 text-xs text-white/85">{data.cmd}</pre>
-          <button
-            type="button"
-            className="rounded-full border border-[var(--line)] px-4 py-2 text-sm font-medium"
-            onClick={() => void copy(data.cmd!, 'start command')}
-          >
+          <button type="button" className="rounded-full border border-[var(--line)] px-4 py-2 text-sm font-medium" onClick={() => void copy(data.cmd!, 'start command')}>
             Copy start command
           </button>
           <p className="text-sm text-[var(--muted)]">
-            Or from repo root after worker is in <code className="fi-mono text-xs">.env</code>:{' '}
-            <code className="fi-mono text-xs">pnpm mcp:local</code>
+            Or from repo root: <code className="fi-mono text-xs">pnpm mcp:local</code>
           </p>
         </section>
       )}
 
       {cursorJson && (
         <section className="space-y-3 rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
-          <h2 className="text-base font-semibold">2. Cursor / Claude MCP config</h2>
-          <p className="text-sm text-[var(--muted)]">
-            Paste into Cursor MCP settings (or Claude Desktop). Put the real{' '}
-            <code className="fi-mono text-xs">DAEMON_AUTH_TOKEN</code> from <code className="fi-mono text-xs">.env</code>{' '}
-            into <code className="fi-mono text-xs">env</code> — never commit it.
-          </p>
-          <pre className="fi-mono overflow-auto rounded-xl border border-[var(--line)] bg-[var(--soft)] p-4 text-xs">
-            {cursorJson}
-          </pre>
-          <button
-            type="button"
-            className="rounded-full border border-[var(--line)] px-4 py-2 text-sm font-medium"
-            onClick={() => void copy(cursorJson, 'Cursor MCP JSON')}
-          >
+          <h2 className="text-base font-semibold">2. Paste into Cursor MCP settings</h2>
+          <pre className="fi-mono overflow-auto rounded-xl border border-[var(--line)] bg-[var(--soft)] p-4 text-xs">{cursorJson}</pre>
+          <button type="button" className="rounded-full border border-[var(--line)] px-4 py-2 text-sm font-medium" onClick={() => void copy(cursorJson, 'Cursor MCP JSON')}>
             Copy JSON
           </button>
         </section>
       )}
 
       <section className="space-y-3 rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
-        <h2 className="text-base font-semibold">Tools the agent gets</h2>
-        <ul className="grid gap-1 text-sm text-[var(--muted)] sm:grid-cols-2">
+        <h2 className="text-base font-semibold">What the agent can call</h2>
+        <ul className="grid gap-2 text-sm sm:grid-cols-2">
           {(
             data?.tools ?? [
               'bagseven_status',
-              'bagseven_search',
-              'bagseven_fetch',
               'grant_status',
+              'paid_run',
               'mint_with_world',
               'buy_credits',
-              'paid_run',
               'cancel_renewal',
               'explain_denial',
+              'bagseven_fetch',
             ]
           ).map((t) => (
-            <li key={t} className="fi-mono text-xs text-[var(--ink)]">
-              {t}
+            <li key={t} className="rounded-xl border border-[var(--line)] bg-[var(--soft)] px-3 py-2">
+              <code className="fi-mono text-xs text-[var(--ink)]">{t}</code>
+              {t === 'paid_run' && <div className="mt-1 text-xs text-[var(--muted)]">Pass feature=ocr — no grant UUID needed</div>}
+              {t === 'grant_status' && <div className="mt-1 text-xs text-[var(--muted)]">Lists living OCR entitlements</div>}
             </li>
           ))}
         </ul>
         <p className="text-sm text-[var(--muted)]">
-          Feature SKU: <code className="fi-mono text-xs">ocr</code>. Mint first on{' '}
+          Mint first on{' '}
           <Link href="/app/mint" className="font-semibold text-[var(--blue)] underline">
-            Mint
+            Mint access
           </Link>
-          , then agent <code className="fi-mono text-xs">paid_run</code>.
+          , then ask the agent to run OCR / check status.
         </p>
       </section>
 
       <section className="space-y-3 rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
-        <h2 className="text-base font-semibold">ChatGPT / remote MCP</h2>
+        <h2 className="text-base font-semibold">ChatGPT</h2>
         <p className="text-sm text-[var(--muted)]">
-          ChatGPT does <strong className="text-[var(--ink)]">not</strong> connect to localhost stdio. Expose{' '}
-          <code className="fi-mono text-xs">:4009/mcp</code> over HTTPS (<code className="fi-mono text-xs">BAGSEVEN_MCP_PUBLIC_URL</code>
-          ), set <code className="fi-mono text-xs">MCP_OAUTH_REQUIRED=true</code>, tunnel only that port, then Plugins →
-          Add custom MCP server. World proves the human on Bagseven&apos;s authorize page; ChatGPT receives a Bagseven
-          access token. Details: repo <code className="fi-mono text-xs">AGENTS.md</code>.
+          Tunnel <code className="fi-mono text-xs">:4009/mcp</code> over HTTPS, enable OAuth (
+          <code className="fi-mono text-xs">MCP_OAUTH_REQUIRED</code>), add the custom MCP plugin. You complete World on
+          Bagseven&apos;s authorize page; ChatGPT only stores a Bagseven token.
         </p>
         <Link href="/app" className="inline-block text-sm font-semibold text-[var(--blue)] underline">
           Back to overview →
         </Link>
       </section>
 
-      {msg && <p className="fi-mono text-xs text-[var(--muted)]">{msg}</p>}
+      {msg && <p className="text-sm text-[var(--muted)]">{msg}</p>}
     </div>
   );
 }

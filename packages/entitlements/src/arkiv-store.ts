@@ -47,6 +47,11 @@ function flag(v: boolean): string {
   return v ? 'true' : 'false';
 }
 
+function normalizeSettlement(raw: string | undefined): Grant['settlement_network'] {
+  if (raw === 'local') return 'local';
+  return 'whitechain';
+}
+
 function parseFlag(v: string | undefined): boolean {
   return v === 'true';
 }
@@ -146,8 +151,7 @@ export class ArkivGrantStore implements GrantStore {
       renewal_enabled: parseFlag(bareStr(row.renewal_enabled as { value: string })),
       paid_through: bareStr(row.paid_through as { value: string }),
       payment_tx: bareStr(row.payment_tx as { value: string }) || undefined,
-      settlement_network: (bareStr(row.settlement_network as { value: string }) ||
-        'hedera') as Grant['settlement_network'],
+      settlement_network: normalizeSettlement(bareStr(row.settlement_network as { value: string })),
       world_proof_id: bareStr(row.world_proof_id as { value: string }) || undefined,
       mandate_id: bareStr(row.mandate_id as { value: string }) || undefined,
       worker_id: bareStr(row.worker_id as { value: string }) || undefined,
@@ -188,15 +192,11 @@ export class ArkivGrantStore implements GrantStore {
     validateMoney(input.remaining);
 
     if (this.fallback) {
-      const grant = await this.fallback.mint({
-        ...input,
-        settlement_network:
-          input.settlement_network === 'local' ? 'hedera' : input.settlement_network,
-      });
+      const grant = await this.fallback.mint(input);
       return {
         ...grant,
         arkiv_entity_key: `arkiv:pending:${grant.id}`,
-        settlement_network: 'hedera',
+        settlement_network: grant.settlement_network,
       };
     }
 
@@ -204,8 +204,7 @@ export class ArkivGrantStore implements GrantStore {
     const id = randomUUID();
     const created = nowIso();
     const paidThrough = new Date(Date.now() + input.ttl_seconds * 1000).toISOString();
-    const settlement =
-      input.settlement_network === 'local' ? 'hedera' : input.settlement_network;
+    const settlement = input.settlement_network;
 
     const { entityKey } = await this.wallet!.createEntity(
       BagsevenGrants,

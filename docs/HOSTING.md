@@ -36,8 +36,11 @@ Tracks when you go live:
 ```
 WORLD_MOCK_PROOFS=false
 WORLD_CLIENT_ID=
-HEDERA_DEMO_SETTLE=false
-HEDERA_X402_FACILITATOR_URL=
+WHITECHAIN_DEMO_SETTLE=false
+WHITECHAIN_PRIVATE_KEY=
+WHITECHAIN_PAY_TO=
+BAGSEVEN_PUBLISHABLE_KEY=
+BAGSEVEN_SECRET_KEY=
 ARKIV_ACCESS_KEY=
 ARKIV_PRIVATE_KEY=
 ```
@@ -87,5 +90,5 @@ Sending domain **cesthq.com**, from `bags@cesthq.com`. Verify DKIM/SPF in Resend
 - [ ] `AUTH_ALLOWLIST` empty (open sign-in) or an invite list
 - [ ] Resend test: sign in from a personal inbox, not only bags@
 - [ ] Mint / credits emails arrive for that inbox
-- [ ] Mock flags off if you are claiming live World / Hedera / Arkiv
+- [ ] Mock flags off if you are claiming live World / Whitechain / Arkiv
 - [ ] `pnpm smoke` against the hosted daemon

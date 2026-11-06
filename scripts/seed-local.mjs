@@ -4,10 +4,9 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import solc from 'solc';
 import { createDb, agents, mandates, vaults } from '@bagseven/db';
-import { MandateClient, canonicalMandate, workerKey } from '@bagseven/onchain';
+import { MandateClient, canonicalMandate, chainForId, workerKey } from '@bagseven/onchain';
 import { createWalletClient, http, parseAbi } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { avalancheFuji } from 'viem/chains';
 
 const envPath = fileURLToPath(new URL('../.env', import.meta.url));
 process.loadEnvFile(envPath);
@@ -24,7 +23,8 @@ async function main() {
   const executor = privateKeyToAccount(cfg.DAEMON_EXECUTOR_KEY);
   const owner = privateKeyToAccount(cfg.DAEMON_OWNER_KEY);
   const operator = privateKeyToAccount(cfg.DAEMON_OPERATOR_KEY);
-  const wallet = createWalletClient({ account: executor, chain: avalancheFuji, transport: http(cfg.RPC_URL) });
+  const chain = chainForId(Number(cfg.CHAIN_ID));
+  const wallet = createWalletClient({ account: executor, chain, transport: http(cfg.RPC_URL) });
   const tokenAbi = parseAbi(['function mint(address,uint256)', 'function balanceOf(address) view returns (uint256)', 'function allowance(address,address) view returns (uint256)']);
   const wait = async (hash) => {
     const receipt = await client.publicClient.waitForTransactionReceipt({ hash });
@@ -32,7 +32,7 @@ async function main() {
     return receipt;
   };
   // Generated development keys need not be Anvil's prefunded accounts.
-  const faucet = createWalletClient({ account: owner, chain: avalancheFuji, transport: http(cfg.RPC_URL) });
+  const faucet = createWalletClient({ account: owner, chain, transport: http(cfg.RPC_URL) });
   const fundedAccounts = [executor.address];
   if (cfg.BAGSEVEN_X402_PAYER_KEY) fundedAccounts.push(privateKeyToAccount(cfg.BAGSEVEN_X402_PAYER_KEY).address);
   for (const address of fundedAccounts) {

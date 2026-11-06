@@ -17,7 +17,7 @@ describe('MemoryGrantStore', () => {
       holder: '0xabc',
       remaining: '5',
       ttl_seconds: 120,
-      settlement_network: 'hedera',
+      settlement_network: 'whitechain',
       payment_tx: '0xpay',
     });
     expect(grant.remaining).toBe('5');

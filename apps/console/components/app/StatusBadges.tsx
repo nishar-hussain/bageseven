@@ -8,10 +8,18 @@ export function StatusBadges() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    entitlementsApi
+    let cancelled = false;
+    void entitlementsApi
       .status()
-      .then(setStatus)
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+      .then((s) => {
+        if (!cancelled) setStatus(s);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   if (error) {
@@ -23,12 +31,32 @@ export function StatusBadges() {
   }
   if (!status) return <div className="text-sm text-[var(--muted)]">Loading track status…</div>;
 
+  const worldLive =
+    status.tracks.world.mode === 'idkit' ||
+    status.tracks.world.mode === 'agent_pass' ||
+    status.tracks.world.mode === 'dual' ||
+    status.tracks.world.mode === 'live' ||
+    status.tracks.world.mode === 'oidc';
+  const worldLabel =
+    status.tracks.world.mode === 'dual'
+      ? 'IDKit+AgentPass'
+      : status.tracks.world.mode === 'idkit'
+        ? 'IDKit'
+        : status.tracks.world.mode === 'agent_pass'
+          ? 'Agent Pass'
+          : status.tracks.world.mode === 'live' || status.tracks.world.mode === 'oidc'
+            ? 'Live'
+            : 'Mock';
   const badges = [
-    { label: 'World', value: status.tracks.world.mode === 'live' ? 'Live' : 'Mock', live: status.tracks.world.mode === 'live' },
+    { label: 'World', value: worldLabel, live: worldLive },
     {
-      label: 'Hedera',
-      value: status.tracks.hedera.facilitator ? 'Facilitator' : status.tracks.hedera.demo_settle ? 'Demo settle' : 'Configured',
-      live: status.tracks.hedera.facilitator,
+      label: 'Whitechain',
+      value: status.tracks.whitechain.operator
+        ? 'Operator'
+        : status.tracks.whitechain.demo_settle
+          ? 'Demo settle'
+          : status.tracks.whitechain.network,
+      live: status.tracks.whitechain.operator || !status.tracks.whitechain.demo_settle,
     },
     { label: 'Arkiv', value: status.tracks.arkiv.live ? 'Live' : 'Memory', live: status.tracks.arkiv.live },
   ];

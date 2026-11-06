@@ -43,7 +43,7 @@ export default function LandingPage() {
           <div className="fi-wrap relative animate-fi-up pb-20 pt-16 md:pb-28 md:pt-24">
             <h1 className="fi-display max-w-4xl text-[2.8rem] text-white md:text-[4.6rem]">
               Public entitlements.
-              <span className="block">Paid straight on Hedera.</span>
+              <span className="block">Paid straight on Whitechain.</span>
             </h1>
             <p className="mt-8 max-w-xl text-lg text-white/65 md:text-xl">
               Humans approve mint once, up to a TTL. Each spend checks a mandate and a living Arkiv grant.
@@ -82,8 +82,8 @@ export default function LandingPage() {
               </a>
               <a href={`${APP}/app/mcp`} className="group block overflow-hidden rounded-[16px] bg-white p-7 text-[var(--ink)]">
                 <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">For agents</div>
-                <h3 className="mt-3 text-2xl font-medium">I run a Solana-style spend loop — on Hedera</h3>
-                <p className="mt-3 text-[var(--muted)]">MCP tools: mint_with_world, buy_credits, paid_run. Dual-gate on mandate + grant.</p>
+                <h3 className="mt-3 text-2xl font-medium">I check and consume through MCP</h3>
+                <p className="mt-3 text-[var(--muted)]">SDK + MCP: check_entitlement, consume_entitlement, paid_run. Dual-gate on mandate + grant.</p>
                 <span className="mt-8 inline-block text-sm font-semibold underline underline-offset-4">MCP setup →</span>
               </a>
             </div>
@@ -95,13 +95,13 @@ export default function LandingPage() {
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/50">For operators</p>
             <h2 className="fi-display mt-3 max-w-3xl text-4xl md:text-[3.2rem]">Sell access from your own dashboard. No inspector tab.</h2>
             <p className="mt-5 max-w-xl text-white/65">
-              Overview, grants, mint, credits, HashScan. Live vs Mock badges so judging (and you) always know the mode.
+              Overview, grants, mint, credits, SDK embed. Live vs Mock badges so judging (and you) always know the mode.
             </p>
             <ol className="mt-12 grid gap-3 md:grid-cols-4">
               {[
                 { n: '01', t: 'Sign in', d: 'Magic link via Resend. 8-hour session.' },
                 { n: '02', t: 'Mint', d: 'World gate. Deny writes nothing.' },
-                { n: '03', t: 'Settle', d: 'Hedera buy_credits stamps payment_tx.' },
+                { n: '03', t: 'Settle', d: 'Whitechain buy_credits stamps payment_tx.' },
                 { n: '04', t: 'Spend', d: 'paid_run dual-gate. Email on each event.' },
               ].map((s) => (
                 <li key={s.n} className="rounded-[16px] border border-white/10 bg-white/[0.04] p-5">
@@ -119,16 +119,18 @@ export default function LandingPage() {
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">For developers and builders</p>
             <h2 className="fi-display mt-3 text-4xl md:text-[3.2rem]">Wire it into billing in an afternoon.</h2>
             <p className="mt-4 max-w-2xl text-[var(--muted)]">
-              MCP is the product. Dashboard is the operator surface. Daemon BFF never puts operator keys in the browser.
+              Drop-in React SDK for humans. MCP for agents. Same checkEntitlement verb. Daemon BFF never puts operator keys in the browser.
             </p>
             <pre className="mt-10 overflow-auto rounded-[16px] bg-[var(--hero)] p-6 font-mono text-xs leading-relaxed text-white/85">
-{`# Dashboard → Products, Mint grant
-feature     ocr
-ttl         120s
-world       world:ok:<human>
+{`npm install @bagseven/sdk
 
-# Agent
-grant_status · mint_with_world · buy_credits · paid_run · explain_denial`}
+<BagsevenProvider publishableKey={pk}>
+  <FeatureFlagGuard feature="ocr"><OcrButton /></FeatureFlagGuard>
+  <BagsevenEmbed accessToken={token} />
+</BagsevenProvider>
+
+# Agent MCP
+check_entitlement · consume_entitlement · paid_run`}
             </pre>
             <a href={`${APP}/app/login`} className="fi-btn mt-8 !bg-[var(--ink)] !text-white">
               Start free
@@ -139,11 +141,11 @@ grant_status · mint_with_world · buy_credits · paid_run · explain_denial`}
         <section className="fi-band-blue py-20">
           <div className="fi-wrap">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/70">Product</p>
-            <h2 className="fi-display mt-3 text-4xl text-white md:text-[3.2rem]">Entitlements, checkout, MCP and a dashboard.</h2>
+            <h2 className="fi-display mt-3 text-4xl text-white md:text-[3.2rem]">Entitlements, SDK embed, MCP and a dashboard.</h2>
             <ul className="mt-10 grid gap-3 md:grid-cols-3">
               {[
                 { t: 'Overview', d: 'Revenue-style activity, attention queue, living grants.', href: `${APP}/app` },
-                { t: 'Mint / Credits', d: 'World gate + Hedera settle + HashScan.', href: `${APP}/app/mint` },
+                { t: 'Mint / Credits', d: 'World gate + Whitechain settle + explorer.', href: `${APP}/app/mint` },
                 { t: 'Email', d: 'Resend on mint, deny, settle, paid_run, sign-in.', href: `${APP}/app/login` },
               ].map((x) => (
                 <li key={x.t}>
@@ -162,10 +164,10 @@ grant_status · mint_with_world · buy_credits · paid_run · explain_denial`}
           <div className="fi-wrap">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/45">Security</p>
             <h2 className="fi-display mt-3 text-4xl text-white md:text-[3.2rem]">Four things Bagseven cannot do.</h2>
-            <p className="mt-4 max-w-2xl text-white/55">If we shut down, settlement is already on Hedera and access is already a public Arkiv object.</p>
+            <p className="mt-4 max-w-2xl text-white/55">If we shut down, settlement is already on Whitechain and access is already a public Arkiv object.</p>
             <ul className="mt-12 grid gap-4 md:grid-cols-2">
               {[
-                { k: 'Hold your USDC', v: 'We record Hedera payment_tx. There is no Bagseven balance.' },
+                { k: 'Hold your USDC', v: 'We record Whitechain payment_tx. There is no Bagseven balance.' },
                 { k: 'Mint without World', v: 'Backend verify. Deny writes nothing to Arkiv.' },
                 { k: 'Spend after TTL', v: 'Expired grants leave the query surface.' },
                 { k: 'Bypass dual-gate', v: 'Mandate remaining and living grant must both pass.' },
@@ -185,7 +187,7 @@ grant_status · mint_with_world · buy_credits · paid_run · explain_denial`}
             <h2 className="fi-display text-3xl">What people ask first.</h2>
             <dl className="mt-8 grid gap-4 md:grid-cols-2">
               {[
-                { q: 'Does Bagseven hold the money?', a: 'No. Hedera settlement is wallet-to-record. We stamp payment_tx.' },
+                { q: 'Does Bagseven hold the money?', a: 'No. Whitechain settlement is wallet-to-record. We stamp payment_tx.' },
                 { q: 'How do I sign in?', a: 'Operator email + magic link (Resend). Session lasts 8 hours.' },
                 { q: 'What if World denies mint?', a: 'Nothing is written. You get WORLD_DENIED and an email.' },
                 { q: 'Is this live or mock?', a: 'Dashboard badges. Keys in .env switch Live vs Mock per track.' },
@@ -201,7 +203,7 @@ grant_status · mint_with_world · buy_credits · paid_run · explain_denial`}
 
         <section className="fi-band-blue py-20 text-center">
           <h2 className="fi-display text-4xl text-white md:text-[3.2rem]">Start collecting this week.</h2>
-          <p className="mx-auto mt-4 max-w-lg text-white/75">No Bagseven fee in beta. You never hold network gas for Hedera demo settle.</p>
+          <p className="mx-auto mt-4 max-w-lg text-white/75">No Bagseven fee in beta. You never hold network gas for Whitechain demo settle.</p>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
             <a href={`${APP}/app/login`} className="fi-btn fi-btn-light">
               Start free
@@ -218,7 +220,7 @@ grant_status · mint_with_world · buy_credits · paid_run · explain_denial`}
           <div className="flex items-center gap-2 font-medium text-white">
             <Mark className="h-5 w-5" /> Bagseven
           </div>
-          <div>World · Hedera · Arkiv · © {new Date().getFullYear()}</div>
+          <div>World · Whitechain · Arkiv · © {new Date().getFullYear()}</div>
         </div>
       </footer>
     </div>

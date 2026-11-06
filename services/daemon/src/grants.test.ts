@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getGrantStore, resetGrantStoreForTests } from '@bagseven/entitlements';
 import { errorResponse } from '@bagseven/server';
 import { registerGrantRoutes, type GrantRouteDeps } from './grants.js';
+import { registerPublicEntitlementRoutes } from './public-entitlements.js';
 
 beforeEach(() => {
   vi.stubEnv('ENTITLEMENT_STORE', 'memory');
@@ -13,8 +14,10 @@ beforeEach(() => {
   vi.stubEnv('WORLD_CLIENT_ID', '');
   vi.stubEnv('WORLD_MOCK_PROOFS', 'true');
   vi.stubEnv('WORLD_AGENT_PASS_ENABLED', 'true');
-  vi.stubEnv('HEDERA_X402_FACILITATOR_URL', '');
-  vi.stubEnv('HEDERA_DEMO_SETTLE', 'true');
+  vi.stubEnv('WHITECHAIN_DEMO_SETTLE', 'true');
+  vi.stubEnv('WHITECHAIN_PRIVATE_KEY', '');
+  vi.stubEnv('DAEMON_AUTH_TOKEN', 'sk_test_unit');
+  vi.stubEnv('BAGSEVEN_PUBLISHABLE_KEY', 'pk_test_unit');
   resetGrantStoreForTests();
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); resetGrantStoreForTests(); });
@@ -146,6 +149,100 @@ describe('paid work dual gate', () => {
       expect(response.statusCode).toBe(200);
       expect(response.json().grant).toMatchObject({ remaining: '2', renewal_enabled: false, paid_through: grant.paid_through });
     } finally { await app.close(); }
+  });
+
+  it('exposes Schematic-style /v1/check and consume for humans vs agents', async () => {
+    const resolve = vi.fn(async () => ({ ok: true }));
+    const app = Fastify();
+    app.setErrorHandler((error, _request, reply) => {
+      const result = errorResponse(error);
+      return reply.code(result.status).send(result.body);
+    });
+    registerGrantRoutes(app, { resolveMandateCapacity: resolve });
+    registerPublicEntitlementRoutes(app, { resolveMandateCapacity: resolve });
+    await app.ready();
+    try {
+      const minted = await app.inject({
+        method: 'POST',
+        url: '/internal/grants/mint',
+        payload: { holder: 'sdk-human', feature: 'ocr', remaining: '4', ttl_seconds: 90, world_proof_id: 'world:ok:sdk-human', worker_id: 'w1' },
+      });
+      expect(minted.statusCode).toBe(200);
+
+      const check = await app.inject({
+        method: 'GET',
+        url: '/v1/check?feature=ocr&holder=sdk-human',
+        headers: { authorization: 'Bearer pk_test_unit' },
+      });
+      expect(check.statusCode).toBe(200);
+      expect(check.json().enabled).toBe(true);
+      expect(check.json().remaining).toBe('4');
+
+      const pkConsume = await app.inject({
+        method: 'POST',
+        url: '/v1/usage/consume',
+        headers: { authorization: 'Bearer pk_test_unit' },
+        payload: { feature: 'ocr', holder: 'sdk-human', amount: '1', idempotencyKey: 'pk-1' },
+      });
+      expect(pkConsume.statusCode).toBe(403);
+
+      const missingKey = await app.inject({
+        method: 'POST',
+        url: '/v1/usage/consume',
+        headers: { authorization: 'Bearer sk_test_unit' },
+        payload: { feature: 'ocr', holder: 'sdk-human', amount: '1' },
+      });
+      expect(missingKey.statusCode).toBe(400);
+
+      const token = await app.inject({
+        method: 'POST',
+        url: '/v1/access-tokens',
+        headers: { authorization: 'Bearer sk_test_unit' },
+        payload: { holder: 'sdk-human' },
+      });
+      expect(token.statusCode).toBe(200);
+      const embed = token.json().token as string;
+
+      const humanConsume = await app.inject({
+        method: 'POST',
+        url: '/v1/usage/consume',
+        headers: { authorization: `Bearer ${embed}` },
+        payload: { feature: 'ocr', amount: '1', idempotencyKey: 'human-1' },
+      });
+      expect(humanConsume.statusCode).toBe(200);
+      expect(humanConsume.json().dual_gate.mandate).toBe('skipped');
+      expect(humanConsume.json().entitlement.remaining).toBe('3');
+
+      const agentConsume = await app.inject({
+        method: 'POST',
+        url: '/v1/usage/consume',
+        headers: { authorization: 'Bearer sk_test_unit' },
+        payload: { feature: 'ocr', holder: 'sdk-human', amount: '1', idempotencyKey: 'agent-1' },
+      });
+      expect(agentConsume.statusCode).toBe(200);
+      expect(resolve).toHaveBeenCalled();
+      expect(agentConsume.json().dual_gate).toEqual({ mandate: 'ok', grant: 'ok' });
+
+      const credits = await app.inject({
+        method: 'POST',
+        url: '/v1/credits',
+        headers: { authorization: 'Bearer sk_test_unit' },
+        payload: { feature: 'ocr', holder: 'sdk-human', remaining: '5', amount: '1.00' },
+      });
+      expect(credits.statusCode).toBe(200);
+      expect(credits.json().grant.remaining).toBe('5');
+      expect(credits.json().settlement.settlement_network).toBe('whitechain');
+
+      const noGrant = await app.inject({
+        method: 'POST',
+        url: '/v1/credits',
+        headers: { authorization: 'Bearer sk_test_unit' },
+        payload: { feature: 'ocr', holder: 'nobody@bagseven.local', remaining: '5' },
+      });
+      expect(noGrant.statusCode).toBe(404);
+    } finally {
+      await app.close();
+    }
   });
 
   it('rejects paid work after paid_through and removes access from live queries', async () => {

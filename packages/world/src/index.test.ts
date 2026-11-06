@@ -1,5 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { verifyWorldAgentPass } from './index.js';
+import { buildWorldAuthorizeUrl, verifyWorldAgentPass, WORLD_AUTHORIZE_URL } from './index.js';
+
+describe('buildWorldAuthorizeUrl', () => {
+  it('uses discovery authorize path with S256 PKCE', () => {
+    const url = buildWorldAuthorizeUrl({
+      clientId: 'app_test',
+      redirectUri: 'http://127.0.0.1:3000/app/mint',
+      state: 'st',
+      codeChallenge: 'challenge',
+    });
+    expect(url.startsWith(WORLD_AUTHORIZE_URL)).toBe(true);
+    expect(url).toContain('code_challenge_method=S256');
+    expect(url).toContain('client_id=app_test');
+  });
+});
 
 describe('verifyWorldAgentPass', () => {
   it('allows mock ok proof', async () => {

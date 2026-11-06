@@ -2,7 +2,7 @@
 name: bagseven
 description: >-
   Work on the Bagseven platform (mandate + Arkiv entitlements, World mint,
-  Hedera settle, Fianto landing/dashboard). Use when editing bagseven apps,
+  Whitechain settle, entitlement SDK, Fianto landing/dashboard). Use when editing bagseven apps,
   daemon grants, MCP tools, auth/Resend, or when the user mentions dual-gate,
   living grants, or Fianto-style UI.
 ---
@@ -20,7 +20,8 @@ Start: `pnpm start:local`. **Follow `AGENTS.md`** (architecture, dual-gate, Chat
 ## Code map
 
 - Dual-gate + notify: `services/daemon/src/grants.ts`
-- Hedera: `services/daemon/src/hedera-x402.ts`
+- Whitechain: `services/daemon/src/whitechain-settle.ts`
+- SDK: `packages/sdk`
 - World: `packages/world`
 - Arkiv store: `packages/entitlements`
 - Magic link: `apps/console/lib/auth.ts` — set session cookie on `NextResponse.redirect`

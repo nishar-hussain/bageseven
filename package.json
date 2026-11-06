@@ -2,7 +2,7 @@
   "name": "bagseven",
   "version": "0.1.0",
   "private": true,
-  "description": "Bagseven — mandates, living entitlements, Hedera settlement, World mint, MCP",
+  "description": "Bagseven — mandates, living entitlements, Whitechain settlement, World mint, SDK + MCP",
   "packageManager": "pnpm@10.33.0",
   "engines": {
     "node": ">=24"
@@ -14,10 +14,13 @@
     "start:local": "node scripts/start-local.mjs",
     "mcp:local": "node scripts/mcp-local.mjs",
     "bagseven-mcp": "tsx scripts/bagseven-mcp.ts",
-    "hedera:settle": "tsx scripts/hedera-demo-settle.ts",
+    "whitechain:settle": "tsx scripts/whitechain-demo-settle.ts",
+    "sdk:demo": "node --env-file-if-exists=.env scripts/sdk-demo.mjs",
     "smoke": "node scripts/smoke-mumbai.mjs",
     "smoke:e2e": "node scripts/smoke-e2e.mjs",
     "smoke:mcp": "node --env-file-if-exists=.env --import tsx scripts/mcp-smoke.ts",
+    "seed:local": "node --env-file-if-exists=.env scripts/seed-local.mjs",
+    "test:mandate": "node --env-file-if-exists=.env scripts/test-mandate-flow.mjs",
     "build": "turbo run build",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",

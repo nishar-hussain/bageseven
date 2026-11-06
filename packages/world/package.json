@@ -18,6 +18,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@worldcoin/idkit-core": "^4.6.0",
     "zod": "^4.6.5"
   }
 }

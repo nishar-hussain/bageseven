@@ -1,6 +1,6 @@
 # Bagseven
 
-> Infrastructure for autonomous AI agents. Humans mint a public, expiring entitlement. Agents spend under a mandate. Money settles on Hedera. Unique humans via World. MCP is the product.
+> Infrastructure for autonomous AI agents. Operators sign in with World. SaaS merchants define thin Plans and open Checkout Sessions. Buyers pay USDT on Whitechain (WhiteWallet-ready). Paid sessions mint living Arkiv entitlements. Humans and agents check/consume through an SDK. Agents spend under a mandate dual-gate.
 
 ## Start
 
@@ -8,7 +8,13 @@ pnpm setup
 pnpm start:local
 
 Landing http://localhost:3001
-Dashboard http://localhost:3000/app  (magic-link login)
+Dashboard http://localhost:3000/app  (World-primary login; email OTP verify-later)
+Plans http://localhost:3000/app/plans
+Checkouts http://localhost:3000/app/checkouts
+Account http://localhost:3000/app/account
+SDK playground http://localhost:3000/app/sdk
+Embed portal http://localhost:3000/embed?token=
+Public checkout http://localhost:3000/checkout?session=cs_…
 Gateway :4000  Daemon :4001  Policy :4003
 
 ## What this repo is
@@ -16,54 +22,61 @@ Gateway :4000  Daemon :4001  Policy :4003
 Monorepo (pnpm + turbo). Two product surfaces only:
 
 - apps/landing — Fianto-style marketing
-- apps/console — Fianto-style operator dashboard (/app)
+- apps/console — operator dashboard (/app) + /embed + /checkout
 
 Backend: services/gateway, services/daemon, services/policy
-Libraries: packages/entitlements, packages/world, packages/notify, packages/db, packages/money, packages/onchain, packages/server
+Libraries: packages/sdk, packages/entitlements, packages/world, packages/notify, packages/db, packages/money, packages/onchain, packages/server
+
+## SDK flow
+
+1. World login (operator)
+2. createPlan → createCheckoutSession
+3. BagsevenEmbed checkoutSessionId (WhiteWallet / EVM pay)
+4. Living Arkiv grant
+5. checkEntitlement / FeatureFlagGuard / MCP consume
+
+@bagseven/sdk/react — Provider, FeatureFlagGuard, BagsevenEmbed (portal | checkout | …)
+@bagseven/sdk/node — checkEntitlement, consumeEntitlement, identify, createPlan, createCheckoutSession
+@bagseven/sdk/wallet — connectWhitechainWallet, payUsdtOnWhitechain
+@bagseven/sdk/agent — programmatic agent wrapper
+
+Public API:
+GET /v1/check  GET /v1/entitlements  POST /v1/usage/consume  POST /v1/access-tokens  POST /v1/credits
+POST /v1/plans  GET /v1/plans  POST /v1/checkout-sessions
+GET /v1/public/checkout/:id  POST /v1/public/checkout/:id/confirm
+Demo: pnpm sdk:demo
 
 ## Dual-gate (IP)
 
-Payment clock = Hedera (payment_tx)
+Payment clock = Whitechain (payment_tx)
 Renewal clock = grant.renewal_enabled (cancel does not kill paid_through)
-Access clock = Arkiv grant remaining + TTL — queryable object, not a private /check API
+Access clock = Arkiv grant remaining + TTL — queryable object
 
-paid_run / bagseven_fetch require mandate remaining AND living grant (BAGSEVEN_REQUIRE_GRANT=true).
+paid_run / secret consume / bagseven_fetch require mandate remaining AND living grant.
 
 ## Auth
 
-Cookie bagseven_session (HMAC, 8h). Magic link is a signed 15-minute token. POST /api/auth/magic → Resend (or dev_hint). GET /api/auth/callback?token= sets the cookie on the redirect.
-
-Default: any email. Optional AUTH_ALLOWLIST.
-
-## Email (Resend)
-
-From bags@cesthq.com. Magic link to the typed address. Grant events to signed-in user + optional OPERATOR_NOTIFY_EMAIL.
-Events: magic_link, grant_minted, credits_bought, world_denied, paid_run, renewal_cancelled.
+World is primary (IDKit / mock). Session cookie bagseven_session (HMAC, 8h).
+Email is optional — verify later via 6-digit OTP. Magic link is recovery/invite only.
 
 ## MCP tools
 
-bagseven_status, grant_status, mint_with_world, buy_credits, paid_run, cancel_renewal, explain_denial, bagseven_fetch
+bagseven_status, grant_status, check_entitlement, consume_entitlement, mint_with_world, buy_credits, create_checkout_session, paid_run, cancel_renewal, explain_denial, bagseven_fetch
 Bind one worker: BAGSEVEN_MCP_WORKER=<uuid> pnpm mcp:local
-
-ChatGPT: HTTPS /mcp + World-gated OAuth (MCP_OAUTH_REQUIRED, BAGSEVEN_MCP_PUBLIC_URL). grant_status matches status (feature filter; do not force worker_id). Sessions are in-memory — re-initialize after MCP restart.
 
 ## Tracks (mock vs live)
 
-World: WORLD_MOCK_PROOFS vs WORLD_CLIENT_ID
-Hedera: HEDERA_DEMO_SETTLE vs facilitator / real tx
+World: WORLD_MOCK_PROOFS vs WORLD_RP_* / WORLD_CLIENT_ID
+Whitechain: WHITECHAIN_DEMO_SETTLE vs buyer-signed USDT + WHITECHAIN_USDT
 Arkiv: ENTITLEMENT_STORE=memory vs ARKIV_ACCESS_KEY + ARKIV_PRIVATE_KEY
-
-## Design
-
-docs/design.md — --blue #0002f8, landing dark hero, dashboard #f2f2f2 sidebar, rounded 16px cards. Do not put marketing header on the dashboard.
 
 ## Do not
 
 - Add a third web app or port 3010 inspector
-- Put operator keys in client JS
+- Put operator keys in client JS (publishable + embed token only)
+- Add payment-link product line / products catalog / invoices
 - Weaken fail-closed policy / spend_token (docs/DECISIONS.md)
-- Add extra UIs or leftover demo apps
 
 ## More
 
-AGENTS.md (source of truth for agents), docs/DEVELOPERS.md, docs/HOSTING.md, docs/PRODUCT.md
+AGENTS.md, docs/DEVELOPERS.md, docs/HOSTING.md, docs/PRODUCT.md

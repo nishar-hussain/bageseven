@@ -45,7 +45,7 @@ async function main() {
   assert.equal(cfg.DEV_MODE, 'true', 'E2E smoke requires local development mode');
   assert.equal(cfg.ENTITLEMENT_STORE, 'memory');
   assert.equal(cfg.WORLD_MOCK_PROOFS, 'true');
-  assert.equal(cfg.HEDERA_DEMO_SETTLE, 'true');
+  assert.equal(cfg.WHITECHAIN_DEMO_SETTLE, 'true');
   assert.ok(!cfg.RESEND_API_KEY || cfg.NOTIFY_MODE === 'log', 'Start the stack and this check with NOTIFY_MODE=log to test without sending email');
   assert.ok(cfg.BAGSEVEN_MCP_WORKER, 'Run pnpm run setup first');
   for (const url of [consoleUrl, daemonUrl, cfg.POLICY_URL, cfg.NEXT_PUBLIC_GATEWAY_URL, cfg.NEXT_PUBLIC_LANDING_URL, cfg.RPC_URL]) {
@@ -87,14 +87,14 @@ async function main() {
   const bought = await bff('grants/buy-credits', { ...mintBody, holder: `${holder}-buyer`, amount: '1.00' });
   assert.equal(bought.settlement.mode, 'demo');
   assert.ok(bought.grant.payment_tx);
-  console.log('PASS World mint/denial and Hedera demo credits through dashboard proxy');
+  console.log('PASS World mint/denial and Whitechain demo credits through dashboard proxy');
 
   const client = new Client({ name: 'bagseven-e2e', version: '0.1.0' }, { capabilities: {} });
   const transport = new StdioClientTransport({ command: process.execPath, args: ['--import', 'tsx', 'scripts/bagseven-mcp.ts'], cwd: root, env: { ...cfg, BAGSEVEN_MCP_PORT: '', MCP_HTTP_PORT: '' }, stderr: 'inherit' });
   try {
     await client.connect(transport);
     const tools = (await client.listTools()).tools.map((entry) => entry.name);
-    for (const name of ['bagseven_status', 'grant_status', 'mint_with_world', 'buy_credits', 'paid_run', 'cancel_renewal', 'explain_denial', 'bagseven_fetch']) assert.ok(tools.includes(name));
+    for (const name of ['bagseven_status', 'grant_status', 'check_entitlement', 'consume_entitlement', 'mint_with_world', 'buy_credits', 'create_checkout_session', 'paid_run', 'cancel_renewal', 'explain_denial', 'bagseven_fetch']) assert.ok(tools.includes(name));
     const worker = await tool(client, 'bagseven_status');
     assert.equal(worker.agent.id, cfg.BAGSEVEN_MCP_WORKER);
     assert.ok(Number(worker.remaining.can_draw) > 0);

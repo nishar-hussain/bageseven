@@ -38,7 +38,7 @@ const createMandateSchema = z.object({
   per_purchase_cap: z.string().min(1),
   per_seller_pct: z.number().int().min(0).max(10000),
   max_depth: z.number().int().min(0),
-  chain_id: z.number().int().default(43113),
+  chain_id: z.number().int().default(1874),
   signature: z.string().min(1),
 });
 
@@ -46,7 +46,7 @@ const spawnSchema = z.object({
   parent_agent_id: z.string().uuid(),
   operator_address: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
   share_percent: z.number().int().min(1).max(100),
-  chain_id: z.number().int().default(43113),
+  chain_id: z.number().int().default(1874),
   signature: z.string().min(1),
 });
 
@@ -56,7 +56,7 @@ const spendIntentSchema = z.object({
   recipient: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
   nonce: z.number().int().nonnegative(),
   timestamp: z.number().int().positive(),
-  chain_id: z.number().int().default(43113),
+  chain_id: z.number().int().default(1874),
   signature: z.string().min(1),
   reason: z.string().max(500).optional(),
   request_id: z.string().uuid().optional(),
@@ -68,7 +68,7 @@ const settlementSchema = z.object({ tx_hash: z.string().min(1), recipient: z.str
 const withdrawSchema = z.object({
   amount: z.string().min(1),
   to_address: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
-  chain_id: z.number().int().default(43113),
+  chain_id: z.number().int().default(1874),
   signature: z.string().min(1),
 });
 
@@ -97,7 +97,7 @@ function mandateClient(config: NodeJS.ProcessEnv): MandateClient {
   return new MandateClient(key as `0x${string}`, {
     rpcUrl: config.RPC_URL ?? 'http://localhost:8545',
     rpcFallbackUrl: config.RPC_FALLBACK_URL,
-    chainId: Number(config.CHAIN_ID ?? 43113),
+    chainId: Number(config.CHAIN_ID ?? 1874),
   });
 }
 
@@ -108,7 +108,7 @@ function ownerClient(config: NodeJS.ProcessEnv): MandateClient {
   return new MandateClient(key as `0x${string}`, {
     rpcUrl: config.RPC_URL ?? 'http://localhost:8545',
     rpcFallbackUrl: config.RPC_FALLBACK_URL,
-    chainId: Number(config.CHAIN_ID ?? 43113),
+    chainId: Number(config.CHAIN_ID ?? 1874),
   });
 }
 

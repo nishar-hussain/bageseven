@@ -13,12 +13,12 @@ import { parseAbi } from 'viem';
 import { canonicalMandate, canonicalSpawn, canonicalWithdraw, spendIntentDomain, spendIntentTypes, MandateClient } from '@bagseven/onchain';
 process.loadEnvFile(process.env.BAGSEVEN_E2E_ENV_FILE || new URL('../.env', import.meta.url));
 const cfg = process.env, owner = privateKeyToAccount(cfg.DAEMON_OWNER_KEY), operator = privateKeyToAccount(cfg.DAEMON_OPERATOR_KEY);
-const chain = new MandateClient(cfg.DAEMON_EXECUTOR_KEY, { rpcUrl: cfg.RPC_URL, chainId: 43113 });
-const ownerChain = new MandateClient(cfg.DAEMON_OWNER_KEY, { rpcUrl: cfg.RPC_URL, chainId: 43113 });
+const chain = new MandateClient(cfg.DAEMON_EXECUTOR_KEY, { rpcUrl: cfg.RPC_URL, chainId: 1874 });
+const ownerChain = new MandateClient(cfg.DAEMON_OWNER_KEY, { rpcUrl: cfg.RPC_URL, chainId: 1874 });
 assert.equal(cfg.DEV_MODE, 'true', 'Requires a local development stack');
 assert.equal(cfg.ENTITLEMENT_STORE, 'memory', 'Requires memory grants');
 assert.equal(cfg.WORLD_MOCK_PROOFS, 'true', 'Requires mock World proofs');
-assert.equal(cfg.HEDERA_DEMO_SETTLE, 'true', 'Requires demo Hedera settlement');
+assert.equal(cfg.WHITECHAIN_DEMO_SETTLE, 'true', 'Requires demo Whitechain settlement');
 assert.equal(cfg.NOTIFY_MODE, 'log', 'Start the stack and checks with NOTIFY_MODE=log');
 assert.equal(cfg.BAGSEVEN_REQUIRE_GRANT, 'true', 'Both gates must be enabled');
 const gateway = cfg.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000';
@@ -28,7 +28,7 @@ const policy = cfg.POLICY_URL || 'http://localhost:4003';
 for (const endpoint of [gateway, daemon, consoleUrl, policy, cfg.RPC_URL, cfg.RPC_FALLBACK_URL || cfg.RPC_URL, cfg.DATABASE_URL, cfg.REDIS_URL]) {
     assert.ok(['localhost', '127.0.0.1'].includes(new URL(endpoint).hostname), 'All endpoints must be local');
 }
-assert.equal(await chain.publicClient.getChainId(), 43113);
+assert.equal(await chain.publicClient.getChainId(), 1874);
 assert.match(await chain.publicClient.request({ method: 'web3_clientVersion' }), /anvil/i);
 const running = await fetch(daemon + '/internal/mumbai/status', { headers: { authorization: `Bearer ${cfg.DAEMON_AUTH_TOKEN}` }, signal: AbortSignal.timeout(10000) });
 assert.equal(running.status, 200);
@@ -66,7 +66,7 @@ async function test(name, fn) {
     }
 }
 async function creationBody(terms = {}) {
-    const input = { owner: owner.address.toLowerCase(), operator: operator.address.toLowerCase(), budgetPerWindow: '1000.00', windowSeconds: 86400, lifetimeCap: '1000.00', perPurchaseCap: '10.00', perSellerPct: 10000, maxDepth: 2, chainId: 43113, ...terms };
+    const input = { owner: owner.address.toLowerCase(), operator: operator.address.toLowerCase(), budgetPerWindow: '1000.00', windowSeconds: 86400, lifetimeCap: '1000.00', perPurchaseCap: '10.00', perSellerPct: 10000, maxDepth: 2, chainId: 1874, ...terms };
     return { owner_address: input.owner, operator_address: input.operator, budget_per_window: input.budgetPerWindow, window_seconds: input.windowSeconds, lifetime_cap: input.lifetimeCap, per_purchase_cap: input.perPurchaseCap, per_seller_pct: input.perSellerPct, max_depth: input.maxDepth, chain_id: input.chainId, signature: await owner.signMessage({ message: canonicalMandate(input) }) };
 }
 async function create(terms = {}, fund = '20.00') {
@@ -88,12 +88,12 @@ async function getGrant(g) {
     return (await internal('grants/' + g.id)).grant;
 }
 async function intent(worker, amount, opts = {}) {
-    const timestamp = opts.timestamp ?? Math.floor(Date.now() / 1000), nonce = opts.nonce ?? nextNonce++, chainId = opts.chainId ?? 43113;
+    const timestamp = opts.timestamp ?? Math.floor(Date.now() / 1000), nonce = opts.nonce ?? nextNonce++, chainId = opts.chainId ?? 1874;
     const message = { agentId: worker, amount, recipient: owner.address, nonce: BigInt(nonce), timestamp: BigInt(timestamp), chainId: BigInt(chainId) };
     return { agent_id: worker, amount, recipient: owner.address, nonce, timestamp, chain_id: chainId, signature: await (opts.signer ?? operator).signTypedData({ domain: spendIntentDomain(chainId), types: spendIntentTypes, primaryType: 'SpendIntent', message }) };
 }
 async function spawn(m, parent, share = 10) {
-    return api(`/v1/mandates/${m.mandate_id}/spawn-agent`, { parent_agent_id: parent, operator_address: operator.address, share_percent: share, chain_id: 43113, signature: await owner.signMessage({ message: canonicalSpawn({ mandateId: m.mandate_id, parentAgentId: parent, operator: operator.address.toLowerCase(), sharePercent: share, chainId: 43113 }) }) });
+    return api(`/v1/mandates/${m.mandate_id}/spawn-agent`, { parent_agent_id: parent, operator_address: operator.address, share_percent: share, chain_id: 1874, signature: await owner.signMessage({ message: canonicalSpawn({ mandateId: m.mandate_id, parentAgentId: parent, operator: operator.address.toLowerCase(), sharePercent: share, chainId: 1874 }) }) });
 }
 await test('Owner signature mismatch rejected', async () => {
     const body = await creationBody();
@@ -150,7 +150,7 @@ await test('Exact per-purchase cap is allowed', async () => {
 });
 await test('Signed withdrawal reduces vault and wrong owner is rejected', async () => {
     const before = await overview(main);
-    const body = { amount: '1.00', to_address: owner.address.toLowerCase(), chain_id: 43113, signature: await owner.signMessage({ message: canonicalWithdraw({ mandateId: main.mandate_id, amount: '1.00', to: owner.address.toLowerCase(), chainId: 43113 }) }) };
+    const body = { amount: '1.00', to_address: owner.address.toLowerCase(), chain_id: 1874, signature: await owner.signMessage({ message: canonicalWithdraw({ mandateId: main.mandate_id, amount: '1.00', to: owner.address.toLowerCase(), chainId: 1874 }) }) };
     const ok = await api(`/v1/vaults/${main.mandate_id}/withdraw`, body);
     assert.equal(Number(before.vault_available) - Number(ok.vault_balance), 1);
     const bad = await api(`/v1/vaults/${main.mandate_id}/withdraw`, { ...body, signature: await operator.signMessage({ message: 'unauthorized' }) }, { status: 403 });
@@ -195,7 +195,7 @@ await test('Child allocation and depth limits enforced', async () => {
     assert.equal((await fetchWork(child.agent_id, '0.75')).decision, 'allow');
     const denied = await fetchWork(child.agent_id, '0.50');
     assert.equal(denied.bound, 'WorkerAllocationExceeded');
-    const deep = await req(gateway, `/v1/mandates/${delegation.mandate_id}/spawn-agent`, { body: { parent_agent_id: child.agent_id, operator_address: operator.address, share_percent: 10, chain_id: 43113, signature: await owner.signMessage({ message: canonicalSpawn({ mandateId: delegation.mandate_id, parentAgentId: child.agent_id, operator: operator.address.toLowerCase(), sharePercent: 10, chainId: 43113 }) }) }, status: 400 });
+    const deep = await req(gateway, `/v1/mandates/${delegation.mandate_id}/spawn-agent`, { body: { parent_agent_id: child.agent_id, operator_address: operator.address, share_percent: 10, chain_id: 1874, signature: await owner.signMessage({ message: canonicalSpawn({ mandateId: delegation.mandate_id, parentAgentId: child.agent_id, operator: operator.address.toLowerCase(), sharePercent: 10, chainId: 1874 }) }) }, status: 400 });
     assert.equal(deep.data.error.code, 'EXCEEDS_MAX_DEPTH');
 });
 await test('paid_run refuses exhausted child allocation', async () => {

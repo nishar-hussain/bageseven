@@ -1,16 +1,28 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { ApiError } from '@bagseven/server';
-import { getGrantStore, MintGrantInputSchema } from '@bagseven/entitlements';
 import {
+  assertKnownFeature,
+  DEFAULT_FEATURE_ID,
+  explorerUrl,
+  FEATURE_CATALOG,
+  featureForAction,
+  getGrantStore,
+  MintGrantInputSchema,
+} from '@bagseven/entitlements';
+import {
+  assertWorldCallbackIssuer,
   buildWorldAuthorizeUrl,
+  exchangeWorldAuthorizationCode,
   pkceChallengeFromVerifier,
+  signWorldIdKitRequest,
   verifyWorldAgentPass,
+  verifyWorldIdKitProof,
   worldDeniedMessage,
 } from '@bagseven/world';
 import { gte } from '@bagseven/money';
 import type { FastifyInstance } from 'fastify';
-import { settleHederaX402, buildHcsJoin } from './hedera-x402.js';
+import { settleWhitechainUsdt } from './whitechain-settle.js';
 import { notifyConfigured, notifyOperator } from '@bagseven/notify';
 
 function actorEmail(req: { headers: { [key: string]: string | string[] | undefined } }): string | undefined {
@@ -25,7 +37,10 @@ function resolveWorkerId(requested?: string, bound?: string): string | undefined
 }
 
 const consumeSchema = z.object({
-  grant_id: z.string().min(1),
+  /** Optional — when omitted, pick the richest living grant for feature (+ optional holder). */
+  grant_id: z.string().min(1).optional(),
+  feature: z.string().optional(),
+  holder: z.string().optional(),
   amount: z.string().default('1'),
   idempotency_key: z.string().min(1).optional(),
   work: z.string().max(2000).optional(),
@@ -39,7 +54,7 @@ const holdSchema = z.object({
 });
 
 const buyCreditsSchema = z.object({
-  feature: z.string().min(1).default('ocr'),
+  feature: z.string().min(1).default(DEFAULT_FEATURE_ID),
   holder: z.string().min(1),
   remaining: z.string().default('10'),
   ttl_seconds: z.number().int().positive().default(120),
@@ -53,6 +68,14 @@ const buyCreditsSchema = z.object({
   world_denied: z.boolean().optional(),
   outcome: z.enum(['ok', 'denied', 'expired', 'cancelled', 'invalid']).optional(),
 });
+
+type WorldOk = {
+  ok: true;
+  human_id: string;
+  world_proof_id: string;
+  mode: 'live' | 'mock' | 'idkit';
+  issuer?: string;
+};
 
 const explainSchema = z.object({
   worker_id: z.string().optional(),
@@ -93,23 +116,37 @@ function mapGrantError(error: unknown): never {
 /** Public entitlement routes — access clock beside mandate spend. */
 export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps = {}): void {
   const store = getGrantStore(process.env);
+  /** Replay protection for World IDKit nullifiers (action + nullifier). */
+  const usedNullifiers = new Set<string>();
 
   app.get('/internal/mumbai/status', async () => {
     const hasArkiv = Boolean(process.env.ARKIV_ACCESS_KEY && (process.env.ARKIV_PRIVATE_KEY || process.env.PRIVATE_KEY));
-    const hederaNetwork = process.env.HEDERA_NETWORK === 'mainnet' ? 'mainnet' : 'testnet';
+    const whitechainNetwork = process.env.WHITECHAIN_NETWORK === 'mainnet' ? 'mainnet' : 'testnet';
+    const idkit = Boolean(process.env.WORLD_RP_ID?.trim() && process.env.WORLD_RP_SIGNING_KEY?.trim());
+    const agentPass = Boolean(process.env.WORLD_CLIENT_ID?.trim() && process.env.WORLD_CLIENT_SECRET?.trim());
+    const mode = idkit && agentPass ? 'dual' : idkit ? 'idkit' : agentPass ? 'agent_pass' : 'mock';
     return {
       notifications: { delivery: notifyConfigured() ? 'resend' : 'log' },
       tracks: {
         world: {
           enabled: (process.env.WORLD_AGENT_PASS_ENABLED ?? 'true').toLowerCase() !== 'false',
-          mode: process.env.WORLD_CLIENT_ID ? 'live' : 'mock',
+          mode,
           mock_proofs: (process.env.WORLD_MOCK_PROOFS ?? 'true').toLowerCase() !== 'false',
+          idkit,
+          agent_pass: agentPass,
+          /** IDKit Developer Portal app (proof of human). */
+          app_id: process.env.WORLD_APP_ID || null,
+          rp_id: process.env.WORLD_RP_ID || null,
+          action: process.env.WORLD_IDKIT_ACTION || 'bagseven-mint',
+          /** World IdP OIDC client (Agent Pass) — separate from app_id. */
+          oidc_client_id: process.env.WORLD_CLIENT_ID || null,
         },
-        hedera: {
-          network: hederaNetwork,
-          facilitator: Boolean(process.env.HEDERA_X402_FACILITATOR_URL),
-          demo_settle: (process.env.HEDERA_DEMO_SETTLE ?? 'true').toLowerCase() !== 'false',
-          hcs_topic: process.env.HEDERA_HCS_TOPIC_ID ?? null,
+        whitechain: {
+          network: whitechainNetwork,
+          chain_id: Number(process.env.CHAIN_ID ?? 1874),
+          explorer: process.env.WHITECHAIN_NETWORK === 'mainnet' ? 'https://explorer.whitechain.io' : 'https://explorer.testnet.whitechain.io',
+          operator: Boolean((process.env.WHITECHAIN_PRIVATE_KEY ?? '').trim() && (process.env.WHITECHAIN_PAY_TO ?? '').trim()),
+          demo_settle: (process.env.WHITECHAIN_DEMO_SETTLE ?? 'true').toLowerCase() !== 'false',
         },
         arkiv: {
           live: hasArkiv,
@@ -118,61 +155,280 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
       },
       dual_gate: {
         require_grant: (process.env.BAGSEVEN_REQUIRE_GRANT ?? 'true').toLowerCase() !== 'false',
-        feature: process.env.BAGSEVEN_GRANT_FEATURE ?? 'ocr',
+        /** @deprecated Prefer `features` — scalar kept for older clients. */
+        feature: process.env.BAGSEVEN_GRANT_FEATURE ?? DEFAULT_FEATURE_ID,
+        features: FEATURE_CATALOG.map((f) => ({ id: f.id, label: f.label, actions: [...f.actions] })),
+        fetch_feature: featureForAction('fetch'),
       },
     };
   });
 
-  // PKCE verifiers stay server-side only (never returned to the browser).
-  const pkceByState = new Map<string, { verifier: string; exp: number }>();
+  // PKCE verifiers + nonce stay server-side only (World IdP OIDC / Agent Pass).
+  const pkceByState = new Map<
+    string,
+    { verifier: string; redirectUri: string; nonce: string; exp: number }
+  >();
 
   app.get('/internal/world/authorize', async (req) => {
     const q = req.query as { redirect_uri?: string; state?: string };
     const clientId = process.env.WORLD_CLIENT_ID?.trim();
-    if (!clientId) {
+    const clientSecret = process.env.WORLD_CLIENT_SECRET?.trim();
+    // Agent Pass uses World IdP OIDC credentials — NOT the IDKit app_id/rp_id pair.
+    if (!clientId || !clientSecret) {
       return {
-        mode: 'mock',
-        note: 'WORLD_CLIENT_ID unset — use world:ok:<id> proofs locally',
+        mode: 'unconfigured',
+        note:
+          'Agent Pass needs WORLD_CLIENT_ID + WORLD_CLIENT_SECRET from https://auth.world.org/portal (separate from IDKit app_id). Register redirect http://127.0.0.1:3000/app/mint',
         authorize_url: null,
+        agent_pass: false,
+        mock: false,
       };
     }
     const redirectUri = q.redirect_uri || process.env.WORLD_REDIRECT_URI || 'http://127.0.0.1:3000/app/mint';
     const state = q.state || randomUUID();
+    const nonce = randomUUID().replace(/-/g, '');
     const verifier = randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '');
-    pkceByState.set(state, { verifier, exp: Date.now() + 15 * 60 * 1000 });
+    pkceByState.set(state, { verifier, redirectUri, nonce, exp: Date.now() + 15 * 60 * 1000 });
     const challenge = pkceChallengeFromVerifier(verifier);
     const authorize_url = buildWorldAuthorizeUrl({
       clientId,
       redirectUri,
       state,
+      nonce,
       codeChallenge: challenge,
+      scope: 'openid',
     });
     return {
-      mode: 'live',
+      mode: 'agent_pass',
       authorize_url,
       state,
       redirect_uri: redirectUri,
-      note: 'Complete Agent Pass, then POST id_token to /internal/grants/mint (PKCE verifier is server-held)',
+      agent_pass: true,
+      note: 'Complete World Agent Pass (OIDC). Bagseven holds PKCE verifier server-side and exchanges the code for an id_token.',
     };
   });
+
+  /** Redeem World OIDC authorization code → verified id_token (server-held PKCE). */
+  app.post('/internal/world/callback', async (req) => {
+    const body = z
+      .object({
+        code: z.string().min(1),
+        state: z.string().min(1),
+        redirect_uri: z.string().url().optional(),
+        /** RFC 9207 issuer from redirect query — required by World IdP docs. */
+        iss: z.string().url().optional(),
+      })
+      .parse(req.body);
+
+    const clientId = process.env.WORLD_CLIENT_ID?.trim();
+    const clientSecret = process.env.WORLD_CLIENT_SECRET?.trim();
+    if (!clientId || !clientSecret) {
+      throw new ApiError(
+        400,
+        'WORLD_NOT_CONFIGURED',
+        'Agent Pass requires WORLD_CLIENT_ID + WORLD_CLIENT_SECRET from auth.world.org/portal',
+      );
+    }
+
+    if (body.iss) {
+      try {
+        assertWorldCallbackIssuer(body.iss);
+      } catch (error) {
+        throw new ApiError(400, 'WORLD_ISS_INVALID', error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    const row = pkceByState.get(body.state);
+    pkceByState.delete(body.state);
+    if (!row || row.exp < Date.now()) {
+      throw new ApiError(400, 'WORLD_STATE_INVALID', 'World OAuth state expired or unknown — start Agent Pass again');
+    }
+    const redirectUri = body.redirect_uri || row.redirectUri;
+
+    let tokens: { id_token: string };
+    try {
+      tokens = await exchangeWorldAuthorizationCode({
+        code: body.code,
+        redirectUri,
+        clientId,
+        clientSecret,
+        codeVerifier: row.verifier,
+      });
+    } catch (error) {
+      throw new ApiError(400, 'WORLD_TOKEN_EXCHANGE', error instanceof Error ? error.message : String(error));
+    }
+
+    const world = await verifyWorldAgentPass({ id_token: tokens.id_token, nonce: row.nonce });
+    if (!world.ok) {
+      throw new ApiError(403, world.code, worldDeniedMessage(world), { reason: world.reason, mode: world.mode });
+    }
+
+    return {
+      ok: true,
+      id_token: tokens.id_token,
+      human_id: world.human_id,
+      world_proof_id: world.world_proof_id,
+      mode: 'agent_pass',
+    };
+  });
+
+  /** IDKit RP signature — never expose WORLD_RP_SIGNING_KEY to the browser. */
+  app.post('/internal/world/rp-signature', async (req) => {
+    const body = z.object({ action: z.string().min(1).optional() }).parse(req.body ?? {});
+    const signingKey = process.env.WORLD_RP_SIGNING_KEY?.trim();
+    if (!signingKey) throw new ApiError(400, 'WORLD_NOT_CONFIGURED', 'WORLD_RP_SIGNING_KEY is not set');
+    const action = body.action?.trim() || process.env.WORLD_IDKIT_ACTION || 'bagseven-mint';
+    const sig = signWorldIdKitRequest({ signingKeyHex: signingKey, action });
+    return {
+      ...sig,
+      action,
+      rp_id: process.env.WORLD_RP_ID ?? null,
+      app_id: process.env.WORLD_APP_ID || process.env.WORLD_CLIENT_ID || null,
+    };
+  });
+
+  /** Verify IDKit proof via Developer Portal and register nullifier for mint. */
+  app.post('/internal/world/verify-idkit', async (req) => {
+    const body = z
+      .object({
+        idkit_response: z.unknown(),
+        action: z.string().optional(),
+      })
+      .parse(req.body ?? {});
+    const rpId = process.env.WORLD_RP_ID?.trim();
+    if (!rpId) throw new ApiError(400, 'WORLD_NOT_CONFIGURED', 'WORLD_RP_ID is not set');
+    const action = body.action?.trim() || process.env.WORLD_IDKIT_ACTION || 'bagseven-mint';
+    const verified = await verifyWorldIdKitProof({
+      rpId,
+      idkitResponse: body.idkit_response,
+      expectedEnvironment: process.env.WORLD_IDKIT_ENVIRONMENT || 'production',
+      expectedAction: action,
+    });
+    if (!verified.ok) {
+      throw new ApiError(403, verified.code, verified.detail);
+    }
+    const key = `${verified.action}:${verified.nullifier.toLowerCase()}`;
+    if (usedNullifiers.has(key)) {
+      throw new ApiError(409, 'WORLD_NULLIFIER_REUSED', 'This World ID already minted for this action');
+    }
+    usedNullifiers.add(key);
+    return {
+      ok: true,
+      human_id: verified.human_id,
+      world_proof_id: verified.world_proof_id,
+      nullifier: verified.nullifier,
+      action: verified.action,
+      mode: 'idkit',
+    };
+  });
+
+  async function resolveWorldForWrite(opts: {
+    idkitResponse?: unknown;
+    world_proof_id?: string;
+    id_token?: string;
+    world_denied?: boolean;
+    outcome?: 'ok' | 'denied' | 'expired' | 'cancelled' | 'invalid';
+    human_id?: string;
+    holder: string;
+    nullifierScope: 'mint' | 'buy';
+    /** buy-credits: reuse prior living grant World proof when no new proof given */
+    allowPriorGrant?: boolean;
+    feature?: string;
+    req: { headers: { [key: string]: string | string[] | undefined } };
+  }): Promise<WorldOk> {
+    if (opts.idkitResponse !== undefined) {
+      const rpId = process.env.WORLD_RP_ID?.trim();
+      if (!rpId) throw new ApiError(400, 'WORLD_NOT_CONFIGURED', 'WORLD_RP_ID is not set for IDKit');
+      const action = process.env.WORLD_IDKIT_ACTION || 'bagseven-mint';
+      const verified = await verifyWorldIdKitProof({
+        rpId,
+        idkitResponse: opts.idkitResponse,
+        expectedEnvironment: process.env.WORLD_IDKIT_ENVIRONMENT || 'production',
+        expectedAction: action,
+      });
+      if (!verified.ok) {
+        void notifyOperator(
+          'world_denied',
+          'World IDKit denied',
+          'Nothing was written to Arkiv.',
+          { detail: verified.detail, holder: opts.holder },
+          actorEmail(opts.req),
+        );
+        throw new ApiError(403, verified.code, verified.detail);
+      }
+      const nKey =
+        opts.nullifierScope === 'buy'
+          ? `${verified.action}:buy:${verified.nullifier.toLowerCase()}`
+          : `${verified.action}:${verified.nullifier.toLowerCase()}`;
+      if (usedNullifiers.has(nKey)) {
+        throw new ApiError(409, 'WORLD_NULLIFIER_REUSED', 'This World ID proof was already used for this action');
+      }
+      usedNullifiers.add(nKey);
+      return {
+        ok: true,
+        human_id: opts.human_id ?? verified.human_id,
+        world_proof_id: verified.world_proof_id,
+        mode: 'idkit',
+        issuer: 'https://developer.world.org',
+      };
+    }
+
+    if (opts.allowPriorGrant && opts.feature) {
+      const living = await store.findLive({ holder: opts.holder, feature: opts.feature });
+      const prior = living.find((g) => g.world_proof_id || g.human_id);
+      if (prior?.world_proof_id || prior?.human_id) {
+        return {
+          ok: true,
+          human_id: prior.human_id ?? opts.holder,
+          world_proof_id: prior.world_proof_id ?? `world:prior:${prior.id}`,
+          mode: 'idkit',
+        };
+      }
+    }
+
+    const checked = await verifyWorldAgentPass({
+      world_proof_id: opts.world_proof_id,
+      id_token: opts.id_token,
+      world_denied: opts.world_denied,
+      outcome: opts.outcome,
+      human_id: opts.human_id,
+    });
+    if (!checked.ok) {
+      void notifyOperator(
+        'world_denied',
+        'World mint denied',
+        'Nothing was written to Arkiv.',
+        { reason: checked.reason, detail: checked.detail, holder: opts.holder },
+        actorEmail(opts.req),
+      );
+      throw new ApiError(
+        403,
+        'WORLD_DENIED',
+        opts.allowPriorGrant
+          ? `${worldDeniedMessage(checked)} — mint with World ID first, or pass idkit_response`
+          : worldDeniedMessage(checked),
+        checked,
+      );
+    }
+    return checked;
+  }
 
   app.get('/internal/grants/live', async (req) => {
     const q = req.query as { holder?: string; feature?: string; worker_id?: string };
     const grants = await store.findLive({
       holder: q.holder,
-      feature: q.feature,
+      feature: q.feature || undefined,
       worker_id: q.worker_id,
     });
     return {
       grants,
       physics: {
-        payment: 'Hedera x402 / HashScan',
+        payment: 'Whitechain USDT',
         renewal: 'grant.renewal_enabled',
         access: 'Arkiv-queryable grant until paid_through / ExpirationTime',
       },
-      store: typeof (store as unknown as { describe?: () => unknown }).describe === 'function'
-        ? (store as unknown as { describe: () => unknown }).describe()
-        : { mode: 'memory' },
+      store: store.describe(),
+      features: FEATURE_CATALOG.map((f) => f.id),
     };
   });
 
@@ -181,44 +437,39 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
     const grant = await store.get(id);
     if (!grant) throw new ApiError(404, 'GRANT_NOT_FOUND', 'grant not found');
     const ttl_ms = Math.max(0, new Date(grant.paid_through).getTime() - Date.now());
-    const network = process.env.HEDERA_NETWORK === 'mainnet' ? 'mainnet' : 'testnet';
     return {
       grant,
       ttl_seconds: Math.floor(ttl_ms / 1000),
-      hashscan_url: grant.payment_tx
-        ? `https://hashscan.io/${network}/transaction/${encodeURIComponent(grant.payment_tx)}`
-        : null,
+      explorer_url: grant.payment_tx ? explorerUrl(grant.payment_tx) : null,
     };
   });
 
   app.post('/internal/grants/mint', async (req) => {
     try {
+      const rawBody = (req.body ?? {}) as Record<string, unknown>;
+      const idkitResponse = rawBody.idkit_response;
       const body = MintGrantInputSchema.parse(req.body);
-      const world = await verifyWorldAgentPass({
+      try {
+        assertKnownFeature(body.feature);
+      } catch (e) {
+        throw new ApiError(400, 'UNKNOWN_FEATURE', e instanceof Error ? e.message : String(e));
+      }
+
+      const world = await resolveWorldForWrite({
+        idkitResponse,
         world_proof_id: body.world_proof_id,
         id_token: body.id_token,
         world_denied: body.world_denied,
         outcome: body.outcome,
         human_id: body.human_id,
+        holder: body.holder,
+        nullifierScope: 'mint',
+        req,
       });
-      if (!world.ok) {
-        void notifyOperator(
-          'world_denied',
-          'World mint denied',
-          'A mint was refused — nothing was written to Arkiv.',
-          {
-            reason: world.reason,
-            detail: world.detail,
-            holder: body.holder,
-          },
-          actorEmail(req),
-        );
-        throw new ApiError(403, 'WORLD_DENIED', worldDeniedMessage(world), world);
-      }
 
-      let settlement: Awaited<ReturnType<typeof settleHederaX402>> | null = null;
-      if (body.settlement_network === 'hedera') {
-        settlement = await settleHederaX402({
+      let settlement: Awaited<ReturnType<typeof settleWhitechainUsdt>> | null = null;
+      if (body.settlement_network !== 'local') {
+        settlement = await settleWhitechainUsdt({
           amount: body.remaining,
           feature: body.feature,
           holder: body.holder,
@@ -232,7 +483,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
         human_id: world.human_id,
         world_proof_id: world.world_proof_id,
         payment_tx: settlement?.payment_tx ?? body.payment_tx,
-        settlement_network: settlement ? 'hedera' : body.settlement_network,
+        settlement_network: settlement ? 'whitechain' : body.settlement_network,
         world_denied: false,
       });
       void notifyOperator(
@@ -268,23 +519,34 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
     }
   });
 
-  /** Hedera settle → mint/extend grant (buy_credits hero path). */
+  /** Whitechain settle → mint/extend grant (buy_credits hero path). */
   app.post('/internal/grants/buy-credits', async (req) => {
     try {
+      const rawBody = (req.body ?? {}) as Record<string, unknown>;
+      const idkitResponse = rawBody.idkit_response;
       const body = buyCreditsSchema.parse(req.body);
+      try {
+        assertKnownFeature(body.feature);
+      } catch (e) {
+        throw new ApiError(400, 'UNKNOWN_FEATURE', e instanceof Error ? e.message : String(e));
+      }
+
       const prod = (process.env.NODE_ENV ?? 'development') === 'production';
-      const world = await verifyWorldAgentPass({
-        world_proof_id: body.world_proof_id ?? (prod ? undefined : 'world:ok:buyer'),
+      const world = await resolveWorldForWrite({
+        idkitResponse,
+        world_proof_id: body.world_proof_id ?? (prod || idkitResponse !== undefined ? undefined : 'world:ok:buyer'),
         id_token: body.id_token,
         world_denied: body.world_denied,
         outcome: body.outcome,
         human_id: body.human_id,
+        holder: body.holder,
+        nullifierScope: 'buy',
+        allowPriorGrant: idkitResponse === undefined,
+        feature: body.feature,
+        req,
       });
-      if (!world.ok) {
-        throw new ApiError(403, 'WORLD_DENIED', worldDeniedMessage(world), world);
-      }
 
-      const settlement = await settleHederaX402({
+      const settlement = await settleWhitechainUsdt({
         amount: body.amount,
         feature: body.feature,
         holder: body.holder,
@@ -300,7 +562,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
         human_id: world.human_id,
         world_proof_id: world.world_proof_id,
         payment_tx: settlement.payment_tx,
-        settlement_network: 'hedera',
+        settlement_network: 'whitechain',
         worker_id: resolveWorkerId(body.worker_id),
         mandate_id: body.mandate_id,
         renewal_enabled: true,
@@ -308,7 +570,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
 
       void notifyOperator(
         'credits_bought',
-        'Credits settled on Hedera',
+        'Credits settled on Whitechain',
         'buy_credits stamped payment_tx on a living grant.',
         {
           grant_id: grant.id,
@@ -323,7 +585,6 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
       return {
         grant,
         settlement,
-        hcs_join: buildHcsJoin({ payment_tx: settlement.payment_tx, grant_id: grant.id }),
         clocks: {
           payment: true,
           renewal: true,
@@ -344,7 +605,28 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
   app.post('/internal/grants/paid-run', async (req) => {
     try {
       const body = consumeSchema.parse(req.body);
-      const grant = await store.get(body.grant_id);
+      let grantId = body.grant_id?.trim();
+      if (!grantId) {
+        // Explicit feature only — omit filter to pick richest living grant across SKUs.
+        const feature = featureForAction('paid_run', body.feature);
+        const live = await store.findLive({
+          feature,
+          holder: body.holder?.trim() || undefined,
+          worker_id: body.worker_id,
+        });
+        const ranked = [...live].sort((a, b) => Number(b.remaining) - Number(a.remaining));
+        const pick = ranked.find((g) => gte(g.remaining, body.amount)) ?? ranked[0];
+        if (!pick) {
+          throw new ApiError(
+            404,
+            'GRANT_NOT_FOUND',
+            `No living${feature ? ` ${feature}` : ''} grant${body.holder ? ` for ${body.holder}` : ''} — create an entitlement first`,
+          );
+        }
+        grantId = pick.id;
+      }
+
+      const grant = await store.get(grantId);
       if (!grant) throw new ApiError(404, 'GRANT_NOT_FOUND', 'grant not found');
 
       const now = Date.now();
@@ -358,9 +640,14 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
         throw new ApiError(403, 'DUAL_GATE', 'GRANT_EMPTY: remaining credits insufficient');
       }
 
+      // Dual-gate money side — always required (skip_mandate_gate is intentionally ignored).
       const worker = resolveWorkerId(body.worker_id, grant.worker_id);
       if (!worker || !deps.resolveMandateCapacity) {
-        throw new ApiError(403, 'DUAL_GATE', 'MANDATE_REQUIRED: paid work requires a worker with mandate capacity');
+        throw new ApiError(
+          403,
+          'DUAL_GATE',
+          'MANDATE_REQUIRED: paid work needs a worker bound to a funded mandate — open Mandate in the console',
+        );
       }
       const capacity = await deps.resolveMandateCapacity(worker, body.amount);
       if (!capacity.ok) {
@@ -373,10 +660,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
       }
 
       const key = body.idempotency_key ?? randomUUID();
-      const next = await store.consume(body.grant_id, body.amount, key);
-      const hcs_join = next.payment_tx
-        ? buildHcsJoin({ payment_tx: next.payment_tx, grant_id: next.id, consume_id: key })
-        : null;
+      const next = await store.consume(grantId, body.amount, key);
 
       void notifyOperator(
         'paid_run',
@@ -394,7 +678,6 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
         grant: next,
         work_echo: body.work ?? null,
         dual_gate: { mandate: 'ok', grant: 'ok' },
-        hcs_join,
         note: 'Dual gate passed: mandate ceiling + living Arkiv grant',
       };
     } catch (error) {
@@ -407,6 +690,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
     // Back-compat: prefer paid-run; consume alone still burns credits (grant gate only).
     try {
       const body = consumeSchema.parse(req.body);
+      if (!body.grant_id) throw new ApiError(400, 'GRANT_ID_REQUIRED', 'grant_id required for /consume; use /paid-run to auto-pick');
       const key = body.idempotency_key ?? randomUUID();
       const grant = await store.consume(body.grant_id, body.amount, key);
       return {
@@ -468,7 +752,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
     return {
       denied: reasons[0]?.code !== 'NONE',
       reasons,
-      clocks: ['payment (Hedera)', 'renewal (flag)', 'access (Arkiv TTL)'],
+      clocks: ['payment (Whitechain)', 'renewal (flag)', 'access (Arkiv TTL)'],
     };
   });
 

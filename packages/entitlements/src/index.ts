@@ -3,10 +3,11 @@ import { MemoryGrantStore } from './memory-store.js';
 import type { GrantStore } from './types.js';
 
 export * from './types.js';
+export * from './features.js';
 export { MemoryGrantStore } from './memory-store.js';
 export { ArkivGrantStore } from './arkiv-store.js';
 export { BagsevenGrants } from './schema.js';
-export { recordHederaPayment } from './hedera-settlement.js';
+export { explorerUrl, recordWhitechainPayment } from './whitechain-settlement.js';
 
 let singleton: GrantStore | undefined;
 

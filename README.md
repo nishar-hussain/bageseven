@@ -1,6 +1,6 @@
 # Bagseven
 
-Infrastructure for autonomous agents: a **mandate** (spend ceiling) plus a **living entitlement** (Arkiv grant). Humans mint. Agents spend through MCP. Settlement is Hedera. Unique humans via World.
+Infrastructure for autonomous agents: a **mandate** (spend ceiling) plus a **living entitlement** (Arkiv grant). Humans mint. Humans and agents check through an SDK. Agents spend through MCP. Settlement is Whitechain. Unique humans via World.
 
 The LLM proposes. Deterministic code disposes.
 
@@ -10,8 +10,9 @@ The LLM proposes. Deterministic code disposes.
 | --- | --- | --- |
 | **Landing** | http://localhost:3001 | Marketing (`apps/landing`) |
 | **Dashboard** | http://localhost:3000/app | Operator app (`apps/console`) |
+| **SDK** | http://localhost:3000/app/sdk | Drop-in React snippet + live embed |
 
-Sign-in is a magic link to **any email** (`/app/login`). Mail is sent from `bags@cesthq.com` via Resend. Locally, without `RESEND_API_KEY`, the link is printed on the page.
+Sign-in is **World-primary** (`/app/login`, mock locally). Email is optional and verified later via OTP from Account. Magic link remains recovery/invite only.
 
 ## Start
 
@@ -25,7 +26,7 @@ If `pnpm` itself errors with a missing global path, your shell shim is broken �
 
 Then: landing → **Start free** → email → Overview → Mint / Credits / Grants.
 
-Setup creates a funded mandate and saves `BAGSEVEN_MCP_WORKER` in `.env`. World proofs and Hedera settlement use local mock modes; Arkiv uses memory. The isolated Anvil chain runs on `58545` with local USDC, without real funds.
+Setup creates a funded mandate and saves `BAGSEVEN_MCP_WORKER` in `.env`. World proofs and Whitechain settlement use local mock modes; Arkiv uses memory. The isolated Anvil chain runs on `58545` as Whitechain chain ID `1874`, without real funds.
 
 Verify the full local flow without sending email:
 
@@ -56,7 +57,7 @@ apps/console     dashboard :3000 /app
 services/gateway :4000
 services/daemon  :4001
 services/policy  :4003
-packages/        entitlements world notify db money onchain server
+packages/        sdk entitlements world notify db money onchain server
 ```
 
 ## MCP
@@ -65,7 +66,7 @@ packages/        entitlements world notify db money onchain server
 BAGSEVEN_MCP_WORKER=<uuid> pnpm mcp:local
 ```
 
-Tools: `bagseven_status`, `grant_status`, `mint_with_world`, `buy_credits`, `paid_run`, `cancel_renewal`, `explain_denial`, `bagseven_fetch`.
+Tools: `bagseven_status`, `grant_status`, `check_entitlement`, `consume_entitlement`, `mint_with_world`, `buy_credits`, `paid_run`, `cancel_renewal`, `explain_denial`, `bagseven_fetch`.
 
 ## Production
 

@@ -1,8 +1,8 @@
 # Developer guide
 
-Bagseven is a product, not a demo harness. Humans mint access. Agents spend under a mandate. Access lives on Arkiv until `paid_through`. Money settles on Hedera. Unique humans via World. The dashboard is a Fianto-shaped operator app; MCP is the agent surface.
+Bagseven is a product, not a demo harness. Humans mint access. Humans and agents `checkEntitlement`. Agents spend under a mandate. Access lives on Arkiv until `paid_through`. Money settles on Whitechain. Unique humans via World. The dashboard is a Fianto-shaped operator app; the SDK + MCP are the product surfaces.
 
-If you are an LLM, also read [`../llms.txt`](../llms.txt) and [`../AGENTS.md`](../AGENTS.md).
+If you are an LLM, also read [`../llms.txt`](../llms.txt), [`../AGENTS.md`](../AGENTS.md), and [`LIVE.md`](./LIVE.md) for the go-live credential checklist.
 
 ## Mental model
 
@@ -10,7 +10,7 @@ Three clocks, all independent:
 
 | Clock | Question | Source of truth |
 | --- | --- | --- |
-| Payment | Did money move? | Hedera `payment_tx` |
+| Payment | Did money move? | Whitechain `payment_tx` |
 | Renewal | Will we collect again? | `renewal_enabled` on the grant |
 | Access | Can they use the feature *now*? | Living Arkiv grant (`remaining` + `paid_through`) |
 
@@ -26,8 +26,9 @@ The LLM never authorizes money. Policy issues a spend token; daemon executes. Se
 apps/landing     marketing  :3001
 apps/console     dashboard  :3000  /app  (magic-link auth, BFF)
 services/gateway public API :4000
-services/daemon  dual-gate, grants, World, Hedera :4001
+services/daemon  dual-gate, grants, World, Whitechain :4001
 services/policy  budgets / spend tokens :4003
+packages/sdk           React + Node + agent entitlement SDK
 packages/entitlements  Arkiv + memory store
 packages/world         Agent Pass verify
 packages/notify        Resend (from bags@cesthq.com)
@@ -44,12 +45,14 @@ pnpm start:local   # same as pnpm dev
 
 Requires Node 24+, pnpm 10.33.0, and a running Docker engine. Setup installs locked dependencies, creates local secrets, starts isolated Postgres (`55432`), Redis (`56379`), and Anvil (`58545`), builds the workspace, and applies migrations. It preserves an existing `.env`; use `--force` only to replace it. Redpanda is optional (`pnpm run setup --with-redpanda`).
 
-Anvil uses chain ID `43113` to exercise the supported mandate contract path with local tokens. Setup deploys a local USDC faucet, funds a mandate, and writes its worker UUID to `BAGSEVEN_MCP_WORKER`. Reruns reuse the worker; chain state persists in a Docker volume. This is a local chain, not the public Fuji testnet. An existing environment needs `RPC_URL=http://localhost:58545` and `CHAIN_ID=43113` to opt into local seeding; custom RPC configurations are preserved.
+Anvil uses chain ID `1874` to exercise the Whitechain mandate contract path with local tokens. Setup deploys a local USDC faucet, funds a mandate, and writes its worker UUID to `BAGSEVEN_MCP_WORKER`. Reruns reuse the worker; chain state persists in a Docker volume. This is a local chain impersonating Whitechain Testnet, not the public Whitechain RPC. An existing environment needs `RPC_URL=http://localhost:58545` and `CHAIN_ID=1874` to opt into local seeding; custom RPC configurations are preserved. Recreate the Anvil volume if it was previously chain `43113`.
 
 | URL | Surface |
 | --- | --- |
 | http://localhost:3001 | Landing |
 | http://localhost:3000/app | Dashboard |
+| http://localhost:3000/app/sdk | SDK playground (Provider + Guard + Embed) |
+| http://localhost:3000/embed?token= | Token-gated entitlement portal |
 | http://localhost:4000 | Gateway |
 | http://localhost:4001 | Daemon |
 | http://localhost:4003 | Policy |
@@ -60,10 +63,12 @@ Sign in with **any email**. Resend sends the link from `bags@cesthq.com`. Withou
 
 ## Auth
 
-- Magic link is a **signed token** (15 min). Any console replica with `AUTH_SECRET` can verify it.
-- Session cookie `bagseven_session` (HMAC, 8h).
-- Default: any email. Optional invite-only: `AUTH_ALLOWLIST=a@x.com,b@y.com`.
-- Browser never holds `DAEMON_*` keys. Dashboard uses `/api/daemon/*` and forwards `x-bagseven-actor` (signed-in email) so grant emails go to that user.
+- **World is primary** (`POST /api/auth/world`). Mock World works locally when `WORLD_MOCK_PROOFS=true`.
+- Session cookie `bagseven_session` (HMAC, 8h) carries `world_human_id` and optional `email` / `email_verified_at`.
+- **Email verify-later:** Account → OTP (`/api/auth/email/start` + `/verify`). Unverified email is fine for using the app; receipts/recovery want verification.
+- Magic link is **recovery / invite only**, not the login hero.
+- Optional invite-only when email is used: `AUTH_ALLOWLIST=a@x.com,b@y.com`.
+- Browser never holds `DAEMON_*` keys.
 
 ## Email
 
@@ -78,17 +83,73 @@ Email + DNS: [HOSTING.md](./HOSTING.md).
 
 ## Product loop (what to click)
 
-1. Landing → Start free → email → Overview  
-2. Mint (World mock locally) → grant appears on Entitlements  
-3. Credits (Hedera demo settle locally)  
-4. MCP page → use the `BAGSEVEN_MCP_WORKER` from `.env` → `pnpm mcp:local`
-5. Agent calls `paid_run` / `bagseven_fetch` under dual-gate  
+1. Landing → Start free → **Continue with World (mock)** → Overview  
+2. Account → optionally verify email with OTP  
+3. Plans → create a thin plan (feature + USDT + credits + payout wallet)  
+4. Checkouts → open session → public `/checkout?session=` → WhiteWallet/EVM pay (or demo tx) → grant live  
+5. SDK page → Provider + Guard + Embed checkout  
+6. MCP → `create_checkout_session` / `check_entitlement` / `consume_entitlement` / `paid_run`  
 
-Live tracks: set World / Hedera / Arkiv keys in `.env`. Leave mock flags **off** in production.
+Live tracks: set World / Whitechain / Arkiv keys in `.env`. Leave mock flags **off** in production.
+
+## SDK
+
+```bash
+npm install @bagseven/sdk
+```
+
+### 1. Provider (human app)
+
+```tsx
+import { BagsevenProvider, FeatureFlagGuard, BagsevenEmbed } from '@bagseven/sdk/react';
+
+<BagsevenProvider publishableKey={pk}>
+  <FeatureFlagGuard feature="ocr"><OcrButton /></FeatureFlagGuard>
+  <BagsevenEmbed accessToken={token} initialView="portal" />
+</BagsevenProvider>
+```
+
+`pk_` can identify and check. It cannot consume or mint. Copy-paste this from `/app/sdk`.
+
+### 2. identify → embed token
+
+```ts
+import { BagsevenClient } from '@bagseven/sdk/node';
+const client = new BagsevenClient({ apiKey: process.env.BAGSEVEN_SECRET_KEY!, baseUrl: 'http://127.0.0.1:4001' });
+const { token } = await client.identify({ holder: 'user@example.com' });
+```
+
+Holder-scoped JWT (`bgs_tok_…`, ~15 min). Drop it in `BagsevenEmbed` or `/embed?token=`.
+
+### 3. Server `checkEntitlement` (authoritative)
+
+```ts
+const ent = await client.checkEntitlement('ocr', { holder: 'user@example.com' });
+// { enabled, remaining, allocation, paid_through, arkiv_entity_key, payment_tx }
+await client.consumeEntitlement({ feature: 'ocr', holder: 'user@example.com', idempotencyKey: 'run-1' });
+```
+
+React is UI gating. Authoritative checks always go through Node / daemon.
+
+### 4. MCP (agent)
+
+Same verbs: `check_entitlement` / `consume_entitlement` / `create_checkout_session`. Secret consume and `paid_run` dual-gate (mandate remaining ∧ living grant). Agents never hold World credentials.
+
+### Plans + checkout
+
+```ts
+await client.createPlan({ feature: 'ocr', name: 'OCR Starter', amount: '5.00', credits: '10', merchant_wallet: '0x…' });
+await client.createCheckoutSession({ plan_id, holder });
+// Buyer: BagsevenEmbed checkoutSessionId=… or /checkout?session=
+```
+
+Public routes also include `POST/GET /v1/plans`, `POST /v1/checkout-sessions`, `GET|POST /v1/public/checkout/:id`. No payment-link product line.
+
+Demo (daemon running): `pnpm sdk:demo` — plan → checkout confirm → human Guard → agent consume → grant evaporates.
 
 ## MCP tools
 
-`bagseven_status`, `grant_status`, `mint_with_world`, `buy_credits`, `paid_run`, `cancel_renewal`, `explain_denial`, `bagseven_fetch`
+`bagseven_status`, `grant_status`, `check_entitlement`, `consume_entitlement`, `mint_with_world`, `buy_credits`, `create_checkout_session`, `paid_run`, `cancel_renewal`, `explain_denial`, `bagseven_fetch`
 
 ```bash
 BAGSEVEN_MCP_WORKER=<uuid> BAGSEVEN_MCP_PORT=4009 pnpm mcp:local
@@ -108,4 +169,6 @@ pnpm --filter @bagseven/console typecheck
 pnpm --filter @bagseven/daemon typecheck
 ```
 
-For full HTTP and MCP checks, run `NOTIFY_MODE=log pnpm start:local`, then `NOTIFY_MODE=log pnpm smoke:e2e` in another terminal. This checks authentication, dashboard routes, World mint/deny, Hedera demo credits, funded worker resolution, paid work under both gates, a local token payment, renewal cancellation, and expiry. `NOTIFY_MODE=log` preserves Resend configuration while suppressing delivery. Restart normally to resume email delivery. Browser automation is separate from these HTTP checks.
+SDK loop against a running daemon: `pnpm sdk:demo`.
+
+For full HTTP and MCP checks, run `NOTIFY_MODE=log pnpm start:local`, then `NOTIFY_MODE=log pnpm smoke:e2e` in another terminal. This checks authentication, dashboard routes, World mint/deny, Whitechain demo credits, funded worker resolution, paid work under both gates, a local token payment, renewal cancellation, and expiry. `NOTIFY_MODE=log` preserves Resend configuration while suppressing delivery. Restart normally to resume email delivery. Browser automation is separate from these HTTP checks.

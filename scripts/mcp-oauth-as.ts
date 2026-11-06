@@ -125,16 +125,14 @@ function authorizePage(opts: {
 </style></head><body>
   <div class="card">
     <h1>Authorize Bagseven for ChatGPT</h1>
-    <p>World verifies <strong>you</strong>. ChatGPT then receives a Bagseven access token for MCP tools (status, grants, paid_run). Agents never hold World credentials.</p>
+    <p>Use the same email you minted with on the Bagseven console (World IDKit). ChatGPT gets a Bagseven access token for MCP tools — agents never hold World credentials.</p>
     ${opts.error ? `<p class="err">${opts.error}</p>` : ''}
     <form method="post" action="/oauth/authorize?${q.toString()}">
-      <label>Email / holder</label>
+      <label>Email / holder (must already have a living entitlement)</label>
       <input name="holder" required placeholder="you@company.com" />
-      <label>World proof (mock) or leave blank if pasting id_token</label>
-      <input name="world_proof_id" placeholder="world:ok:you@company.com" />
-      <label>World id_token (live Agent Pass — optional)</label>
-      <textarea name="id_token" rows="4" placeholder="Paste OIDC id_token when using live World"></textarea>
-      <button type="submit">Continue with World gate</button>
+      <label>World OIDC id_token (optional — only if Agent Pass OIDC is configured)</label>
+      <textarea name="id_token" rows="3" placeholder="Usually leave blank — we reuse your living World-minted grant"></textarea>
+      <button type="submit">Continue</button>
     </form>
     <p style="margin-top:1rem;font-size:.75rem">Resource: <code>${opts.resource || resourceUrl(opts.base)}</code></p>
   </div>
@@ -223,7 +221,6 @@ export function mountMcpOAuth(app: Express): void {
       id_token?: string;
     };
     const holder = (body.holder || '').trim();
-    const proof = (body.world_proof_id || '').trim() || (holder ? `world:ok:${holder}` : '');
     const idToken = (body.id_token || '').trim() || undefined;
 
     const fail = (msg: string) => {
@@ -255,13 +252,45 @@ export function mountMcpOAuth(app: Express): void {
       return fail('redirect_uri must be a ChatGPT connector callback (or local inspector)');
     }
 
-    const verified = await verifyWorldAgentPass({
-      world_proof_id: proof || undefined,
-      id_token: idToken,
-      holder,
-    });
-    if (!verified.ok) {
-      return fail(`World gate failed: ${verified.detail}`);
+    let humanId = holder;
+    let worldProofId = '';
+
+    // Prefer reuse of a living Arkiv grant minted via World IDKit on the console.
+    try {
+      const daemon = (process.env.DAEMON_URL || 'http://127.0.0.1:4001').replace(/\/$/, '');
+      const token = process.env.DAEMON_AUTH_TOKEN?.trim();
+      const liveRes = await fetch(`${daemon}/internal/grants/live?holder=${encodeURIComponent(holder)}`, {
+        headers: token ? { authorization: `Bearer ${token}` } : {},
+      });
+      if (liveRes.ok) {
+        const liveJson = (await liveRes.json()) as {
+          grants?: Array<{ human_id?: string; world_proof_id?: string; id: string }>;
+        };
+        const g = (liveJson.grants ?? []).find((row) => row.world_proof_id || row.human_id);
+        if (g) {
+          humanId = g.human_id || holder;
+          worldProofId = g.world_proof_id || `world:prior:${g.id}`;
+        }
+      }
+    } catch {
+      /* fall through */
+    }
+
+    if (!worldProofId) {
+      if (!idToken) {
+        return fail(
+          'No living World-minted entitlement for this email. Mint on the console with World ID first, then retry.',
+        );
+      }
+      const verified = await verifyWorldAgentPass({
+        id_token: idToken,
+        human_id: holder,
+      });
+      if (!verified.ok) {
+        return fail(`World gate failed: ${verified.detail}`);
+      }
+      humanId = verified.human_id;
+      worldProofId = verified.world_proof_id;
     }
 
     prune();
@@ -273,8 +302,8 @@ export function mountMcpOAuth(app: Express): void {
       codeChallengeMethod: code_challenge_method,
       scope,
       resource,
-      humanId: verified.human_id,
-      worldProofId: verified.world_proof_id,
+      humanId,
+      worldProofId,
       exp: Date.now() + 10 * 60_000,
     });
 

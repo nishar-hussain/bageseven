@@ -1,35 +1,63 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { IDKitRequestWidget, proofOfHuman, type RpContext } from '@worldcoin/idkit';
 import { StatusBadges } from '../../../components/app/StatusBadges';
 import { entitlementsApi } from '../../../lib/entitlements-client';
+import { FEATURE_OPTIONS, TTL_PRESETS, featureLabel, shortId, useOperator } from '../../../lib/use-operator';
+
+const APP_ID = (process.env.NEXT_PUBLIC_WORLD_APP_ID || '') as `app_${string}`;
+const RP_ID = process.env.NEXT_PUBLIC_WORLD_RP_ID || '';
+const ACTION = process.env.NEXT_PUBLIC_WORLD_IDKIT_ACTION || 'bagseven-mint';
+const ENVIRONMENT = (process.env.NEXT_PUBLIC_WORLD_IDKIT_ENVIRONMENT || 'production') as 'production' | 'staging';
 
 export default function MintPage() {
-  const [holder, setHolder] = useState('demo-human');
-  const [proof, setProof] = useState('world:ok:demo-human');
-  const [idToken, setIdToken] = useState('');
-  const [ttl, setTtl] = useState(120);
+  const op = useOperator();
+  const router = useRouter();
+  const [feature, setFeature] = useState('ocr');
+  const [credits, setCredits] = useState('5');
+  const [ttl, setTtl] = useState(900);
   const [msg, setMsg] = useState('');
-  const [lastId, setLastId] = useState('');
+  const [lastLabel, setLastLabel] = useState('');
   const [busy, setBusy] = useState(false);
+  const [idkitOpen, setIdkitOpen] = useState(false);
+  const [rpContext, setRpContext] = useState<RpContext | null>(null);
 
-  const mint = async (denied: boolean) => {
+  const idkitReady = Boolean(APP_ID && RP_ID && op.status?.tracks.world.idkit);
+  const agentPassReady = Boolean(op.status?.tracks.world.agent_pass);
+  const mockAllowed = op.status?.tracks.world.mock_proofs === true;
+
+  /** End-to-end create: Whitechain settle + Arkiv grant for the signed-in operator. */
+  const createEntitlement = async (opts?: { idkit_response?: unknown; id_token?: string; world_proof_id?: string }) => {
+    if (!op.holder) {
+      setMsg('Sign in first — we mint the entitlement to your email.');
+      return;
+    }
     setBusy(true);
-    setMsg(denied ? 'Deny path…' : 'Minting (World + Hedera stamp + Arkiv write — often 5–15s)…');
+    setMsg('Creating living entitlement (Whitechain settle → Arkiv write)…');
     try {
       const r = await entitlementsApi.mint({
-        feature: 'ocr',
-        holder,
-        remaining: '5',
+        feature,
+        holder: op.holder,
+        remaining: credits,
         ttl_seconds: ttl,
-        settlement_network: 'hedera',
-        world_proof_id: denied ? 'world:cancel:demo' : proof,
-        id_token: idToken.trim() || undefined,
+        settlement_network: 'whitechain',
         renewal_enabled: true,
+        ...(opts?.idkit_response !== undefined ? { idkit_response: opts.idkit_response } : {}),
+        ...(opts?.id_token ? { id_token: opts.id_token } : {}),
+        ...(opts?.world_proof_id ? { world_proof_id: opts.world_proof_id } : {}),
+        ...(!opts?.idkit_response && !opts?.id_token && mockAllowed
+          ? { world_proof_id: `world:ok:${op.holder}` }
+          : {}),
       });
-      setLastId(r.grant.id);
-      setMsg(`Minted ${r.grant.id} · world=${r.world?.mode ?? '?'} · ${r.settlement?.hashscan_url ?? ''}`);
+      setLastLabel(`${featureLabel(r.grant.feature)} · ${r.grant.remaining} credits · ${shortId(r.grant.id)}`);
+      setMsg(
+        `Done. Entitlement for feature “${featureLabel(feature)}” is live (${r.grant.remaining} credits).` +
+          (r.settlement?.explorer_url ? `\nWhitechain: ${r.settlement.explorer_url}` : '') +
+          `\nOpen Entitlements to spend it, or Connect agent so MCP can call paid_run.`,
+      );
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));
     } finally {
@@ -37,78 +65,227 @@ export default function MintPage() {
     }
   };
 
-  const authorize = async () => {
+  const beginIdKit = useCallback(async () => {
+    if (!op.holder) {
+      setMsg('Sign in first.');
+      return;
+    }
     setBusy(true);
-    setMsg('Resolving World authorize URL…');
+    setMsg('Opening World ID… scan the QR with World App.');
     try {
-      const r = await entitlementsApi.worldAuthorize();
-      setMsg(r.authorize_url || r.note || r.mode);
-      if (r.authorize_url) window.open(r.authorize_url, '_blank', 'noopener');
+      const sig = await entitlementsApi.worldRpSignature(ACTION);
+      setRpContext({
+        rp_id: (sig.rp_id || RP_ID) as `rp_${string}`,
+        nonce: sig.nonce,
+        created_at: sig.created_at,
+        expires_at: sig.expires_at,
+        signature: sig.sig,
+      });
+      setIdkitOpen(true);
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
-  };
+  }, [op.holder]);
+
+  const beginAgentPass = useCallback(async () => {
+    if (!op.holder) return;
+    setBusy(true);
+    try {
+      const redirectUri = `${window.location.origin}/app/mint`;
+      const auth = await entitlementsApi.worldAuthorize(redirectUri);
+      if (!auth.authorize_url) {
+        setMsg(
+          auth.note ||
+            `Agent Pass unavailable (mode=${auth.mode ?? 'unknown'}). Use Create entitlement (mock/IDKit) until auth.world.org/portal allowlists your Google.`,
+        );
+        setBusy(false);
+        return;
+      }
+      window.location.assign(auth.authorize_url);
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  }, [op.holder]);
+
+  // Agent Pass OIDC return
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    const state = params.get('state');
+    const iss = params.get('iss');
+    if (params.get('error')) {
+      setMsg(`Agent Pass error: ${params.get('error')}`);
+      window.history.replaceState({}, '', '/app/mint');
+      return;
+    }
+    if (!code || !state) return;
+    void (async () => {
+      setBusy(true);
+      try {
+        const redirectUri = `${window.location.origin}/app/mint`;
+        const cb = await entitlementsApi.worldCallback({ code, state, redirect_uri: redirectUri, iss: iss || undefined });
+        await createEntitlement({ id_token: cb.id_token, world_proof_id: cb.world_proof_id });
+        window.history.replaceState({}, '', '/app/mint');
+      } catch (e) {
+        setMsg(e instanceof Error ? e.message : String(e));
+        window.history.replaceState({}, '', '/app/mint');
+        setBusy(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const preset = useMemo(() => proofOfHuman({ signal: op.holder || 'bagseven-operator' }), [op.holder]);
 
   return (
     <div className="mx-auto max-w-3xl space-y-5">
       <div>
-        <h1 className="text-[2rem] font-semibold tracking-tight">Mint</h1>
-        <p className="mt-1 text-sm text-[var(--muted)]">World Agent Pass gate before any Arkiv write. Deny/cancel writes nothing.</p>
+        <h1 className="text-[2rem] font-semibold tracking-tight">Create entitlement</h1>
+        <p className="mt-1 text-sm text-[var(--muted)]">
+          Schematic-style: pick a <strong>feature</strong>, then mint the <strong>entitlement</strong> (credits + TTL) that
+          lets agents use it. OCR is only a demo feature — not the product.
+        </p>
         <div className="mt-4">
           <StatusBadges />
         </div>
       </div>
 
-      <div className="rounded-2xl border border-[var(--blue)]/20 bg-[var(--tint)] px-4 py-3 text-sm text-[var(--ink)]">
-        Mock mode uses <code className="fi-mono text-xs">world:ok:…</code> proofs. Live mode needs{' '}
-        <code className="fi-mono text-xs">WORLD_CLIENT_ID</code> + pasted <code className="fi-mono text-xs">id_token</code>.
-      </div>
+      <ol className="space-y-3 rounded-2xl border border-[var(--line)] bg-white p-5 text-sm shadow-[var(--sh)]">
+        <li>
+          <strong className="text-[var(--ink)]">1. You are signed in</strong>
+          <div className="mt-1 text-[var(--muted)]">
+            {op.loading ? 'Loading…' : op.holder ? <>Holder = <span className="font-medium text-[var(--ink)]">{op.holder}</span></> : 'Sign in first'}
+          </div>
+        </li>
+        <li>
+          <strong className="text-[var(--ink)]">2. Choose the feature to entitle</strong>
+          <p className="mt-1 text-[var(--muted)]">
+            A feature is a capability you gate (like Schematic). Choosing OCR does not mean you already have OCR access —
+            it means the entitlement you create will cover that feature key.
+          </p>
+        </li>
+        <li>
+          <strong className="text-[var(--ink)]">3. Mint the living entitlement</strong>
+          <p className="mt-1 text-[var(--muted)]">
+            World verifies the human → Whitechain stamps payment → Arkiv stores the grant. Then agents spend via MCP.
+          </p>
+        </li>
+      </ol>
 
       <div className="space-y-4 rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
         <div className="fi-field">
-          <label htmlFor="holder">Holder</label>
-          <input id="holder" value={holder} onChange={(e) => setHolder(e.target.value)} />
+          <label htmlFor="feature">Feature to entitle</label>
+          <select
+            id="feature"
+            value={feature}
+            onChange={(e) => setFeature(e.target.value)}
+            className="w-full rounded-xl border border-[var(--line)] bg-white px-3 py-2.5 text-sm"
+          >
+            {FEATURE_OPTIONS.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.label} — {f.blurb}
+              </option>
+            ))}
+          </select>
         </div>
-        <div className="fi-field">
-          <label htmlFor="proof">world_proof_id (mock: world:ok:…)</label>
-          <input id="proof" className="fi-mono text-sm" value={proof} onChange={(e) => setProof(e.target.value)} />
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="fi-field">
+            <label htmlFor="credits">Starting credits</label>
+            <input id="credits" value={credits} onChange={(e) => setCredits(e.target.value)} />
+          </div>
+          <div className="fi-field">
+            <label htmlFor="ttl">How long it stays live</label>
+            <select
+              id="ttl"
+              value={ttl}
+              onChange={(e) => setTtl(Number(e.target.value))}
+              className="w-full rounded-xl border border-[var(--line)] bg-white px-3 py-2.5 text-sm"
+            >
+              {TTL_PRESETS.map((p) => (
+                <option key={p.seconds} value={p.seconds}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
-        <div className="fi-field">
-          <label htmlFor="idToken">id_token (live World Agent Pass)</label>
-          <textarea
-            id="idToken"
-            rows={4}
-            className="fi-mono text-xs"
-            value={idToken}
-            onChange={(e) => setIdToken(e.target.value)}
-            placeholder="Paste OIDC id_token when WORLD_CLIENT_ID is set"
+
+        <button
+          type="button"
+          disabled={busy || !op.holder || op.loading}
+          onClick={() => void (mockAllowed || !idkitReady ? createEntitlement() : beginIdKit())}
+          className="w-full rounded-full bg-[var(--blue)] px-4 py-3 text-sm font-semibold text-white disabled:opacity-50"
+        >
+          {busy
+            ? 'Creating…'
+            : mockAllowed || !idkitReady
+              ? `Create entitlement for ${featureLabel(feature)}`
+              : 'Verify with World ID & create entitlement'}
+        </button>
+
+        <div className="grid gap-2 sm:grid-cols-2">
+          <button
+            type="button"
+            disabled={busy || !idkitReady || !op.holder}
+            onClick={() => void beginIdKit()}
+            className="rounded-full border border-[var(--line)] px-4 py-2.5 text-sm font-semibold disabled:opacity-50"
+          >
+            World IDKit (QR / World App)
+          </button>
+          <button
+            type="button"
+            disabled={busy || !agentPassReady || !op.holder}
+            onClick={() => void beginAgentPass()}
+            className="rounded-full border border-[var(--line)] px-4 py-2.5 text-sm font-semibold disabled:opacity-50"
+            title={agentPassReady ? undefined : 'Blocked until World allowlists your Google for auth.world.org/portal'}
+          >
+            Agent Pass {agentPassReady ? '' : '(needs portal access)'}
+          </button>
+        </div>
+
+        <Link href="/app/grants" className="inline-block text-sm font-medium text-[var(--blue)] underline">
+          After creating → open Entitlements
+        </Link>
+
+        {rpContext && (
+          <IDKitRequestWidget
+            open={idkitOpen}
+            onOpenChange={setIdkitOpen}
+            app_id={APP_ID}
+            action={ACTION}
+            rp_context={rpContext}
+            allow_legacy_proofs
+            environment={ENVIRONMENT}
+            preset={preset}
+            handleVerify={async (result) => {
+              await createEntitlement({ idkit_response: result });
+            }}
+            onSuccess={() => {
+              setIdkitOpen(false);
+            }}
+            onError={(code) => {
+              setMsg(`World ID failed (${String(code)})`);
+            }}
           />
-        </div>
-        <div className="fi-field max-w-xs">
-          <label htmlFor="ttl">TTL seconds</label>
-          <input id="ttl" type="number" value={ttl} onChange={(e) => setTtl(Number(e.target.value))} />
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button type="button" disabled={busy} onClick={() => void mint(false)} className="rounded-full bg-[var(--ink)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
-            {busy ? 'Working…' : 'Mint with World'}
-          </button>
-          <button type="button" disabled={busy} onClick={() => void mint(true)} className="rounded-full bg-[var(--deny)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
-            Deny path
-          </button>
-          <button type="button" disabled={busy} onClick={() => void authorize()} className="rounded-full border border-[var(--line)] px-4 py-2 text-sm font-medium disabled:opacity-50">
-            World authorize URL
-          </button>
-          <Link href="/app/grants" className="rounded-full border border-[var(--line)] px-4 py-2 text-sm font-medium">
-            View grants
-          </Link>
-        </div>
-        {msg && <p className="fi-mono whitespace-pre-wrap text-xs text-[var(--muted)]">{msg}</p>}
-        {lastId && (
-          <p className="text-sm">
-            Grant id: <code className="fi-mono">{lastId}</code>
-          </p>
+        )}
+
+        {msg && <pre className="whitespace-pre-wrap text-sm text-[var(--muted)]">{msg}</pre>}
+        {lastLabel && (
+          <div className="rounded-xl border border-[var(--good)]/30 bg-[var(--good)]/5 px-4 py-3 text-sm">
+            <div className="font-semibold text-[var(--ink)]">{lastLabel}</div>
+            <button
+              type="button"
+              className="mt-2 text-sm font-semibold text-[var(--blue)] underline"
+              onClick={() => router.push('/app/grants')}
+            >
+              View my entitlements →
+            </button>
+          </div>
         )}
       </div>
     </div>

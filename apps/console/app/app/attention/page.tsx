@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { StatusBadges } from '../../../components/app/StatusBadges';
 import { entitlementsApi, type MumbaiStatus } from '../../../lib/entitlements-client';
+import { mandateApi } from '../../../lib/mandate-client';
 
 type Item = { title: string; detail: string; href: string; tone: 'warn' | 'info' };
 
@@ -14,14 +15,26 @@ export default function AttentionPage() {
   useEffect(() => {
     void (async () => {
       try {
-        const [s, live] = await Promise.all([entitlementsApi.status(), entitlementsApi.live({ feature: 'ocr' })]);
+        const [s, live, mandates] = await Promise.all([
+          entitlementsApi.status(),
+          entitlementsApi.live(),
+          mandateApi.list('all').catch(() => ({ mandates: [] })),
+        ]);
         setStatus(s);
         const next: Item[] = [];
         if ((live.grants ?? []).length === 0) {
           next.push({
-            title: 'No living grant',
-            detail: 'Mint with World so agents have an Arkiv access clock.',
+            title: 'No entitlements',
+            detail: 'Create an entitlement for a feature (OCR is only a demo SKU) so agents have something to spend.',
             href: '/app/mint',
+            tone: 'warn',
+          });
+        }
+        if ((mandates.mandates ?? []).length === 0) {
+          next.push({
+            title: 'No funded mandate',
+            detail: 'Policy DB has no BagMandate. Local Anvil: pnpm setup / pnpm seed:local. Then open Mandate for vault + agents.',
+            href: '/app/mandate',
             tone: 'warn',
           });
         }
@@ -33,10 +46,10 @@ export default function AttentionPage() {
             tone: 'info',
           });
         }
-        if (s.tracks.hedera.demo_settle) {
+        if (s.tracks.whitechain.demo_settle) {
           next.push({
-            title: 'Hedera demo settle',
-            detail: 'Set HEDERA_X402_FACILITATOR_URL for live settle, or paste a real payment_tx.',
+            title: 'Whitechain demo settle',
+            detail: 'Set WHITECHAIN_PRIVATE_KEY + WHITECHAIN_PAY_TO for a live stamp, or paste a real payment_tx.',
             href: '/app/credits',
             tone: 'info',
           });
@@ -44,9 +57,16 @@ export default function AttentionPage() {
         if (s.tracks.world.mock_proofs) {
           next.push({
             title: 'World mock proofs on',
-            detail: 'Local OK. Paste a real Agent Pass id_token on Mint and set WORLD_MOCK_PROOFS=false for live World.',
+            detail: 'Set WORLD_MOCK_PROOFS=false and mint with World IDKit on /app/mint for live uniqueness proofs.',
             href: '/app/mint',
             tone: 'info',
+          });
+        } else if (!s.tracks.world.idkit) {
+          next.push({
+            title: 'World IDKit credentials missing',
+            detail: 'Set WORLD_APP_ID, WORLD_RP_ID, and WORLD_RP_SIGNING_KEY from the Developer Portal.',
+            href: '/app/mint',
+            tone: 'warn',
           });
         }
         setItems(next);
@@ -68,6 +88,7 @@ export default function AttentionPage() {
       <div>
         <h1 className="text-[2rem] font-semibold tracking-tight">Needs attention</h1>
         <p className="mt-1 text-sm text-[var(--muted)]">
+          Ops checklist (under Settings).{' '}
           {items.length === 0 ? 'All clear for this workspace.' : `${items.length} open item${items.length === 1 ? '' : 's'}.`}
         </p>
         <div className="mt-4">

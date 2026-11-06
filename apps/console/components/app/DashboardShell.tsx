@@ -9,10 +9,15 @@ import {
   CreditCard,
   Fingerprint,
   LayoutDashboard,
+  Puzzle,
   Search,
   Settings2,
   Shield,
+  ShoppingBag,
+  SquareStack,
   Terminal,
+  UserRound,
+  WalletCards,
 } from 'lucide-react';
 import { entitlementsApi } from '../../lib/entitlements-client';
 
@@ -20,18 +25,25 @@ type NavItem = { href: string; label: string; icon: React.ElementType; badge?: n
 
 const primary: NavItem[] = [
   { href: '/app', label: 'Overview', icon: LayoutDashboard },
-  { href: '/app/attention', label: 'Needs attention', icon: AlertTriangle },
   { href: '/app/grants', label: 'Entitlements', icon: CreditCard },
-  { href: '/app/mint', label: 'Mint', icon: Fingerprint },
-  { href: '/app/credits', label: 'Credits', icon: Coins },
+  { href: '/app/plans', label: 'Plans', icon: WalletCards },
+  { href: '/app/checkouts', label: 'Checkouts', icon: ShoppingBag },
+  { href: '/app/builder', label: 'Builder', icon: SquareStack },
+  { href: '/app/mint', label: 'Create entitlement', icon: Fingerprint },
+  { href: '/app/credits', label: 'Buy credits', icon: Coins },
+  { href: '/app/sdk', label: 'SDK', icon: Puzzle },
 ];
 
 const access: NavItem[] = [
   { href: '/app/mandate', label: 'Mandate', icon: Shield },
-  { href: '/app/mcp', label: 'MCP', icon: Terminal },
+  { href: '/app/mcp', label: 'Connect agent', icon: Terminal },
 ];
 
-const settings: NavItem[] = [{ href: '/app/settings', label: 'Tracks', icon: Settings2 }];
+const settings: NavItem[] = [
+  { href: '/app/account', label: 'Account', icon: UserRound },
+  { href: '/app/attention', label: 'Needs attention', icon: AlertTriangle },
+  { href: '/app/settings', label: 'Tracks', icon: Settings2 },
+];
 
 function NavLink({ item, active }: { item: NavItem; active: boolean }) {
   const Icon = item.icon;
@@ -81,18 +93,27 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
       try {
         const [status, live] = await Promise.all([
           entitlementsApi.status().catch(() => null),
-          entitlementsApi.live({ feature: 'ocr' }).catch(() => ({ grants: [] })),
+          // All living entitlements (any feature SKU), not OCR-only
+          entitlementsApi.live().catch(() => ({ grants: [] })),
         ]);
         const liveCount = live.grants?.length ?? 0;
-        // “Needs attention” ≈ empty surface or demo/mock tracks
+        // Settings → Needs attention badge: empty entitlements or mock tracks
         let n = 0;
         if (liveCount === 0) n += 1;
         if (status && !status.tracks.arkiv.live) n += 1;
-        if (status?.tracks.hedera.demo_settle) n += 0; // informational, not alert
+        if (status?.tracks.world.mock_proofs) n += 1;
         setAttention(n);
         if (status) {
           const parts = [
-            status.tracks.world.mode === 'live' ? 'World live' : 'World mock',
+            status.tracks.world.mode === 'dual'
+              ? 'World dual'
+              : status.tracks.world.mode === 'idkit'
+                ? 'World IDKit'
+                : status.tracks.world.mode === 'agent_pass'
+                  ? 'World Agent Pass'
+                  : status.tracks.world.mode === 'live' || status.tracks.world.mode === 'oidc'
+                    ? 'World live'
+                    : 'World mock',
             status.tracks.arkiv.live ? 'Arkiv live' : 'Memory',
           ];
           setNetworkLabel(parts.join(' · '));
@@ -103,7 +124,8 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     })();
   }, [pathname, isLogin]);
 
-  const withBadge = primary.map((p) => (p.href === '/app/attention' ? { ...p, badge: attention } : p));
+  const withBadge = primary;
+  const settingsWithBadge = settings.map((p) => (p.href === '/app/attention' ? { ...p, badge: attention } : p));
 
   if (isLogin) return <>{children}</>;
 
@@ -122,7 +144,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             B7
           </div>
           <div className="min-w-0 flex-1">
-            <div className="truncate text-[13px] font-semibold">Mumbai workspace</div>
+            <div className="truncate text-[13px] font-semibold">Operator workspace</div>
             <div className="truncate text-[11px] text-[var(--muted)]">{networkLabel}</div>
           </div>
           <span className="rounded-full border border-[var(--line)] px-2 py-0.5 text-[10px] font-medium text-[var(--muted)]">
@@ -138,7 +160,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             })}
           </div>
           <Group title="Access" items={access} pathname={pathname} />
-          <Group title="Settings" items={settings} pathname={pathname} />
+          <Group title="Settings" items={settingsWithBadge} pathname={pathname} />
         </nav>
 
         <div className="mx-1 space-y-1">
@@ -172,17 +194,20 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               href="/app/mint"
               className="rounded-full bg-[var(--ink)] px-3.5 py-2 text-[13px] font-semibold text-white hover:bg-black"
             >
-              Mint grant
+              Create entitlement
             </Link>
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--hero)] text-[11px] font-bold text-white">
-              OP
-            </div>
+            <Link
+              href="/app/mcp"
+              className="hidden rounded-full border border-[var(--line)] bg-white px-3.5 py-2 text-[13px] font-medium sm:inline-flex"
+            >
+              Connect agent
+            </Link>
           </div>
         </header>
 
         {/* mobile nav */}
         <div className="flex gap-1 overflow-x-auto border-b border-[var(--line)] bg-[var(--soft)] px-3 py-2 lg:hidden">
-          {[...withBadge, ...access, ...settings].map((item) => {
+          {[...withBadge, ...access, ...settingsWithBadge].map((item) => {
             const active = pathname === item.href || (item.href !== '/app' && pathname.startsWith(item.href));
             return (
               <Link

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { add, gte, gt, sub, validateMoney } from '@bagseven/money';
-import type { Grant, GrantStore, MintGrantInput } from './types.js';
+import type { Grant, GrantStore, GrantStoreDescribe, MintGrantInput } from './types.js';
 import { MintGrantInputSchema } from './types.js';
 
 interface HoldRecord {
@@ -139,5 +139,9 @@ export class MemoryGrantStore implements GrantStore {
     const next: Grant = { ...grant, remaining: add(grant.remaining, hold.amount), updated_at: nowIso() };
     this.grants.set(hold.grantId, next);
     return next;
+  }
+
+  describe(): GrantStoreDescribe {
+    return { mode: 'memory', live: false };
   }
 }

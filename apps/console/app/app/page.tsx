@@ -11,10 +11,11 @@ function Sparkline({ points }: { points: number[] }) {
   const w = 560;
   const h = 160;
   const step = w / Math.max(points.length - 1, 1);
+  // Round coords so SSR HTML matches client (avoids hydration mismatch killing interactivity).
   const d = points
     .map((p, i) => {
-      const x = i * step;
-      const y = h - (p / max) * (h - 16) - 8;
+      const x = Math.round(i * step * 1000) / 1000;
+      const y = Math.round((h - (p / max) * (h - 16) - 8) * 1000) / 1000;
       return `${i === 0 ? 'M' : 'L'}${x},${y}`;
     })
     .join(' ');
@@ -33,7 +34,7 @@ export default function OverviewPage() {
 
   const refresh = useCallback(async () => {
     try {
-      const [s, live] = await Promise.all([entitlementsApi.status(), entitlementsApi.live({ feature: 'ocr' })]);
+      const [s, live] = await Promise.all([entitlementsApi.status(), entitlementsApi.live()]);
       setStatus(s);
       setGrants(live.grants ?? []);
     } catch (e) {
@@ -63,17 +64,18 @@ export default function OverviewPage() {
   }, [grants.length, range]);
 
   const attentionBits: string[] = [];
-  if (grants.length === 0) attentionBits.push('no living grant — open Mint');
+  if (grants.length === 0) attentionBits.push('no entitlements yet — create one for a feature');
   if (status && !status.tracks.arkiv.live) attentionBits.push('Arkiv on memory store');
-  if (status?.tracks.hedera.demo_settle) attentionBits.push('Hedera demo settle');
-  if (status?.tracks.world.mock_proofs) attentionBits.push('World mock proofs (paste id_token for live Agent Pass)');
+  if (status?.tracks.whitechain.demo_settle) attentionBits.push('Whitechain demo settle');
+  if (status?.tracks.world.mock_proofs) attentionBits.push('World mock proofs on (hackathon create path)');
 
   return (
     <div className="mx-auto max-w-6xl space-y-5">
       <div>
         <h1 className="text-[2rem] font-semibold tracking-tight md:text-[2.35rem]">Overview</h1>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          Living grant counts and credits are live. Charts below are illustrative until usage telemetry ships.
+          Entitlements = living feature access (credits + TTL). OCR is one demo feature SKU, not the whole product.
+          Charts below are illustrative until usage telemetry ships.
         </p>
       </div>
 
@@ -111,9 +113,9 @@ export default function OverviewPage() {
         </div>
         <div className="mt-4 flex flex-wrap items-end gap-3">
           <div className="text-4xl font-semibold tracking-tight tabular-nums">{remaining.toFixed(2)}</div>
-          <div className="mb-1 text-sm text-[var(--muted)]">credits remaining across living grants</div>
+          <div className="mb-1 text-sm text-[var(--muted)]">credits remaining across living entitlements</div>
           {grants.length === 0 && (
-            <span className="mb-1 rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-600">No grants yet</span>
+            <span className="mb-1 rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-600">No entitlements yet</span>
           )}
         </div>
         <div className="mt-4">
@@ -126,7 +128,7 @@ export default function OverviewPage() {
           <h2 className="text-base font-semibold">Last window</h2>
           <dl className="mt-4 grid grid-cols-2 gap-4">
             <div>
-              <dt className="text-xs uppercase tracking-wide text-[var(--muted)]">Living grants</dt>
+              <dt className="text-xs uppercase tracking-wide text-[var(--muted)]">Entitlements</dt>
               <dd className="mt-1 text-2xl font-semibold tabular-nums">{grants.length}</dd>
             </div>
             <div>
@@ -144,12 +146,22 @@ export default function OverviewPage() {
           </dl>
           <div className="mt-5 flex flex-wrap gap-2">
             <Link href="/app/mint" className="rounded-full bg-[var(--ink)] px-3.5 py-2 text-sm font-semibold text-white">
-              Mint grant
+              Create entitlement
             </Link>
             <Link href="/app/credits" className="rounded-full border border-[var(--line)] px-3.5 py-2 text-sm font-medium">
               Buy credits
             </Link>
           </div>
+        </section>
+
+        <section className="rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
+          <h2 className="text-base font-semibold">Mandate</h2>
+          <p className="mt-1 text-sm text-[var(--muted)]">
+            Spend ceiling for agents (vault + caps). Dual-gate needs this <em>and</em> a living entitlement.
+          </p>
+          <Link href="/app/mandate" className="mt-4 inline-flex rounded-full border border-[var(--line)] px-3.5 py-2 text-sm font-medium">
+            Open mandate →
+          </Link>
         </section>
 
         <section className="rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
@@ -174,7 +186,7 @@ export default function OverviewPage() {
         </section>
       </div>
 
-      <GrantList feature="ocr" />
+      <GrantList />
 
       {msg && <p className="fi-mono text-xs text-[var(--deny)]">{msg}</p>}
     </div>

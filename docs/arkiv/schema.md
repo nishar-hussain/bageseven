@@ -17,8 +17,8 @@ Access truth for Mumbai: if an entity is not returned by a live query, the agent
 | `remaining` | dec | yes | Metered credits left |
 | `renewal_enabled` | str | yes | `"true"` / `"false"` (renewal clock) |
 | `paid_through` | str | no | ISO timestamp (display); Arkiv `$expiresAt` enforces eviction |
-| `payment_tx` | str | yes | Hedera HashScan / settlement id |
-| `settlement_network` | str | yes | `hedera` |
+| `payment_tx` | str | yes | Whitechain explorer / settlement id |
+| `settlement_network` | str | yes | `whitechain` |
 | `world_proof_id` | str | no | World Agent Pass proof / session id |
 | `mandate_id` | str | yes | Linked Bagseven mandate |
 | `worker_id` | str | yes | Bound MCP worker |

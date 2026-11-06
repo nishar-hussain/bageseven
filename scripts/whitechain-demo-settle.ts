@@ -1,9 +1,9 @@
 /**
- * Print a Hedera settle result for README / demo (facilitator or demo mode).
- *   pnpm hedera:settle
+ * Print a Whitechain settle result for README / demo.
+ *   pnpm whitechain:settle
  */
 import { readFileSync } from 'node:fs';
-import { settleHederaX402 } from '../services/daemon/src/hedera-x402.js';
+import { settleWhitechainUsdt } from '../services/daemon/src/whitechain-settle.js';
 
 try {
   for (const line of readFileSync('.env', 'utf8').split('\n')) {
@@ -18,17 +18,16 @@ try {
 }
 
 async function main(): Promise<void> {
-  const result = await settleHederaX402({
+  const result = await settleWhitechainUsdt({
     amount: '1.00',
     feature: 'ocr',
     holder: 'demo-holder',
-    reason: 'hedera-demo-settle script',
+    reason: 'whitechain-demo-settle script',
   });
 
   console.log(JSON.stringify(result, null, 2));
   console.log('\nPaste into README:');
-  console.log(`HEDERA_PAYMENT_TX_ID=${result.payment_tx}`);
-  console.log(result.hashscan_url);
+  console.log(`WHITECHAIN_PAYMENT_TX=${result.payment_tx}`);
 }
 
 main().catch((err) => {

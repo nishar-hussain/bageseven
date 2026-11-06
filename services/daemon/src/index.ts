@@ -8,12 +8,15 @@ import { ApiError, createService, type ServiceDeps } from '@bagseven/server';
 import { recoverEip191 } from '@bagseven/onchain';
 import type { FastifyInstance } from 'fastify';
 import { parseUnits } from 'viem';
-import { getGrantStore } from '@bagseven/entitlements';
+import { FETCH_FEATURE_ID, featureForAction, getGrantStore } from '@bagseven/entitlements';
 import { gte } from '@bagseven/money';
 import { decodeX402PaymentRequired, selectX402Requirements, validateX402AgainstPolicy, type X402Requirements } from './x402.js';
 import { x402PayerFromEnv, type X402Payer } from './x402-payer.js';
 import { registerGrantRoutes } from './grants.js';
-import { settleHederaX402 } from './hedera-x402.js';
+import { WHITECHAIN_CHAIN_ID } from '@bagseven/onchain';
+import { settleWhitechainUsdt } from './whitechain-settle.js';
+import { isPublicEntitlementPath, registerPublicEntitlementRoutes } from './public-entitlements.js';
+import { registerBillingRoutes } from './billing.js';
 
 function fromAtomicUnits(units: string): string {
   const value = BigInt(units);
@@ -138,7 +141,7 @@ async function verifyChallenge(config: NodeJS.ProcessEnv, url: URL, challenge: z
   const recipient = challenge.payTo ?? challenge.recipient;
   if (!recipient) throw new ApiError(502, 'INVALID_PAYMENT_CHALLENGE', 'payment challenge has no recipient');
   if (challenge.expires_at < Math.floor(Date.now() / 1000)) throw new ApiError(502, 'PAYMENT_CHALLENGE_EXPIRED', 'provider payment challenge has expired');
-  const expectedChain = Number(config.CHAIN_ID ?? 43113);
+  const expectedChain = Number(config.CHAIN_ID ?? WHITECHAIN_CHAIN_ID);
   if (challenge.chain !== undefined && Number(challenge.chain) !== expectedChain) throw new ApiError(502, 'PAYMENT_CHAIN_MISMATCH', 'provider challenge chain does not match Bagseven');
   const token = config.USDC_ADDRESS?.toLowerCase();
   if (token && challenge.token && challenge.token.toLowerCase() !== token) throw new ApiError(502, 'PAYMENT_TOKEN_MISMATCH', 'provider challenge token does not match Bagseven');
@@ -155,7 +158,7 @@ async function executeSpend(config: NodeJS.ProcessEnv, resolved: ResolvedWorker,
   }
   const now = Math.floor(Date.now() / 1000);
   const nonce = Number(`${now}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`);
-  const chainId = Number(config.CHAIN_ID ?? 43113);
+  const chainId = Number(config.CHAIN_ID ?? WHITECHAIN_CHAIN_ID);
   const signature = await signer.signTypedData({
     domain: spendIntentDomain(chainId),
     types: spendIntentTypes,
@@ -188,6 +191,7 @@ async function executeSpend(config: NodeJS.ProcessEnv, resolved: ResolvedWorker,
 
 function buildRoutes(app: FastifyInstance, { config, redis }: ServiceDeps): void {
   app.addHook('preHandler', async (req, reply) => {
+    if (isPublicEntitlementPath(req.url)) return;
     const token = config.DAEMON_AUTH_TOKEN;
     if (token && req.headers.authorization !== `Bearer ${token}`) {
       return reply.code(401).send({ error: { code: 'UNAUTHORIZED', message: 'daemon authentication required' } });
@@ -206,10 +210,10 @@ function buildRoutes(app: FastifyInstance, { config, redis }: ServiceDeps): void
       throw new ApiError(403, 'WORKER_INACTIVE', 'worker or mandate is not active');
     }
 
-    // Dual gate (prize path): mandate capacity is checked via spend; also require a
-    // living Arkiv grant for research_fetch / ocr when BAGSEVEN_REQUIRE_GRANT=true (default).
+    // Dual gate: mandate spend + living entitlement for fetch feature (research_fetch).
     const requireGrant = (config.BAGSEVEN_REQUIRE_GRANT ?? 'true').toLowerCase() !== 'false';
-    const grantFeature = config.BAGSEVEN_GRANT_FEATURE ?? 'ocr';
+    const grantFeature =
+      featureForAction('fetch', config.BAGSEVEN_GRANT_FEATURE) ?? FETCH_FEATURE_ID;
     let grantConsume: { grant_id: string; idempotency_key: string } | undefined;
     if (requireGrant) {
       const store = getGrantStore(config);
@@ -222,7 +226,7 @@ function buildRoutes(app: FastifyInstance, { config, redis }: ServiceDeps): void
         throw new ApiError(
           403,
           'DUAL_GATE',
-          `GRANT_EXPIRED: no living ${grantFeature} grant — mint via World / buy_credits first`,
+          `GRANT_EXPIRED: no living ${grantFeature} entitlement — create one for research fetch first`,
         );
       }
       if (!gte(grant.remaining, '1')) {
@@ -261,7 +265,7 @@ function buildRoutes(app: FastifyInstance, { config, redis }: ServiceDeps): void
       }
       if (parsed && typeof parsed === 'object' && (parsed as { x402Version?: unknown }).x402Version === 2) {
         const required = decodeX402PaymentRequired(challengeHeader, parsed);
-        const configuredChainId = Number(config.CHAIN_ID ?? 43113);
+        const configuredChainId = Number(config.CHAIN_ID ?? WHITECHAIN_CHAIN_ID);
         const requirement = selectX402Requirements(required, (config.USDC_ADDRESS ?? '') as `0x${string}`, chainConfigForId(configuredChainId).network);
         validateX402AgainstPolicy(requirement, {
           perPurchaseCap: parseUnits(resolved.mandate.per_purchase_cap, 6),
@@ -331,7 +335,7 @@ function buildRoutes(app: FastifyInstance, { config, redis }: ServiceDeps): void
           throw new ApiError(502, 'X402_SETTLEMENT_FAILED', (error as Error).message);
         }
       } else {
-        const payment = JSON.stringify({ tx_hash: result.tx_hash, amount, recipient, chain_id: Number(config.CHAIN_ID ?? 43113), nonce: challenge?.nonce ?? null });
+        const payment = JSON.stringify({ tx_hash: result.tx_hash, amount, recipient, chain_id: Number(config.CHAIN_ID ?? WHITECHAIN_CHAIN_ID), nonce: challenge?.nonce ?? null });
         const retry = await fetch(providerUrl, { headers: { 'x-payment': payment, 'x-payment-response': payment } });
         provider = { status: retry.status, body: (await retry.text()).slice(0, 10000) };
       }
@@ -340,8 +344,8 @@ function buildRoutes(app: FastifyInstance, { config, redis }: ServiceDeps): void
     if (grantConsume && result.decision === 'allow') {
       const store = getGrantStore(config);
       const grant = await store.consume(grantConsume.grant_id, '1', grantConsume.idempotency_key);
-      const hederaNote = grant.payment_tx
-        ? await settleHederaX402({
+      const settleNote = grant.payment_tx
+        ? await settleWhitechainUsdt({
             amount: amount ?? '0',
             feature: grantFeature,
             holder: grant.holder,
@@ -350,7 +354,7 @@ function buildRoutes(app: FastifyInstance, { config, redis }: ServiceDeps): void
             reason: 'fetch_audit',
           }).catch(() => null)
         : null;
-      entitlement = { grant, settlement: hederaNote, dual_gate: { mandate: 'ok', grant: 'ok' } };
+      entitlement = { grant, settlement: settleNote, dual_gate: { mandate: 'ok', grant: 'ok' } };
     }
 
     return { ...result, worker: resolved.agent, mandate: resolved.mandate, provider, entitlement };
@@ -368,15 +372,15 @@ function buildRoutes(app: FastifyInstance, { config, redis }: ServiceDeps): void
       parentAgentId: body.parent_agent_id,
       operator: body.operator_address.toLowerCase() as `0x${string}`,
       sharePercent: body.share_percent,
-      chainId: Number(config.CHAIN_ID ?? 43113),
+      chainId: Number(config.CHAIN_ID ?? WHITECHAIN_CHAIN_ID),
     });
     const signature = await owner.signMessage({ message: canonical });
-    return daemonApi(config, 'POST', `/v1/mandates/${body.mandate_id}/spawn-agent`, { ...body, chain_id: Number(config.CHAIN_ID ?? 43113), signature });
+    return daemonApi(config, 'POST', `/v1/mandates/${body.mandate_id}/spawn-agent`, { ...body, chain_id: Number(config.CHAIN_ID ?? WHITECHAIN_CHAIN_ID), signature });
   });
 
   // Public entitlement layer (Arkiv physics + World mint gate). Lives beside mandate spend.
-  registerGrantRoutes(app, {
-    resolveMandateCapacity: async (workerId, amount = '1') => {
+  const grantDeps = {
+    resolveMandateCapacity: async (workerId: string, amount = '1') => {
       try {
         const resolved = await resolveWorker(config, workerId);
         const ok = resolved.agent.status === 'active' && resolved.mandate.status === 'active'
@@ -402,7 +406,10 @@ function buildRoutes(app: FastifyInstance, { config, redis }: ServiceDeps): void
         };
       }
     },
-  });
+  };
+  registerGrantRoutes(app, grantDeps);
+  registerPublicEntitlementRoutes(app, grantDeps);
+  registerBillingRoutes(app);
 }
 
 function validateEnvContract(): void {
@@ -426,9 +433,11 @@ function validateEnvContract(): void {
   }
   const store = process.env.ENTITLEMENT_STORE ?? 'memory';
   const arkivLive = Boolean(process.env.ARKIV_ACCESS_KEY && (process.env.ARKIV_PRIVATE_KEY || process.env.PRIVATE_KEY));
-  const hederaDemo = process.env.HEDERA_DEMO_SETTLE ?? (prod ? 'false' : 'true');
+  const whitechainDemo = process.env.WHITECHAIN_DEMO_SETTLE ?? (prod ? 'false' : 'true');
+  const idkit = Boolean(process.env.WORLD_RP_ID?.trim() && process.env.WORLD_RP_SIGNING_KEY?.trim());
+  const worldMode = idkit ? 'idkit' : process.env.WORLD_CLIENT_ID ? 'oidc' : 'mock';
   console.log(
-    `[bagseven-daemon] tracks world=${process.env.WORLD_CLIENT_ID ? 'live' : 'mock'} hedera_demo=${hederaDemo} arkiv=${arkivLive ? 'live' : store}`,
+    `[bagseven-daemon] tracks world=${worldMode} mock_proofs=${process.env.WORLD_MOCK_PROOFS ?? 'true'} whitechain_demo=${whitechainDemo} arkiv=${arkivLive ? 'live' : store}`,
   );
 }
 

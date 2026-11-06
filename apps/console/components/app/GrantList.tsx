@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { entitlementsApi, type Grant } from '../../lib/entitlements-client';
+import { featureLabel, shortId } from '../../lib/use-operator';
 
 function useTtl(paidThrough: string) {
   const [label, setLabel] = useState('…');
@@ -18,63 +19,117 @@ function useTtl(paidThrough: string) {
       setDead(false);
       const s = Math.ceil(ms / 1000);
       const m = Math.floor(s / 60);
-      setLabel(m > 0 ? `${m}m ${s % 60}s` : `${s}s`);
+      const h = Math.floor(m / 60);
+      if (h > 0) setLabel(`${h}h ${m % 60}m`);
+      else setLabel(m > 0 ? `${m}m ${s % 60}s` : `${s}s`);
     };
     tick();
-    const id = setInterval(tick, 500);
+    const id = setInterval(tick, 1000);
     return () => clearInterval(id);
   }, [paidThrough]);
   return { label, dead };
 }
 
-function GrantRow({ grant, network }: { grant: Grant; network: string }) {
+function GrantRow({
+  grant,
+  network,
+  selected,
+  onSelect,
+  onPaidRun,
+  onCancel,
+  busy,
+}: {
+  grant: Grant;
+  network: string;
+  selected: boolean;
+  onSelect: () => void;
+  onPaidRun: () => void;
+  onCancel: () => void;
+  busy: boolean;
+}) {
   const { label, dead } = useTtl(grant.paid_through);
-  const hashscan = grant.payment_tx
-    ? `https://hashscan.io/${network}/transaction/${encodeURIComponent(grant.payment_tx)}`
-    : null;
+  const host = network === 'mainnet' ? 'https://explorer.whitechain.io' : 'https://explorer.testnet.whitechain.io';
+  const explorer = grant.payment_tx ? `${host}/tx/${grant.payment_tx}` : null;
   return (
-    <div className="border-t border-[var(--line)] py-4 first:border-t-0 first:pt-0">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <div>
-          <div className="font-medium">{grant.feature}</div>
-          <div className="fi-mono text-xs text-[var(--muted)]">{grant.id}</div>
+    <div
+      className={`border-t border-[var(--line)] py-4 first:border-t-0 first:pt-0 ${selected ? 'bg-[var(--tint)]/40 -mx-2 px-2 rounded-xl' : ''}`}
+    >
+      <button type="button" onClick={onSelect} className="w-full text-left">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <div>
+            <div className="font-medium">{featureLabel(grant.feature)} entitlement</div>
+            <div className="text-xs text-[var(--muted)]">
+              {grant.holder}
+              <span className="fi-mono ml-2 opacity-60" title={grant.id}>
+                {shortId(grant.id)}
+              </span>
+            </div>
+          </div>
+          <div className={`text-2xl tracking-tight ${dead ? 'text-[var(--deny)]' : 'text-[var(--good)]'}`}>{label}</div>
         </div>
-        <div className={`text-2xl tracking-tight ${dead ? 'text-[var(--deny)]' : 'text-[var(--good)]'}`}>{label}</div>
-      </div>
-      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-[var(--muted)]">
+      </button>
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-[var(--muted)]">
         <span>
-          remaining <strong className="text-[var(--ink)]">{grant.remaining}</strong>
+          <strong className="text-[var(--ink)]">{grant.remaining}</strong> credits left
         </span>
-        <span>renewal {grant.renewal_enabled ? 'on' : 'OFF'}</span>
-        {grant.arkiv_entity_key && (
-          <span className="fi-mono max-w-[12rem] truncate">entity {grant.arkiv_entity_key.slice(0, 14)}…</span>
-        )}
-        {hashscan && (
-          <a className="font-medium text-[var(--blue)] underline" href={hashscan} target="_blank" rel="noreferrer">
-            HashScan
+        <span>Renewal {grant.renewal_enabled ? 'on' : 'off'}</span>
+        {explorer && (
+          <a className="font-medium text-[var(--blue)] underline" href={explorer} target="_blank" rel="noreferrer">
+            Whitechain
           </a>
         )}
+        <button
+          type="button"
+          disabled={busy || dead}
+          onClick={() => onPaidRun()}
+          className="rounded-full border border-[var(--line)] px-3 py-1 text-xs font-semibold disabled:opacity-50"
+        >
+          Spend 1 credit
+        </button>
+        <button
+          type="button"
+          disabled={busy || !grant.renewal_enabled}
+          onClick={() => onCancel()}
+          className="rounded-full border border-[var(--line)] px-3 py-1 text-xs font-semibold disabled:opacity-50"
+        >
+          Cancel renewal
+        </button>
       </div>
     </div>
   );
 }
 
-export function GrantList({ feature, holder }: { feature?: string; holder?: string }) {
+export function GrantList({
+  feature,
+  holder,
+  selectable = false,
+  onSelect,
+  selectedId,
+}: {
+  feature?: string;
+  holder?: string;
+  selectable?: boolean;
+  onSelect?: (grant: Grant) => void;
+  selectedId?: string;
+}) {
   const [grants, setGrants] = useState<Grant[]>([]);
   const [network, setNetwork] = useState('testnet');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [actionMsg, setActionMsg] = useState('');
+  const [localSelected, setLocalSelected] = useState<string | undefined>(selectedId);
 
   const refresh = useCallback(async () => {
-    setLoading(true);
     setError(null);
     try {
-      const [status, live] = await Promise.all([
-        entitlementsApi.status().catch(() => null),
-        entitlementsApi.live({ feature, holder }),
-      ]);
-      if (status?.tracks.hedera.network) setNetwork(status.tracks.hedera.network);
-      setGrants(live.grants ?? []);
+      const live = await entitlementsApi.live({ feature, holder });
+      const list = live.grants ?? [];
+      setGrants(list);
+      setLocalSelected((prev) => {
+        if (prev && list.some((g) => g.id === prev)) return prev;
+        return list[0]?.id;
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -83,18 +138,74 @@ export function GrantList({ feature, holder }: { feature?: string; holder?: stri
   }, [feature, holder]);
 
   useEffect(() => {
+    setLoading(true);
     void refresh();
-    const id = setInterval(() => void refresh(), 8000);
+    const id = setInterval(() => void refresh(), 10_000);
     return () => clearInterval(id);
   }, [refresh]);
+
+  useEffect(() => {
+    if (selectedId) setLocalSelected(selectedId);
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (!selectable || !localSelected) return;
+    const g = grants.find((x) => x.id === localSelected);
+    if (g) onSelect?.(g);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [localSelected, grants, selectable]);
+
+  useEffect(() => {
+    void entitlementsApi
+      .status()
+      .then((s) => {
+        if (s?.tracks.whitechain.network) setNetwork(s.tracks.whitechain.network);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  const paidRun = async (grant: Grant) => {
+    setBusyId(grant.id);
+    setActionMsg('Running…');
+    try {
+      const r = await entitlementsApi.paidRun({
+        grant_id: grant.id,
+        amount: '1',
+        work: 'console run',
+      });
+      setActionMsg(`Spent 1 credit · ${r.grant.remaining} left`);
+      await refresh();
+    } catch (e) {
+      setActionMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const cancel = async (grant: Grant) => {
+    setBusyId(grant.id);
+    setActionMsg('Cancelling renewal…');
+    try {
+      const r = await entitlementsApi.cancelRenewal(grant.id);
+      setActionMsg(`Renewal ${r.grant.renewal_enabled ? 'on' : 'off'}`);
+      await refresh();
+    } catch (e) {
+      setActionMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   return (
     <div className="rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
       <div className="mb-4 flex items-center justify-between gap-3">
-        <h2 className="text-base font-semibold tracking-tight">Living grants</h2>
+        <h2 className="text-base font-semibold tracking-tight">Living entitlements</h2>
         <button
           type="button"
-          onClick={() => void refresh()}
+          onClick={() => {
+            setLoading(true);
+            void refresh();
+          }}
           className="rounded-full border border-[var(--line)] px-3 py-1.5 text-sm font-medium hover:bg-[var(--soft)]"
         >
           Refresh
@@ -104,15 +215,31 @@ export function GrantList({ feature, holder }: { feature?: string; holder?: stri
       {error && <p className="text-sm text-[var(--deny)]">{error}</p>}
       {!loading && !error && grants.length === 0 && (
         <div className="py-10 text-center">
-          <p className="text-[var(--muted)]">No living grant on the query surface.</p>
-          <Link href="/app/mint" className="mt-5 inline-flex rounded-full bg-[var(--ink)] px-5 py-2 text-sm font-semibold text-white">
-            Mint with World first
+          <p className="font-medium text-[var(--ink)]">No entitlements yet.</p>
+          <p className="mt-2 text-sm text-[var(--muted)]">
+            Entitlement = right to use a feature (credits + expiry). OCR is one demo feature, not the product.
+          </p>
+          <Link href="/app/mint" className="mt-5 inline-flex rounded-full bg-[var(--blue)] px-5 py-2 text-sm font-semibold text-white">
+            Create entitlement →
           </Link>
         </div>
       )}
       {grants.map((g) => (
-        <GrantRow key={g.id} grant={g} network={network} />
+        <GrantRow
+          key={g.id}
+          grant={g}
+          network={network}
+          selected={selectable && localSelected === g.id}
+          busy={busyId === g.id}
+          onSelect={() => {
+            setLocalSelected(g.id);
+            onSelect?.(g);
+          }}
+          onPaidRun={() => void paidRun(g)}
+          onCancel={() => void cancel(g)}
+        />
       ))}
+      {actionMsg && <p className="mt-3 text-sm text-[var(--muted)]">{actionMsg}</p>}
     </div>
   );
 }

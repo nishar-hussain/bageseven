@@ -68,10 +68,8 @@ function buildServer(): McpServer {
         const message = (error as Error).message;
         if (!/NOT_FOUND|no agent found/i.test(message)) throw error;
         const tracks = await daemon('GET', '/internal/mumbai/status');
-        const grants = await daemon(
-          'GET',
-          `/internal/grants/live?feature=${encodeURIComponent(process.env.BAGSEVEN_GRANT_FEATURE ?? 'ocr')}`,
-        );
+        // All living entitlements — do not force OCR filter
+        const grants = await daemon('GET', '/internal/grants/live');
         return text({
           mode: 'entitlements_only',
           worker: WORKER,
@@ -136,20 +134,18 @@ function buildServer(): McpServer {
     {
       title: 'Live entitlement status',
       description:
-        'List living grants (Arkiv/query surface). Expired grants disappear — that is the access clock. Matches bagseven_status: feature filter defaults to ocr; optional holder filters the human owner. Operator-minted grants without worker_id are included.',
+        'List living entitlements (Arkiv). Omit feature to list all SKUs (ocr, research_fetch, …). Expired grants disappear — that is the access clock.',
       inputSchema: {
         holder: z.string().optional(),
-        feature: z.string().optional(),
+        feature: z.string().optional().describe('Optional feature SKU filter; omit for all'),
       },
     },
     async ({ holder, feature }) => {
       const params = new URLSearchParams();
       if (holder) params.set('holder', holder);
-      // Align with bagseven_status entitlements_only path (do not force worker_id —
-      // console/curl mints often omit it; filtering by WORKER returned empty lists).
-      params.set('feature', feature?.trim() || process.env.BAGSEVEN_GRANT_FEATURE || 'ocr');
+      if (feature?.trim()) params.set('feature', feature.trim());
       const qs = params.toString();
-      return text(await daemon('GET', `/internal/grants/live?${qs}`));
+      return text(await daemon('GET', `/internal/grants/live${qs ? `?${qs}` : ''}`));
     },
   );
 
@@ -166,7 +162,7 @@ function buildServer(): McpServer {
         remaining: z.string().default('10'),
         ttl_seconds: z.number().int().positive().default(120),
         payment_tx: z.string().optional(),
-        settlement_network: z.enum(['hedera', 'avalanche_fuji', 'local']).default('hedera'),
+        settlement_network: z.enum(['whitechain', 'local']).default('whitechain'),
         world_proof_id: z.string().optional().describe('world:ok:<id> or world:cancel|expire|deny:<id>'),
         id_token: z.string().optional().describe('OIDC ID token in live World mode'),
         world_denied: z.boolean().optional(),
@@ -185,13 +181,13 @@ function buildServer(): McpServer {
     'buy_credits',
     {
       title: 'Buy / top up credits',
-      description: 'Hedera x402 settle → HashScan payment_tx on grant → extend Arkiv access clock.',
+      description: 'Whitechain USDT settle → explorer payment_tx on grant → extend Arkiv access clock.',
       inputSchema: {
         feature: z.string().min(1).default('ocr'),
         holder: z.string().min(1),
         remaining: z.string().default('10'),
         ttl_seconds: z.number().int().positive().default(120),
-        payment_tx: z.string().optional().describe('Existing HashScan tx id; omit to settle via facilitator/demo'),
+        payment_tx: z.string().optional().describe('Existing Whitechain tx hash; omit to settle via operator/demo'),
         amount: z.string().default('1.00'),
         human_id: z.string().optional(),
         world_proof_id: z.string().optional(),
@@ -204,21 +200,100 @@ function buildServer(): McpServer {
   );
 
   server.registerTool(
+    'create_checkout_session',
+    {
+      title: 'Create checkout session',
+      description:
+        'Open a thin Plan checkout session for a holder. Buyer pays USDT on Whitechain (WhiteWallet/EVM); confirm mints a living Arkiv grant. Not a payment-link product.',
+      inputSchema: {
+        plan_id: z.string().min(1),
+        holder: z.string().min(1),
+        success_url: z.string().url().optional(),
+        expires_in: z.number().int().positive().max(86_400).optional(),
+      },
+    },
+    async (input) => text(await daemon('POST', '/v1/checkout-sessions', input)),
+  );
+
+  server.registerTool(
+    'check_entitlement',
+    {
+      title: 'Check entitlement',
+      description: 'Schematic-style check: is this feature enabled for a holder, with remaining credits and TTL? Reads living Arkiv grants.',
+      inputSchema: {
+        feature: z.string().min(1).default('ocr'),
+        holder: z.string().optional().describe('Defaults to scanning living grants bound to this worker'),
+      },
+    },
+    async ({ feature, holder }) => {
+      const params = new URLSearchParams({ feature });
+      if (holder) params.set('holder', holder);
+      const live = (await daemon('GET', `/internal/grants/live?${params.toString()}`)) as { grants?: Array<{ remaining: string; enabled?: boolean; paid_through?: string; id: string; feature: string }> };
+      const ranked = [...(live.grants ?? [])].sort((a, b) => Number(b.remaining) - Number(a.remaining));
+      const grant = ranked[0];
+      const enabled = Boolean(grant && Number(grant.remaining) > 0);
+      return text({
+        feature,
+        enabled,
+        remaining: grant?.remaining ?? '0',
+        paid_through: grant?.paid_through ?? null,
+        grant_id: grant?.id ?? null,
+        value: enabled,
+      });
+    },
+  );
+
+  server.registerTool(
+    'consume_entitlement',
+    {
+      title: 'Consume entitlement',
+      description: 'Dual-gate burn: mandate remaining AND living grant. Same verb as BagsevenClient.consumeEntitlement.',
+      inputSchema: {
+        feature: z.string().min(1).default('ocr'),
+        holder: z.string().optional(),
+        amount: z.string().default('1'),
+        idempotency_key: z.string().optional(),
+        grant_id: z.string().optional(),
+      },
+    },
+    async (input) =>
+      text(
+        await daemon('POST', '/internal/grants/paid-run', {
+          feature: input.feature,
+          holder: input.holder,
+          amount: input.amount,
+          idempotency_key: input.idempotency_key ?? `mcp-consume-${Date.now()}`,
+          grant_id: input.grant_id,
+          worker_id: WORKER,
+        }),
+      ),
+  );
+
+  server.registerTool(
     'paid_run',
     {
       title: 'Dual-gate paid work unit',
-      description: 'Requires mandate capacity AND living grant with remaining >= cost. Either fail → refuse.',
+      description:
+        'Spend one unit of a living entitlement. Pass feature to target a SKU, or omit to auto-pick the richest living grant. Pass grant_id only when targeting a specific grant.',
       inputSchema: {
-        grant_id: z.string().min(1),
+        feature: z.string().optional().describe('Feature SKU (ocr | research_fetch); omit to auto-pick any'),
+        grant_id: z.string().optional().describe('Optional specific grant UUID; omit to auto-pick'),
         amount: z.string().default('1'),
         work: z.string().max(2000).optional(),
         idempotency_key: z.string().optional(),
       },
     },
-    async (input) => text(await daemon('POST', '/internal/grants/paid-run', {
-      ...input,
-      worker_id: WORKER,
-    })),
+    async (input) =>
+      text(
+        await daemon('POST', '/internal/grants/paid-run', {
+          feature: input.feature?.trim() || undefined,
+          grant_id: input.grant_id?.trim() || undefined,
+          amount: input.amount,
+          work: input.work,
+          idempotency_key: input.idempotency_key,
+          worker_id: WORKER,
+        }),
+      ),
   );
 
   server.registerTool(

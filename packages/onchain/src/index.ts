@@ -14,11 +14,24 @@ import {
 import { keccak256, stringToHex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { defineChain } from 'viem';
-import { avalancheFuji } from 'viem/chains';
 import { BagMandateAbi } from './abi.js';
 import { BagMandateBytecode } from './bytecode.js';
 
 export { BagMandateAbi } from './abi.js';
+
+/** Whitechain Testnet (Sepolia) — product money rail. */
+export const WHITECHAIN_CHAIN_ID = 1874;
+export const WHITECHAIN_NETWORK = 'eip155:1874';
+export const WHITECHAIN_RPC_URL = 'https://rpc.testnet.whitechain.io';
+export const WHITECHAIN_EXPLORER = 'https://explorer.testnet.whitechain.io';
+
+export const whitechainSepolia = defineChain({
+  id: WHITECHAIN_CHAIN_ID,
+  name: 'Whitechain Testnet',
+  nativeCurrency: { name: 'WhiteBIT Coin', symbol: 'WBT', decimals: 18 },
+  rpcUrls: { default: { http: [WHITECHAIN_RPC_URL] } },
+  blockExplorers: { default: { name: 'Whitechain Explorer', url: WHITECHAIN_EXPLORER } },
+});
 
 /** The local anvil chain (chainId 31337). */
 export const localChain = defineChain({
@@ -49,28 +62,33 @@ export interface MandateClientOpts {
   chainId?: number;
 }
 
-export const SUPPORTED_CHAIN_IDS = [43113] as const;
+export const SUPPORTED_CHAIN_IDS = [WHITECHAIN_CHAIN_ID] as const;
 export type SupportedChainId = (typeof SUPPORTED_CHAIN_IDS)[number];
 
 export const chainConfig = {
-  43113: {
-    id: 43113,
-    name: 'Avalanche Fuji',
-    network: 'eip155:43113',
-    nativeSymbol: 'AVAX',
-    defaultRpcUrl: 'https://api.avax-test.network/ext/bc/C/rpc',
-    usdc: '0x5425890298aed601595a70AB815c96711a31Bc65',
+  [WHITECHAIN_CHAIN_ID]: {
+    id: WHITECHAIN_CHAIN_ID,
+    name: 'Whitechain Testnet',
+    network: WHITECHAIN_NETWORK,
+    nativeSymbol: 'WBT',
+    defaultRpcUrl: WHITECHAIN_RPC_URL,
+    explorer: WHITECHAIN_EXPLORER,
+    usdc: '',
   },
 } as const;
 
 export function chainForId(chainId: number) {
-  if (chainId === 43113) return avalancheFuji;
-  throw new Error(`unsupported chain id ${chainId}; expected Avalanche Fuji (43113)`);
+  if (chainId === WHITECHAIN_CHAIN_ID) return whitechainSepolia;
+  throw new Error(`unsupported chain id ${chainId}; expected Whitechain Testnet (${WHITECHAIN_CHAIN_ID})`);
 }
 
 export function chainConfigForId(chainId: number) {
-  if (chainId === 43113) return chainConfig[chainId];
-  throw new Error(`unsupported chain id ${chainId}; expected Avalanche Fuji (43113)`);
+  if (chainId === WHITECHAIN_CHAIN_ID) return chainConfig[WHITECHAIN_CHAIN_ID];
+  throw new Error(`unsupported chain id ${chainId}; expected Whitechain Testnet (${WHITECHAIN_CHAIN_ID})`);
+}
+
+export function defaultChainId(env: NodeJS.ProcessEnv = process.env): number {
+  return Number(env.CHAIN_ID ?? WHITECHAIN_CHAIN_ID);
 }
 
 const abi: any = BagMandateAbi as any;
@@ -81,7 +99,7 @@ export class MandateClient {
   readonly address: Address;
 
   constructor(privateKey: Hex, opts: MandateClientOpts) {
-    const chain = opts.chainId === 31337 ? localChain : chainForId(opts.chainId ?? 43113);
+    const chain = opts.chainId === 31337 ? localChain : chainForId(opts.chainId ?? WHITECHAIN_CHAIN_ID);
     const transport = opts.rpcFallbackUrl && opts.rpcFallbackUrl !== opts.rpcUrl
       ? fallback([
         http(opts.rpcUrl, { retryCount: 2, retryDelay: 500 }),

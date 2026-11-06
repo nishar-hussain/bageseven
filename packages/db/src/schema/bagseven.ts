@@ -127,6 +127,49 @@ export const refusals = pgTable(
   (t) => [index('idx_refusals_mandate_created').on(t.mandateId, t.requestedAt)],
 );
 
+/** Thin SaaS plan → living Arkiv entitlement (no payment-link product line). */
+export const billingPlans = pgTable(
+  'billing_plans',
+  {
+    id: text('id').primaryKey(),
+    feature: text('feature').notNull(),
+    name: text('name').notNull(),
+    amount: text('amount').notNull(),
+    interval: text('interval').notNull().default('once'),
+    credits: text('credits').notNull().default('10'),
+    ttlSeconds: integer('ttl_seconds').notNull().default(3600),
+    merchantWallet: text('merchant_wallet').notNull(),
+    active: text('active').notNull().default('true'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('idx_billing_plans_feature').on(t.feature)],
+);
+
+export const checkoutSessions = pgTable(
+  'checkout_sessions',
+  {
+    id: text('id').primaryKey(),
+    planId: text('plan_id')
+      .notNull()
+      .references(() => billingPlans.id, { onDelete: 'cascade' }),
+    holder: text('holder').notNull(),
+    status: text('status').notNull().default('PENDING'),
+    amount: text('amount').notNull(),
+    chainId: integer('chain_id').notNull().default(1874),
+    customerWallet: text('customer_wallet'),
+    paymentTx: text('payment_tx'),
+    grantId: text('grant_id'),
+    successUrl: text('success_url'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('idx_checkout_sessions_plan').on(t.planId),
+    index('idx_checkout_sessions_holder').on(t.holder),
+    index('idx_checkout_sessions_status').on(t.status),
+  ],
+);
+
 /** Every on-chain action for audit. */
 export const transactions = pgTable(
   'transactions',

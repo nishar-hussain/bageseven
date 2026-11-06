@@ -44,7 +44,7 @@ async function main() {
     holder: 'smoke-human',
     remaining: '3',
     ttl_seconds: 90,
-    settlement_network: 'hedera',
+    settlement_network: 'whitechain',
     world_proof_id: 'world:ok:smoke-human',
     renewal_enabled: true,
     worker_id: worker,

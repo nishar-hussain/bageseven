@@ -8,7 +8,7 @@ const payment: PaymentRequired = {
   resource: { url: 'https://provider.example/resource' },
   accepts: [{
     scheme: 'exact',
-    network: 'eip155:43113',
+    network: 'eip155:1874',
     amount: '10000',
     payTo: '0x1111111111111111111111111111111111111111',
     asset: '0x5425890298aed601595a70AB815c96711a31Bc65',
@@ -20,7 +20,7 @@ const payment: PaymentRequired = {
 const requirement = {
   x402Version: 2 as const,
   scheme: 'exact',
-  network: 'eip155:43113',
+  network: 'eip155:1874',
   amount: '10000',
   payTo: '0x1111111111111111111111111111111111111111' as `0x${string}`,
   asset: '0x5425890298aed601595a70AB815c96711a31Bc65' as `0x${string}`,
@@ -33,7 +33,7 @@ describe('isolated x402 payer', () => {
     const payer = new X402Payer({
       key: '0x0123456789012345678901234567890123456789012345678901234567890123',
       rpcUrl: 'http://127.0.0.1:8545',
-      chainId: 43113,
+      chainId: 1874,
       usdc: requirement.asset,
     });
     const paymentResult = await payer.createPayment(payment, requirement);
@@ -51,11 +51,11 @@ describe('isolated x402 payer', () => {
     expect(() => new X402Payer({ key: '0x0123456789012345678901234567890123456789012345678901234567890123', rpcUrl: 'http://127.0.0.1:8545', chainId: 11155111, usdc: requirement.asset })).toThrow('unsupported chain id');
   });
 
-  it('supports Avalanche Fuji payer configuration', async () => {
+  it('supports Whitechain payer configuration', async () => {
     const payer = new X402Payer({
       key: '0x0123456789012345678901234567890123456789012345678901234567890123',
       rpcUrl: 'http://127.0.0.1:8545',
-      chainId: 43113,
+      chainId: 1874,
       usdc: '0x5425890298aed601595a70AB815c96711a31Bc65',
     });
     expect(payer.account.address).toMatch(/^0x[0-9a-fA-F]{40}$/);

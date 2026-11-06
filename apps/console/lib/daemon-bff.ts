@@ -9,12 +9,15 @@ export function daemonAuthHeaders(): HeadersInit {
   return token ? { authorization: `Bearer ${token}` } : {};
 }
 
-export async function daemonFetch(path: string, init?: RequestInit): Promise<Response> {
-  const headers = new Headers(init?.headers);
-  const auth = daemonAuthHeaders();
-  for (const [k, v] of Object.entries(auth)) headers.set(k, v as string);
-  if (init?.body && !headers.has('content-type')) headers.set('content-type', 'application/json');
-  return fetch(`${daemonBase()}${path}`, { ...init, headers, cache: 'no-store' });
+export async function daemonFetch(path: string, init?: RequestInit & { skipDaemonAuth?: boolean }): Promise<Response> {
+  const { skipDaemonAuth, ...rest } = init ?? {};
+  const headers = new Headers(rest.headers);
+  if (!skipDaemonAuth) {
+    const auth = daemonAuthHeaders();
+    for (const [k, v] of Object.entries(auth)) headers.set(k, v as string);
+  }
+  if (rest.body && !headers.has('content-type')) headers.set('content-type', 'application/json');
+  return fetch(`${daemonBase()}${path}`, { ...rest, headers, cache: 'no-store' });
 }
 
 export async function daemonJson<T = unknown>(path: string, init?: RequestInit): Promise<{ ok: boolean; status: number; body: T }> {

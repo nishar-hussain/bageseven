@@ -4,100 +4,54 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { GrantList } from '../../../components/app/GrantList';
 import { StatusBadges } from '../../../components/app/StatusBadges';
-import { entitlementsApi } from '../../../lib/entitlements-client';
+import type { Grant } from '../../../lib/entitlements-client';
+import { featureLabel, shortId } from '../../../lib/use-operator';
 
 export default function GrantsPage() {
-  const [grantId, setGrantId] = useState('');
-  const [amount, setAmount] = useState('1');
-  const [work, setWork] = useState('ocr unit');
-  const [msg, setMsg] = useState('');
-
-  const paidRun = async () => {
-    setMsg('Running…');
-    try {
-      const r = await entitlementsApi.paidRun({
-        grant_id: grantId,
-        amount,
-        work,
-      });
-      setMsg(`OK remaining=${r.grant.remaining}`);
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : String(e));
-    }
-  };
-
-  const cancel = async () => {
-    if (!grantId) return;
-    setMsg('Cancelling renewal…');
-    try {
-      const r = await entitlementsApi.cancelRenewal(grantId);
-      setMsg(`Renewal ${r.grant.renewal_enabled ? 'on' : 'off'} · access until ${r.grant.paid_through}`);
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : String(e));
-    }
-  };
-
-  const explain = async () => {
-    setMsg('…');
-    try {
-      const r = await entitlementsApi.explainDenial({
-        grant_id: grantId || undefined,
-        feature: 'ocr',
-        world_proof_id: 'world:expire:demo',
-      });
-      setMsg(r.reasons.map((x) => `${x.code}: ${x.detail}`).join(' · '));
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : String(e));
-    }
-  };
+  const [selected, setSelected] = useState<Grant | null>(null);
 
   return (
-    <div className="mx-auto max-w-6xl space-y-5">
+    <div className="mx-auto max-w-3xl space-y-5">
       <div>
         <h1 className="text-[2rem] font-semibold tracking-tight">Entitlements</h1>
-        <p className="mt-1 text-sm text-[var(--muted)]">Living Arkiv grants — TTL, remaining credits, HashScan.</p>
+        <p className="mt-1 text-sm text-[var(--muted)]">
+          Living feature access (credits + TTL). Agents also need a funded{' '}
+          <Link href="/app/mandate" className="font-medium text-[var(--blue)] underline">
+            mandate
+          </Link>{' '}
+          for dual-gate spend.
+        </p>
         <div className="mt-4">
           <StatusBadges />
         </div>
       </div>
 
-      <GrantList feature="ocr" />
-
-      <div className="rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)] space-y-4">
-        <div>
-          <h2 className="text-base font-semibold">Dual-gate actions</h2>
-          <p className="mt-1 text-sm text-[var(--muted)]">Paste a grant id. Paid run checks worker mandate capacity before using grant credits.</p>
-        </div>
-        <div className="grid gap-3 md:grid-cols-3">
-          <div className="fi-field">
-            <label htmlFor="grantId">Grant id</label>
-            <input id="grantId" className="fi-mono text-sm !rounded-xl" value={grantId} onChange={(e) => setGrantId(e.target.value)} />
-          </div>
-          <div className="fi-field">
-            <label htmlFor="amount">Amount</label>
-            <input id="amount" className="!rounded-xl" value={amount} onChange={(e) => setAmount(e.target.value)} />
-          </div>
-          <div className="fi-field">
-            <label htmlFor="work">Work note</label>
-            <input id="work" className="!rounded-xl" value={work} onChange={(e) => setWork(e.target.value)} />
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => void paidRun()} className="rounded-full bg-[var(--ink)] px-4 py-2 text-sm font-semibold text-white">
-            Paid run
-          </button>
-          <button type="button" onClick={() => void cancel()} className="rounded-full border border-[var(--line)] px-4 py-2 text-sm font-medium">
-            Cancel renewal
-          </button>
-          <button type="button" onClick={() => void explain()} className="rounded-full border border-[var(--line)] px-4 py-2 text-sm font-medium">
-            Explain denial
-          </button>
-          <Link href="/app/mint" className="rounded-full bg-[var(--blue)] px-4 py-2 text-sm font-semibold text-white">
-            Mint
-          </Link>
-        </div>
-        {msg && <p className="fi-mono text-xs text-[var(--muted)]">{msg}</p>}
+      <div className="rounded-2xl border border-[var(--line)] bg-[var(--soft)] px-4 py-3 text-sm text-[var(--ink2)]">
+        <strong className="text-[var(--ink)]">Feature</strong> → <strong className="text-[var(--ink)]">Entitlement</strong> →{' '}
+        <strong className="text-[var(--ink)]">Mandate</strong> spend ceiling → agent MCP
       </div>
+
+      <GrantList selectable selectedId={selected?.id} onSelect={setSelected} />
+
+      {selected && (
+        <div className="space-y-3 rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
+          <h2 className="text-base font-semibold">Selected</h2>
+          <p className="text-sm text-[var(--muted)]">
+            {featureLabel(selected.feature)} · {selected.remaining} credits · {shortId(selected.id)}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Link href="/app/mandate" className="rounded-full bg-[var(--ink)] px-4 py-2 text-sm font-semibold text-white">
+              View mandate
+            </Link>
+            <Link href="/app/mint" className="rounded-full border border-[var(--line)] px-4 py-2 text-sm font-medium">
+              Create another
+            </Link>
+            <Link href="/app/mcp" className="rounded-full border border-[var(--line)] px-4 py-2 text-sm font-medium">
+              Connect agent
+            </Link>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

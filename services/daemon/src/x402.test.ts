@@ -9,7 +9,7 @@ const payTo = '0xE3837fE309618AE075DbeF0A20735c0615a308E6' as `0x${string}`;
 const payment: PaymentRequired = {
   x402Version: 2,
   resource: { url: 'https://provider.example/resource' },
-  accepts: [{ scheme: 'exact', network: 'eip155:43113', amount: '10000', payTo, asset, maxTimeoutSeconds: 300, extra: { name: 'USDC', version: '2' } }],
+  accepts: [{ scheme: 'exact', network: 'eip155:1874', amount: '10000', payTo, asset, maxTimeoutSeconds: 300, extra: { name: 'USDC', version: '2' } }],
 };
 
 function expectCode(fn: () => unknown, code: string): void {
@@ -17,14 +17,14 @@ function expectCode(fn: () => unknown, code: string): void {
   catch (error) { expect(error).toBeInstanceOf(ApiError); expect((error as ApiError).code).toBe(code); }
 }
 
-describe('x402 v2 Avalanche Fuji adapter', () => {
+describe('x402 v2 Whitechain adapter', () => {
   it('decodes the official PAYMENT-REQUIRED header and selects exact USDC', () => {
     const decoded = decodeX402PaymentRequired(encodePaymentRequiredHeader(payment));
-    expect(selectX402Requirements(decoded, asset)).toMatchObject({ network: 'eip155:43113', amount: '10000', payTo, asset });
+    expect(selectX402Requirements(decoded, asset)).toMatchObject({ network: 'eip155:1874', amount: '10000', payTo, asset });
   });
 
-  it('selects exact USDC on Avalanche Fuji when configured', () => {
-    expect(selectX402Requirements(payment, asset)).toMatchObject({ network: 'eip155:43113', amount: '10000' });
+  it('selects exact USDC on Whitechain when configured', () => {
+    expect(selectX402Requirements(payment, asset)).toMatchObject({ network: 'eip155:1874', amount: '10000' });
   });
 
   it('rejects unsupported networks', () => {
@@ -62,7 +62,7 @@ describe('x402 v2 Avalanche Fuji adapter', () => {
 
   it('classifies failed and pending settlement without claiming success', () => {
     expect(classifyX402Settlement({ ok: false, body: { error: 'reverted' } })).toEqual({ state: 'failed', reason: 'x402 settlement failed' });
-    expect(classifyX402Settlement({ ok: false, transaction: '0xabc', network: 'eip155:43113' })).toMatchObject({ state: 'pending', transaction: '0xabc' });
-    expect(classifyX402Settlement({ ok: true, transaction: '0xdef', network: 'eip155:43113' })).toEqual({ state: 'settled', transaction: '0xdef', network: 'eip155:43113' });
+    expect(classifyX402Settlement({ ok: false, transaction: '0xabc', network: 'eip155:1874' })).toMatchObject({ state: 'pending', transaction: '0xabc' });
+    expect(classifyX402Settlement({ ok: true, transaction: '0xdef', network: 'eip155:1874' })).toEqual({ state: 'settled', transaction: '0xdef', network: 'eip155:1874' });
   });
 });
