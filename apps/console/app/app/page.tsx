@@ -84,7 +84,7 @@ export default function OverviewPage() {
   const spark = useMemo(() => creditsSeries(grants, days), [grants, days]);
 
   const attentionBits: string[] = [];
-  if (grants.length === 0) attentionBits.push('no entitlements yet');
+  if (grants.length === 0) attentionBits.push('no live entitlements yet');
   if (status && !status.tracks.arkiv.live) attentionBits.push('Arkiv on local store');
   if (status?.tracks.whitechain.demo_settle) attentionBits.push('Whitechain settle offline');
   if (setup.email) attentionBits.push('email unverified');
@@ -132,7 +132,7 @@ export default function OverviewPage() {
           <div className="text-4xl font-semibold tracking-tight tabular-nums">{remaining.toFixed(2)}</div>
           <div className="mb-1 text-sm text-[var(--muted)]">across living entitlements</div>
           {grants.length === 0 ? (
-            <StatusPill tone="warn">None yet</StatusPill>
+            <StatusPill tone="neutral">No live entitlements yet</StatusPill>
           ) : (
             <StatusPill tone="good">{grants.length} live</StatusPill>
           )}

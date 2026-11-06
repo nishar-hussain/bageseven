@@ -6,6 +6,10 @@ type Ctx = { params: Promise<{ path: string[] }> };
 const ALLOWED: Array<{ method: string; match: (parts: string[]) => boolean }> = [
   { method: 'GET', match: (p) => p[0] === 'check' && p.length === 1 },
   { method: 'GET', match: (p) => p[0] === 'entitlements' && p.length === 1 },
+  {
+    method: 'POST',
+    match: (p) => p[0] === 'entitlements' && p.length === 3 && p[2] === 'cancel-renewal',
+  },
   { method: 'POST', match: (p) => p[0] === 'usage' && p[1] === 'consume' && p.length === 2 },
   { method: 'POST', match: (p) => p[0] === 'credits' && p.length === 1 },
   { method: 'POST', match: (p) => p[0] === 'access-tokens' && p.length === 1 },

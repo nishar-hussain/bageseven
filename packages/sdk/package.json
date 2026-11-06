@@ -8,23 +8,33 @@
   "exports": {
     ".": {
       "types": "./dist/node.d.ts",
+      "import": "./dist/node.js",
       "default": "./dist/node.js"
     },
     "./node": {
       "types": "./dist/node.d.ts",
+      "import": "./dist/node.js",
       "default": "./dist/node.js"
     },
     "./react": {
       "types": "./dist/react.d.ts",
+      "import": "./dist/react.js",
       "default": "./dist/react.js"
     },
     "./agent": {
       "types": "./dist/agent.d.ts",
+      "import": "./dist/agent.js",
       "default": "./dist/agent.js"
     },
     "./wallet": {
       "types": "./dist/wallet.d.ts",
+      "import": "./dist/wallet.js",
       "default": "./dist/wallet.js"
+    },
+    "./components": {
+      "types": "./dist/components.d.ts",
+      "import": "./dist/components.js",
+      "default": "./dist/components.js"
     }
   },
   "scripts": {

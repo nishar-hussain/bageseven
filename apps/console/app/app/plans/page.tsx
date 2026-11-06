@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { connectWhitechainWallet } from '@bagseven/sdk/wallet';
+import { connectWhitechainWallet } from '../../../lib/bagseven-sdk-wallet';
 import {
   EmptyState,
   PageHeader,
@@ -63,11 +63,12 @@ export default function PlansPage() {
     setBusy(true);
     setMsg('');
     try {
+      const isBool = features.find((f) => f.id === feature)?.value_type === 'boolean';
       await billingApi.createPlan({
         name,
         feature,
         amount,
-        credits,
+        credits: isBool ? '1' : credits,
         ttl_seconds: ttl,
         interval: billingInterval,
         merchant_wallet: wallet,
@@ -88,11 +89,11 @@ export default function PlansPage() {
         title="Plans"
         description={
           <>
-            Catalog prices. Sell via{' '}
+            Priced packages that mint entitlements on pay. Embed them via{' '}
             <Link href="/app/builder" className="font-medium text-[var(--blue)] underline decoration-dotted underline-offset-2">
               Builder
-            </Link>
-            .
+            </Link>{' '}
+            (<code className="fi-mono text-xs">cmp_pricing</code>).
           </>
         }
         action={<PrimaryButton onClick={() => setShowCreate((v) => !v)}>{showCreate ? 'Close' : 'New plan'}</PrimaryButton>}
@@ -101,6 +102,9 @@ export default function PlansPage() {
       {showCreate ? (
         <SoftCard className="p-5">
           <h2 className="text-[15px] font-semibold">New plan</h2>
+          <p className="mt-1 text-[13px] text-[var(--muted)]">
+            Paying this plan entitles the selected feature for the access period (Arkiv grant).
+          </p>
           <form onSubmit={(e) => void create(e)} className="mt-4 grid gap-3 md:grid-cols-2">
             <label className="block text-xs font-semibold uppercase text-[var(--muted)]">
               Name
@@ -112,15 +116,20 @@ export default function PlansPage() {
               />
             </label>
             <label className="block text-xs font-semibold uppercase text-[var(--muted)]">
-              Feature
+              Feature entitled
               <select
                 className="mt-1 w-full rounded-xl border border-[var(--line)] px-3 py-2 text-sm"
                 value={feature}
-                onChange={(e) => setFeature(e.target.value)}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  setFeature(id);
+                  const ft = features.find((f) => f.id === id);
+                  if (ft?.value_type === 'boolean') setCredits('1');
+                }}
               >
                 {features.map((f) => (
                   <option key={f.id} value={f.id}>
-                    {f.label}
+                    {f.label} ({f.value_type})
                   </option>
                 ))}
               </select>
@@ -134,15 +143,24 @@ export default function PlansPage() {
                 required
               />
             </label>
-            <label className="block text-xs font-semibold uppercase text-[var(--muted)]">
-              Credits
-              <input
-                className="mt-1 w-full rounded-xl border border-[var(--line)] px-3 py-2 text-sm"
-                value={credits}
-                onChange={(e) => setCredits(e.target.value)}
-                required
-              />
-            </label>
+            {features.find((f) => f.id === feature)?.value_type === 'boolean' ? (
+              <div className="fi-field">
+                <span className="block text-xs font-semibold uppercase text-[var(--muted)]">Entitlement</span>
+                <p className="mt-1 rounded-xl border border-[var(--line)] bg-[var(--soft)] px-3 py-2.5 text-sm">
+                  Boolean access on for the whole period
+                </p>
+              </div>
+            ) : (
+              <label className="block text-xs font-semibold uppercase text-[var(--muted)]">
+                Credits included
+                <input
+                  className="mt-1 w-full rounded-xl border border-[var(--line)] px-3 py-2 text-sm"
+                  value={credits}
+                  onChange={(e) => setCredits(e.target.value)}
+                  required
+                />
+              </label>
+            )}
             <label className="block text-xs font-semibold uppercase text-[var(--muted)]">
               Billing
               <select
@@ -155,7 +173,7 @@ export default function PlansPage() {
               </select>
             </label>
             <label className="block text-xs font-semibold uppercase text-[var(--muted)]">
-              TTL (seconds)
+              Access period (seconds)
               <input
                 type="number"
                 className="mt-1 w-full rounded-xl border border-[var(--line)] px-3 py-2 text-sm"

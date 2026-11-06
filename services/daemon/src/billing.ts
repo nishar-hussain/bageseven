@@ -45,7 +45,17 @@ function providerScope(req: { headers: { authorization?: string; [key: string]: 
   return provider;
 }
 
-export function registerBillingRoutes(app: FastifyInstance, deps: { redis?: Redis; db?: Database; validateWorker?: (worker: string) => Promise<void> } = {}): void {
+/** Console provider sees its own plans plus unscoped SK/seed `legacy` plans. */
+function planInProviderScope(plan: { provider_id?: string } | null | undefined, provider?: string): boolean {
+  if (!plan) return false;
+  if (!provider) return true;
+  return plan.provider_id === provider || plan.provider_id === 'legacy';
+}
+
+export function registerBillingRoutes(
+  app: FastifyInstance,
+  deps: { redis?: Redis; db?: Database; validateWorker?: (worker: string) => Promise<void> } = {},
+): void {
   const store = getBillingStore(deps.db);
   const grants = getGrantStore(process.env);
   const confirmations = new Map<string, Promise<unknown>>();
@@ -67,14 +77,19 @@ export function registerBillingRoutes(app: FastifyInstance, deps: { redis?: Redi
     if (principal.kind === 'embed') throw new ApiError(403, 'FORBIDDEN', 'embed tokens cannot list merchant plans');
     const q = req.query as { active?: string };
     const provider = providerScope(req);
-    return { plans: (await store.listPlans(q.active === 'true')).filter(p => !provider || p.provider_id === provider) };
+    // Console scopes by provider; still surface unscoped 'legacy' plans created via secret key / seeds.
+    return {
+      plans: (await store.listPlans(q.active === 'true')).filter(
+        (p) => !provider || p.provider_id === provider || p.provider_id === 'legacy',
+      ),
+    };
   });
 
   app.get('/v1/plans/:id', async (req) => {
     principalFrom(req.headers.authorization);
     const { id } = req.params as { id: string };
     const plan = await store.getPlan(id);
-    if (!plan || (providerScope(req) && plan.provider_id !== providerScope(req))) throw new ApiError(404, 'PLAN_NOT_FOUND', 'plan not found');
+    if (!planInProviderScope(plan, providerScope(req))) throw new ApiError(404, 'PLAN_NOT_FOUND', 'plan not found');
     return { plan };
   });
 
@@ -88,7 +103,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: { redis?: Redi
       }
       const plan = await store.getPlan(body.plan_id);
       const provider = providerScope(req);
-      if (provider && plan?.provider_id !== provider) throw new ApiError(404, 'PLAN_NOT_FOUND', 'plan not found');
+      if (!planInProviderScope(plan, provider)) throw new ApiError(404, 'PLAN_NOT_FOUND', 'plan not found');
       const worker = (body.worker_id ?? process.env.BAGSEVEN_MCP_WORKER?.trim()) || undefined;
       if (worker && deps.validateWorker) await deps.validateWorker(worker);
       const session = await store.createCheckout({ ...body, worker_id: worker });
@@ -105,7 +120,11 @@ export function registerBillingRoutes(app: FastifyInstance, deps: { redis?: Redi
     if (principal.kind !== 'sk') throw new ApiError(403, 'FORBIDDEN', 'secret key required');
     const q = req.query as { holder?: string; plan_id?: string };
     const provider = providerScope(req);
-    return { sessions: (await store.listCheckouts({ holder: q.holder, plan_id: q.plan_id })).filter(s => !provider || s.plan?.provider_id === provider) };
+    return {
+      sessions: (await store.listCheckouts({ holder: q.holder, plan_id: q.plan_id })).filter((s) =>
+        planInProviderScope(s.plan, provider),
+      ),
+    };
   });
 
   app.get('/v1/checkout-sessions/:id', async (req) => {
@@ -114,7 +133,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: { redis?: Redi
     const session = await store.getCheckout(id);
     if (!session) throw new ApiError(404, 'CHECKOUT_NOT_FOUND', 'checkout session not found');
     const provider = providerScope(req);
-    if (provider && session.plan?.provider_id !== provider) throw new ApiError(404, 'CHECKOUT_NOT_FOUND', 'checkout session not found');
+    if (!planInProviderScope(session.plan, provider)) throw new ApiError(404, 'CHECKOUT_NOT_FOUND', 'checkout session not found');
     if (principal.kind === 'embed' && session.holder !== principal.holder) {
       throw new ApiError(403, 'HOLDER_MISMATCH', 'embed token is scoped to a different holder');
     }

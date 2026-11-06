@@ -8,6 +8,7 @@ import {
   Coins,
   CreditCard,
   Fingerprint,
+  KeyRound,
   LayoutDashboard,
   Layers,
   Puzzle,
@@ -28,6 +29,7 @@ const mainNav: NavItem[] = [
   { href: '/app/features', label: 'Features', icon: Layers },
   { href: '/app/plans', label: 'Plans', icon: WalletCards },
   { href: '/app/builder', label: 'Builder', icon: SquareStack },
+  { href: '/app/developers', label: 'Developers', icon: KeyRound },
 ];
 
 const catalogNav: NavItem[] = [
@@ -45,6 +47,7 @@ const settingsNav: NavItem[] = [
   { href: '/app/account', label: 'Account', icon: UserRound },
   { href: '/app/attention', label: 'Needs attention', icon: AlertTriangle },
   { href: '/app/settings', label: 'Tracks', icon: Settings2 },
+  { href: '/app/arkiv', label: 'Arkiv studio', icon: Layers },
 ];
 
 function NavLink({ item, active }: { item: NavItem; active: boolean }) {
@@ -207,7 +210,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           <div className="ml-auto flex items-center gap-2">
             <Link
               href="/app/features"
-              className="hidden rounded-full border border-[var(--line)] bg-white px-3.5 py-2 text-[13px] font-medium sm:inline-flex"
+              className="hidden rounded-full border border-[var(--line)] bg-white px-3.5 py-2 text-[13px] font-medium md:inline-flex"
             >
               New feature
             </Link>

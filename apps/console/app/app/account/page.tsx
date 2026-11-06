@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { connectWhitechainWallet } from '@bagseven/sdk/wallet';
 import { PageHeader, PrimaryButton, SecondaryButton, SoftCard, StatusPill } from '../../../components/app/ui';
+import { WalletStatusCard } from '../../../components/wallet/WalletStatus';
 import { useOperator } from '../../../lib/use-operator';
 
 export default function AccountPage() {
@@ -131,37 +131,27 @@ export default function AccountPage() {
         ) : null}
       </SoftCard>
 
-      <SoftCard id="wallet" className="scroll-mt-20 space-y-3 p-5">
-        <div className="flex items-center gap-2">
-          <h2 className="text-[15px] font-semibold">Payout wallet</h2>
-          {!op.walletAddress && !wallet ? <StatusPill tone="warn">Recommended</StatusPill> : null}
-        </div>
-        <p className="text-[13px] text-[var(--muted)]">Whitechain / injected EVM for plan payouts.</p>
-        <SecondaryButton
-          onClick={() =>
-            void connectWhitechainWallet()
-              .then(({ address }) => saveWallet(address))
-              .catch((e) => setMsg(e instanceof Error ? e.message : String(e)))
-          }
-        >
-          Connect wallet
-        </SecondaryButton>
-        <form
-          className="flex gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void saveWallet(wallet);
-          }}
-        >
-          <input
-            value={wallet}
-            onChange={(e) => setWallet(e.target.value)}
-            placeholder="0x…"
-            className="flex-1 rounded-xl border border-[var(--line)] px-3 py-2 font-mono text-sm"
-          />
-          <PrimaryButton type="submit">Save</PrimaryButton>
-        </form>
-      </SoftCard>
+      <div id="wallet" className="scroll-mt-20 space-y-3">
+        <WalletStatusCard title="Payout wallet" persistToAccount />
+        <SoftCard className="space-y-3 p-5">
+          <p className="text-[13px] text-[var(--muted)]">Or paste a Whitechain address manually.</p>
+          <form
+            className="flex gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void saveWallet(wallet);
+            }}
+          >
+            <input
+              value={wallet}
+              onChange={(e) => setWallet(e.target.value)}
+              placeholder="0x…"
+              className="flex-1 rounded-xl border border-[var(--line)] px-3 py-2 font-mono text-sm"
+            />
+            <PrimaryButton type="submit">Save</PrimaryButton>
+          </form>
+        </SoftCard>
+      </div>
 
       {msg ? <p className="whitespace-pre-wrap text-sm text-[var(--muted)]">{msg}</p> : null}
     </div>

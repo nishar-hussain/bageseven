@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { authorizeWhitechainPayment, payUsdtOnWhitechain } from '@bagseven/sdk/wallet';
+import { authorizeWhitechainPayment, payUsdtOnWhitechain } from '../../../lib/bagseven-sdk-wallet';
 import { PageHeader, SoftCard } from '../../../components/app/ui';
 import { entitlementsApi } from '../../../lib/entitlements-client';
 import { TTL_PRESETS, shortId, useOperator } from '../../../lib/use-operator';
@@ -32,14 +32,30 @@ export default function CreditsPage() {
       let authorization: { customer_wallet?: string; payment_signature?: string } = {};
       const rail = op.status?.tracks.whitechain;
       if (!rail) throw new Error('Payment configuration is still loading');
-      if (!tx && !rail.demo_settle) {
-        if (!rail.pay_to || !rail.usdt) throw new Error('The operator must configure the Whitechain payment recipient');
-        const paid = await payUsdtOnWhitechain({ merchantWallet: rail.pay_to, amount, usdt: rail.usdt, chainId: rail.chain_id, context: `entitlement:${op.holder}:${feature}:${amount}` });
+      if (!tx && !rail.demo_settle && !rail.operator) {
+        if (!rail.pay_to || !rail.usdt) {
+          throw new Error(
+            'Whitechain payment recipient is not configured. Set WHITECHAIN_PAY_TO (or WHITECHAIN_PRIVATE_KEY) in .env, restart the daemon, then open Tracks.',
+          );
+        }
+        const paid = await payUsdtOnWhitechain({
+          merchantWallet: rail.pay_to,
+          amount,
+          usdt: rail.usdt,
+          chainId: rail.chain_id,
+          context: `entitlement:${op.holder}:${feature}:${amount}`,
+        });
         tx = paid.payment_tx;
         authorization = paid;
         setPaymentTx(tx);
       }
-      if (tx && !authorization.payment_signature && !rail.demo_settle) authorization = await authorizeWhitechainPayment({ payment_tx: tx, context: `entitlement:${op.holder}:${feature}:${amount}`, chainId: rail.chain_id });
+      if (tx && !authorization.payment_signature && !rail.demo_settle) {
+        authorization = await authorizeWhitechainPayment({
+          payment_tx: tx,
+          context: `entitlement:${op.holder}:${feature}:${amount}`,
+          chainId: rail.chain_id,
+        });
+      }
       const r = await entitlementsApi.buyCredits({
         feature,
         holder: op.holder,

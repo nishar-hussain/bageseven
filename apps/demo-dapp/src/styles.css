@@ -1,0 +1,138 @@
+:root {
+  --ink: #14201b;
+  --muted: #5c6b63;
+  --paper: #f3efe6;
+  --panel: #fffdf8;
+  --line: #d9d2c4;
+  --accent: #0f6b4c;
+  --accent-2: #c45c26;
+  --good: #1f7a4d;
+  --soft: #e8efe9;
+  font-family: 'DM Sans', system-ui, sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(1200px 600px at 10% -10%, #dceadf 0%, transparent 55%),
+    radial-gradient(900px 500px at 100% 0%, #f0e0d2 0%, transparent 50%),
+    var(--paper);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+h1,
+h2 {
+  font-family: 'Instrument Serif', Georgia, serif;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+.app {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 48px 20px 80px;
+}
+
+.brand {
+  font-size: clamp(2.4rem, 6vw, 3.4rem);
+  margin: 0;
+  line-height: 0.95;
+}
+
+.lede {
+  margin: 12px 0 0;
+  color: var(--muted);
+  max-width: 38rem;
+  line-height: 1.45;
+}
+
+.panel {
+  margin-top: 28px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 20px;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  font-size: 13px;
+  background: #fff;
+}
+
+.pill.on {
+  border-color: color-mix(in oklab, var(--good) 40%, var(--line));
+  background: color-mix(in oklab, var(--good) 10%, #fff);
+  color: var(--good);
+}
+
+.pill.off {
+  color: var(--muted);
+}
+
+.btn {
+  border: 0;
+  border-radius: 999px;
+  padding: 10px 16px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.btn.secondary {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.note {
+  margin-top: 14px;
+  font-size: 13px;
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+
+.premium {
+  margin-top: 16px;
+  padding: 16px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #12382b, #1d5a43);
+  color: #f4fff8;
+}
+
+.premium h2 {
+  margin: 0;
+  font-size: 1.6rem;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}

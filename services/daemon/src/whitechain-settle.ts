@@ -21,6 +21,20 @@ export function whitechainDemoAllowed(env: NodeJS.ProcessEnv = process.env): boo
   return env.NODE_ENV !== 'production' && env.WHITECHAIN_DEMO_SETTLE === 'true';
 }
 
+/** Prefer WHITECHAIN_PAY_TO; otherwise derive from WHITECHAIN_PRIVATE_KEY so Mint/Credits work out of the box. */
+export function resolveWhitechainPayTo(env: NodeJS.ProcessEnv = process.env): `0x${string}` | null {
+  const configured = env.WHITECHAIN_PAY_TO?.trim();
+  if (configured && isAddress(configured)) return configured as `0x${string}`;
+  const rawKey = env.WHITECHAIN_PRIVATE_KEY?.trim();
+  if (!rawKey) return null;
+  try {
+    const account = privateKeyToAccount((rawKey.startsWith('0x') ? rawKey : `0x${rawKey}`) as Hex);
+    return account.address;
+  } catch {
+    return null;
+  }
+}
+
 export async function settleWhitechainUsdt(input: WhitechainSettleInput, env: NodeJS.ProcessEnv = process.env): Promise<WhitechainSettleResult> {
   usdtUnits(input.amount);
   const network = env.WHITECHAIN_NETWORK === 'mainnet' ? 'mainnet' : 'testnet';
@@ -29,8 +43,8 @@ export async function settleWhitechainUsdt(input: WhitechainSettleInput, env: No
   });
   if (whitechainDemoAllowed(env)) return result(input.payment_tx || `0x${randomBytes(32).toString('hex')}`, 'demo');
 
-  const payTo = env.WHITECHAIN_PAY_TO?.trim();
-  if (!payTo || !isAddress(payTo)) throw new Error('WHITECHAIN_UNCONFIGURED: configure WHITECHAIN_PAY_TO with the payment recipient');
+  const payTo = resolveWhitechainPayTo(env);
+  if (!payTo) throw new Error('WHITECHAIN_UNCONFIGURED: set WHITECHAIN_PAY_TO (or WHITECHAIN_PRIVATE_KEY) as the payment recipient');
   if (input.payment_tx) {
     await verifyPaymentAuthorization({ wallet: input.customer_wallet, signature: input.payment_signature, context: `entitlement:${input.holder}:${input.feature}:${input.amount}`, hash: input.payment_tx }, env);
     await verifyWhitechainPayment({ payment_tx: input.payment_tx, amount: input.amount, merchant_wallet: payTo, customer_wallet: input.customer_wallet }, env);

@@ -10,7 +10,9 @@ import {
   type ReactNode,
 } from 'react';
 import type { Entitlement } from './types.js';
-import { authorizeWhitechainPayment, connectWhitechainWallet, payUsdtOnWhitechain } from './wallet.js';
+
+export { EMBED_COMPONENTS, resolveEmbedComponent, type EmbedComponentId } from './components.js';
+export { BagsevenEmbed, type EmbedTheme, type EmbedView } from './embed.js';
 
 type BagsevenContextValue = {
   publishableKey: string;
@@ -47,14 +49,17 @@ export function BagsevenProvider({
   publishableKey,
   apiUrl = '/api/public',
   accessToken,
+  holder: holderProp,
   children,
 }: {
   publishableKey: string;
   apiUrl?: string;
   accessToken?: string;
+  /** Optional — prefer this over calling identify() so the first refresh has a holder. */
+  holder?: string;
   children: ReactNode;
 }) {
-  const [holder, setHolder] = useState<string | null>(null);
+  const [holder, setHolder] = useState<string | null>(holderProp ?? null);
   const [token, setToken] = useState<string | null>(accessToken ?? null);
   const [entitlements, setEntitlements] = useState<Entitlement[]>([]);
   const [pending, setPending] = useState(false);
@@ -62,6 +67,10 @@ export function BagsevenProvider({
   useEffect(() => {
     if (accessToken) setToken(accessToken);
   }, [accessToken]);
+
+  useEffect(() => {
+    if (holderProp) setHolder(holderProp);
+  }, [holderProp]);
 
   const auth = token || publishableKey;
   const base = apiUrl.replace(/\/$/, '');
@@ -73,6 +82,8 @@ export function BagsevenProvider({
       const qs = new URLSearchParams({ holder });
       const data = await publicGet<{ entitlements: Entitlement[] }>(base, `/entitlements?${qs}`, auth);
       setEntitlements(data.entitlements ?? []);
+    } catch {
+      // Keep prior entitlements; surface stays usable offline of a transient BFF blip.
     } finally {
       setPending(false);
     }
@@ -101,8 +112,7 @@ export function useBagseven(): BagsevenContextValue {
 }
 
 export function useFlag(feature: string): boolean {
-  const { entitlements, pending } = useBagseven();
-  if (pending) return false;
+  const { entitlements } = useBagseven();
   return entitlements.some((e) => e.feature === feature && e.enabled);
 }
 
@@ -160,291 +170,4 @@ export function FeatureFlagGuard({
 }) {
   const enabled = useFlag(feature);
   return enabled ? <>{children}</> : <>{fallback}</>;
-}
-
-export type EmbedView = 'portal' | 'checkout' | 'consume' | 'credits' | 'unsubscribe';
-
-type PublicCheckout = {
-  id: string;
-  status: string;
-  amount: string;
-  holder: string;
-  chain_id: number;
-  payment: { chain_id: number; usdt: string };
-  plan: {
-    id: string;
-    name: string;
-    feature: string;
-    amount: string;
-    credits: string;
-    merchant_wallet: string;
-  } | null;
-};
-
-export function BagsevenEmbed({
-  accessToken,
-  apiUrl = '/api/public',
-  initialView = 'portal',
-  mode = 'inline',
-  publishableKey,
-  checkoutSessionId,
-}: {
-  accessToken?: string;
-  apiUrl?: string;
-  initialView?: EmbedView;
-  mode?: 'inline' | 'modal';
-  publishableKey?: string;
-  /** When set, checkout view loads this public session (no operator session needed). */
-  checkoutSessionId?: string;
-}) {
-  const [view, setView] = useState<EmbedView>(checkoutSessionId ? 'checkout' : initialView);
-  const [entitlements, setEntitlements] = useState<Entitlement[]>([]);
-  const [checkout, setCheckout] = useState<PublicCheckout | null>(null);
-  const [demoTx, setDemoTx] = useState('');
-  const [msg, setMsg] = useState('');
-  const [busy, setBusy] = useState(false);
-  const base = apiUrl.replace(/\/$/, '');
-  const token = accessToken ?? '';
-
-  const load = useCallback(async () => {
-    if (!token) return;
-    const data = await publicGet<{ entitlements: Entitlement[] }>(base, '/entitlements', token);
-    setEntitlements(data.entitlements ?? []);
-  }, [token, base]);
-
-  const loadCheckout = useCallback(async () => {
-    if (!checkoutSessionId) return;
-    const res = await fetch(`${base}/public/checkout/${encodeURIComponent(checkoutSessionId)}`);
-    const json = (await res.json().catch(() => ({}))) as { session?: PublicCheckout; error?: { message?: string } };
-    if (!res.ok) throw new Error(json.error?.message ?? `checkout ${res.status}`);
-    setCheckout(json.session ?? null);
-  }, [base, checkoutSessionId]);
-
-  useEffect(() => {
-    void load().catch((e) => setMsg(e instanceof Error ? e.message : String(e)));
-  }, [load]);
-
-  useEffect(() => {
-    void loadCheckout().catch((e) => setMsg(e instanceof Error ? e.message : String(e)));
-  }, [loadCheckout]);
-
-  const act = async (fn: () => Promise<void>) => {
-    setBusy(true);
-    setMsg('');
-    try {
-      await fn();
-      await load();
-      await loadCheckout();
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const tabs = (['portal', 'checkout', 'consume', 'credits', 'unsubscribe'] as EmbedView[]).filter(
-    (v) => v !== 'checkout' || checkoutSessionId || view === 'checkout',
-  );
-
-  const body = (
-    <div style={{ fontFamily: 'system-ui, sans-serif', color: '#111', maxWidth: 480 }}>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-        {tabs.map((v) => (
-          <button
-            key={v}
-            type="button"
-            onClick={() => setView(v)}
-            style={{
-              border: '1px solid #ddd',
-              borderRadius: 999,
-              padding: '6px 12px',
-              background: view === v ? '#0002f8' : '#fff',
-              color: view === v ? '#fff' : '#111',
-              fontSize: 12,
-              fontWeight: 600,
-            }}
-          >
-            {v}
-          </button>
-        ))}
-      </div>
-      {view === 'checkout' && (
-        <div>
-          <h3 style={{ margin: '0 0 8px' }}>Checkout</h3>
-          {!checkoutSessionId && <p style={{ color: '#666', fontSize: 14 }}>Pass checkoutSessionId to BagsevenEmbed.</p>}
-          {checkout && (
-            <>
-              <p style={{ margin: '0 0 8px', fontSize: 14 }}>
-                <strong>{checkout.plan?.name ?? 'Plan'}</strong> · {checkout.amount} USDT · {checkout.plan?.credits ?? '—'}{' '}
-                credits · {checkout.status}
-              </p>
-              <p style={{ fontSize: 12, color: '#666', marginBottom: 12 }}>
-                Pay with WhiteWallet or an injected EVM wallet. Your wallet will switch to the checkout’s Whitechain network.
-              </p>
-              {checkout.status === 'PAID' ? (
-                <p style={{ color: '#0a7', fontSize: 14 }}>Paid. Entitlement is live for {checkout.holder}.</p>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <button
-                    type="button"
-                    disabled={busy || !checkout.plan}
-                    onClick={() =>
-                      void act(async () => {
-                        if (!checkout.plan) return;
-                        const paid = await payUsdtOnWhitechain({
-                          merchantWallet: checkout.plan.merchant_wallet,
-                          amount: checkout.amount,
-                          chainId: checkout.chain_id,
-                          usdt: checkout.payment.usdt,
-                          context: `checkout:${checkout.id}`,
-                        });
-                        await fetch(`${base}/public/checkout/${encodeURIComponent(checkout.id)}/confirm`, {
-                          method: 'POST',
-                          headers: { 'content-type': 'application/json' },
-                          body: JSON.stringify(paid),
-                        }).then(async (r) => {
-                          const j = await r.json().catch(() => ({}));
-                          if (!r.ok) throw new Error(j.error?.message ?? `confirm ${r.status}`);
-                        });
-                        setMsg('Payment confirmed — grant minted');
-                      })
-                    }
-                    style={{ borderRadius: 999, background: '#0002f8', color: '#fff', padding: '8px 14px', border: 0 }}
-                  >
-                    {busy ? 'Waiting for wallet…' : 'Pay with WhiteWallet / EVM'}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() =>
-                      void act(async () => {
-                        const { address } = await connectWhitechainWallet(checkout.chain_id);
-                        setMsg(`Connected ${address}`);
-                      })
-                    }
-                    style={{ borderRadius: 999, border: '1px solid #ddd', background: '#fff', padding: '8px 14px' }}
-                  >
-                    Connect wallet only
-                  </button>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <input
-                      value={demoTx}
-                      onChange={(e) => setDemoTx(e.target.value)}
-                      placeholder="Existing transaction hash (0x…)"
-                      style={{ flex: 1, border: '1px solid #ddd', borderRadius: 8, padding: '8px', fontSize: 12 }}
-                    />
-                    <button
-                      type="button"
-                      disabled={busy || !demoTx || !checkout.plan}
-                      onClick={() =>
-                        void act(async () => {
-                          const authorization = await authorizeWhitechainPayment({ payment_tx: demoTx.trim(), context: `checkout:${checkout.id}`, chainId: checkout.chain_id });
-                          await fetch(`${base}/public/checkout/${encodeURIComponent(checkout.id)}/confirm`, {
-                            method: 'POST',
-                            headers: { 'content-type': 'application/json' },
-                            body: JSON.stringify({ payment_tx: demoTx.trim(), ...authorization }),
-                          }).then(async (r) => {
-                            const j = await r.json().catch(() => ({}));
-                            if (!r.ok) throw new Error(j.error?.message ?? `confirm ${r.status}`);
-                          });
-                          setMsg('Payment verified — entitlement is live');
-                        })
-                      }
-                      style={{ borderRadius: 999, border: '1px solid #ddd', padding: '8px 12px', fontSize: 12 }}
-                    >
-                      Confirm tx
-                    </button>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
-      {view === 'portal' && (
-        <div>
-          <h3 style={{ margin: '0 0 8px' }}>Living entitlements</h3>
-          {entitlements.length === 0 && <p style={{ color: '#666' }}>No living grant on Arkiv for this holder.</p>}
-          {entitlements.map((e) => (
-            <div key={e.grant_id ?? e.feature} style={{ borderTop: '1px solid #eee', padding: '10px 0' }}>
-              <strong>{e.feature}</strong>
-              <div style={{ fontSize: 13, color: '#555' }}>
-                {e.value_type === 'boolean'
-                  ? `${e.enabled ? 'On' : 'Off'} · Arkiv until ${e.paid_through ?? '—'}`
-                  : `${e.remaining} credits · TTL ${e.paid_through ?? '—'}`}
-                {e.explorer_url ? (
-                  <>
-                    {' · '}
-                    <a href={e.explorer_url} target="_blank" rel="noreferrer">
-                      Whitechain
-                    </a>
-                  </>
-                ) : null}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-      {view === 'consume' && (
-        <div>
-          <p style={{ fontSize: 14, color: '#555' }}>Burn one credit on the richest living grant (human gate — grant only).</p>
-          <button
-            type="button"
-            disabled={busy || entitlements.length === 0 || !token}
-            onClick={() =>
-              void act(async () => {
-                const feature = entitlements[0]?.feature;
-                if (!feature || !token) return;
-                await publicPost(base, '/usage/consume', token, {
-                  feature,
-                  amount: '1',
-                  idempotencyKey: `embed-${feature}-${Date.now()}`,
-                });
-                setMsg('Consumed 1 credit');
-              })
-            }
-            style={{ borderRadius: 999, background: '#111', color: '#fff', padding: '8px 14px', border: 0 }}
-          >
-            {busy ? 'Working…' : 'Consume 1'}
-          </button>
-        </div>
-      )}
-      {view === 'credits' && (
-        <div>
-          <p style={{ fontSize: 14, color: '#555' }}>Whitechain top-up on this holder’s feature (not a payment link).</p>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() =>
-              void act(async () => {
-                const feature = entitlements[0]?.feature ?? 'ocr';
-                if (!token) throw new Error('accessToken required for credits');
-                await publicPost(base, '/credits', token, { feature, remaining: '10', amount: '1.00' });
-                setMsg('Credits stamped on Whitechain');
-              })
-            }
-            style={{ borderRadius: 999, background: '#0002f8', color: '#fff', padding: '8px 14px', border: 0 }}
-          >
-            {busy ? 'Settling…' : 'Buy 10 credits'}
-          </button>
-        </div>
-      )}
-      {view === 'unsubscribe' && (
-        <p style={{ fontSize: 14, color: '#555' }}>
-          Cancel renewal from the operator dashboard. Access stays until <code>paid_through</code> — renewal off does not kill the period already paid.
-        </p>
-      )}
-      {msg && <p style={{ marginTop: 12, fontSize: 13, color: '#555' }}>{msg}</p>}
-      {publishableKey ? <p style={{ marginTop: 16, fontSize: 11, color: '#999' }}>Bagseven embed</p> : null}
-    </div>
-  );
-
-  if (mode === 'modal') {
-    return (
-      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'grid', placeItems: 'center', zIndex: 50 }}>
-        <div style={{ background: '#fff', borderRadius: 16, padding: 24, width: 'min(520px, 92vw)' }}>{body}</div>
-      </div>
-    );
-  }
-  return body;
 }

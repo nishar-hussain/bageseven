@@ -233,9 +233,9 @@ export function GrantList({
       {error && <p className="text-sm text-[var(--deny)]">{error}</p>}
       {!loading && !error && grants.length === 0 && (
         <div className="py-10 text-center">
-          <p className="font-medium text-[var(--ink)]">No entitlements yet</p>
+          <p className="font-medium text-[var(--ink)]">No live entitlements yet</p>
           <p className="mt-2 text-sm text-[var(--muted)]">
-            Create living Arkiv access — boolean on/off or numeric credits, both with TTL.
+            Nothing on Arkiv for this workspace right now. Create boolean or credit access with a TTL.
           </p>
           <Link href="/app/mint" className="mt-5 inline-flex rounded-full bg-[var(--ink)] px-5 py-2 text-sm font-semibold text-white">
             Create entitlement

@@ -97,11 +97,13 @@ export const FEATURE_OPTIONS = [
   },
 ] as const;
 
+/** Access / billing period — grant stays on Arkiv until paid_through, then evaporates. */
 export const TTL_PRESETS = [
-  { seconds: 300, label: '5 minutes' },
-  { seconds: 900, label: '15 minutes' },
-  { seconds: 3600, label: '1 hour' },
-  { seconds: 86400, label: '24 hours' },
+  { seconds: 900, label: '15 minutes (demo)' },
+  { seconds: 3600, label: '1 hour (demo)' },
+  { seconds: 86400, label: '1 day' },
+  { seconds: 604800, label: '1 week' },
+  { seconds: 2592000, label: '30 days (subscription)' },
 ] as const;
 
 export function shortId(id: string): string {

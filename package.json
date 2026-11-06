@@ -16,6 +16,8 @@
     "bagseven-mcp": "tsx scripts/bagseven-mcp.ts",
     "whitechain:settle": "tsx scripts/whitechain-demo-settle.ts",
     "sdk:demo": "node --env-file-if-exists=.env scripts/sdk-demo.mjs",
+    "demo:dapp": "pnpm --filter @bagseven/demo-dapp dev",
+    "demo:check": "pnpm --filter @bagseven/demo-dapp check",
     "smoke": "node scripts/smoke-mumbai.mjs",
     "smoke:e2e": "node scripts/smoke-e2e.mjs",
     "smoke:mcp": "node --env-file-if-exists=.env --import tsx scripts/mcp-smoke.ts",

@@ -4,8 +4,9 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { IDKitRequestWidget, proofOfHuman, type RpContext } from '@worldcoin/idkit';
-import { payUsdtOnWhitechain } from '@bagseven/sdk/wallet';
+import { payUsdtOnWhitechain } from '../../../lib/bagseven-sdk-wallet';
 import { PageHeader, SoftCard } from '../../../components/app/ui';
+import { ConnectWallet } from '../../../components/wallet/ConnectWallet';
 import { entitlementsApi } from '../../../lib/entitlements-client';
 import { TTL_PRESETS, shortId, useOperator } from '../../../lib/use-operator';
 import { featureLabel, useFeatures } from '../../../lib/use-features';
@@ -42,10 +43,15 @@ function MintForm() {
   }, [params]);
 
   useEffect(() => {
-    if (!features.some((f) => f.id === feature) && features[0]) {
-      setFeature(features[0].id);
+    if (features.length === 0) return;
+    if (features.some((f) => f.id === feature)) return;
+    const q = params.get('feature');
+    if (q && features.some((f) => f.id === q)) {
+      setFeature(q);
+      return;
     }
-  }, [features, feature]);
+    setFeature(features[0]!.id);
+  }, [features, feature, params]);
 
   /** End-to-end create: Whitechain settle + Arkiv grant for the signed-in operator. */
   const createEntitlement = async (opts?: { idkit_response?: unknown; id_token?: string; world_proof_id?: string }) => {
@@ -62,14 +68,32 @@ function MintForm() {
       const rail = op.status?.tracks.whitechain;
       if (!rail) throw new Error('Payment configuration is still loading');
       if (!rail.demo_settle) {
-        if (!rail.pay_to || !rail.usdt) throw new Error('The operator must configure the Whitechain payment recipient before purchases are available');
-        if (pendingPayment && pendingPayment.context !== context) throw new Error('Finish the existing payment before changing the feature or credit amount');
-        if (pendingPayment) payment = pendingPayment;
-        else {
-          setMsg(`Confirm ${mintRemaining} USDT.e in your Whitechain wallet…`);
-          const paid = await payUsdtOnWhitechain({ merchantWallet: rail.pay_to, amount: mintRemaining, usdt: rail.usdt, chainId: rail.chain_id, context });
-          payment = paid;
-          setPendingPayment({ context, ...paid });
+        if (!rail.pay_to || !rail.usdt) {
+          throw new Error(
+            'Whitechain payment recipient is not configured. Set WHITECHAIN_PAY_TO (or WHITECHAIN_PRIVATE_KEY) in .env, restart the daemon, then check Tracks → Whitechain.',
+          );
+        }
+        // Console mint: when operator key is live, daemon settles USDT — no browser wallet needed.
+        // Customer checkout still pays via wallet in the embed.
+        if (!rail.operator) {
+          if (pendingPayment && pendingPayment.context !== context) {
+            throw new Error('Finish the existing payment before changing the feature or credit amount');
+          }
+          if (pendingPayment) payment = pendingPayment;
+          else {
+            setMsg(`Confirm ${mintRemaining} USDT.e in your Whitechain wallet…`);
+            const paid = await payUsdtOnWhitechain({
+              merchantWallet: rail.pay_to,
+              amount: mintRemaining,
+              usdt: rail.usdt,
+              chainId: rail.chain_id,
+              context,
+            });
+            payment = paid;
+            setPendingPayment({ context, ...paid });
+          }
+        } else {
+          setMsg('Settling with operator Whitechain key → writing Arkiv entitlement…');
         }
       }
       const r = await entitlementsApi.mint({
@@ -192,14 +216,14 @@ function MintForm() {
           op.loading
             ? 'Loading…'
             : op.holder
-              ? `Mint living Arkiv access for ${op.holder}. Boolean = on/off · Numeric = credits.`
+              ? `Issue subscription access for ${op.holder}. Boolean = feature flag · Numeric = usage credits.`
               : 'Sign in first'
         }
       />
 
       <SoftCard className="space-y-4 p-5">
         <div className="fi-field">
-          <label htmlFor="feature">Feature to entitle</label>
+          <label htmlFor="feature">Feature / product</label>
           <select
             id="feature"
             value={feature}
@@ -214,8 +238,8 @@ function MintForm() {
           </select>
           <p className="mt-1.5 text-[12px] text-[var(--muted)]">
             {isBoolean
-              ? 'Boolean feature — access stays on until TTL evaporates from Arkiv.'
-              : 'Numeric feature — metered credits burned on consume / paid_run.'}{' '}
+              ? 'Boolean — subscriber is on until the access period ends (Arkiv evaporates the grant).'
+              : 'Numeric — subscriber gets a credit balance; each use burns credits.'}{' '}
             <Link href="/app/features" className="font-medium text-[var(--blue)]">
               Manage features
             </Link>
@@ -225,19 +249,19 @@ function MintForm() {
         <div className="grid gap-3 sm:grid-cols-2">
           {!isBoolean ? (
             <div className="fi-field">
-              <label htmlFor="credits">Starting credits</label>
+              <label htmlFor="credits">Credits in this period</label>
               <input id="credits" value={credits} onChange={(e) => setCredits(e.target.value)} />
             </div>
           ) : (
             <div className="fi-field">
               <label>Access</label>
               <p className="rounded-xl border border-[var(--line)] bg-[var(--soft)] px-3 py-2.5 text-sm">
-                On until TTL · Arkiv-powered
+                On for the whole access period
               </p>
             </div>
           )}
           <div className="fi-field">
-            <label htmlFor="ttl">How long it stays live</label>
+            <label htmlFor="ttl">Access period</label>
             <select
               id="ttl"
               value={ttl}
@@ -250,8 +274,18 @@ function MintForm() {
                 </option>
               ))}
             </select>
+            <p className="mt-1.5 text-[12px] text-[var(--muted)]">
+              Like a billing period — access stays live until this ends, then the Arkiv grant evaporates (renewal can extend
+              it).
+            </p>
           </div>
         </div>
+
+        {(verifiedSession || mockAllowed) && (
+          <p className="rounded-xl border border-[var(--good)]/25 bg-[var(--good)]/5 px-3 py-2 text-[13px] text-[var(--ink)]">
+            Human verified — hit create. You do not need to scan World again for this session.
+          </p>
+        )}
 
         <button
           type="button"
@@ -265,31 +299,47 @@ function MintForm() {
               ? `Create entitlement for ${featureLabel(feature, features)}`
               : 'Verify with World ID & create entitlement'}
         </button>
-        {!op.status?.tracks.whitechain.demo_settle && (
+        {!op.status?.tracks.whitechain.demo_settle && op.status?.tracks.whitechain.operator ? (
           <p className="text-sm text-[var(--muted)]">
-            Your wallet pays {isBoolean ? '1' : credits} USDT.e on Whitechain Sepolia before the Arkiv entitlement is created.
+            Operator Whitechain key settles {isBoolean ? '1' : credits} USDT.e on testnet, then the Arkiv entitlement is written.
           </p>
-        )}
+        ) : null}
+        {!op.status?.tracks.whitechain.demo_settle && !op.status?.tracks.whitechain.operator ? (
+          <div className="space-y-2">
+            <p className="text-sm text-[var(--muted)]">
+              Connect a wallet with RainbowKit, then pay {isBoolean ? '1' : credits} USDT.e on Whitechain Testnet.
+            </p>
+            <ConnectWallet />
+          </div>
+        ) : null}
 
-        <div className="grid gap-2 sm:grid-cols-2">
-          <button
-            type="button"
-            disabled={busy || !idkitReady || !op.holder}
-            onClick={() => void beginIdKit()}
-            className="rounded-full border border-[var(--line)] px-4 py-2.5 text-sm font-semibold disabled:opacity-50"
-          >
-            World IDKit (QR / World App)
-          </button>
-          <button
-            type="button"
-            disabled={busy || !agentPassReady || !op.holder}
-            onClick={() => void beginAgentPass()}
-            className="rounded-full border border-[var(--line)] px-4 py-2.5 text-sm font-semibold disabled:opacity-50"
-            title={agentPassReady ? undefined : 'Blocked until World allowlists your Google for auth.world.org/portal'}
-          >
-            Agent Pass {agentPassReady ? '' : '(needs portal access)'}
-          </button>
-        </div>
+        {/* World re-verify only when this session is not already human-gated */}
+        {!verifiedSession && !mockAllowed ? (
+          <div className="space-y-2">
+            <p className="text-[12px] text-[var(--muted)]">
+              First-time mint needs a human proof (World). Scan once; afterwards Create entitlement is enough.
+            </p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                disabled={busy || !idkitReady || !op.holder}
+                onClick={() => void beginIdKit()}
+                className="rounded-full border border-[var(--line)] px-4 py-2.5 text-sm font-semibold disabled:opacity-50"
+              >
+                World IDKit (QR / World App)
+              </button>
+              <button
+                type="button"
+                disabled={busy || !agentPassReady || !op.holder}
+                onClick={() => void beginAgentPass()}
+                className="rounded-full border border-[var(--line)] px-4 py-2.5 text-sm font-semibold disabled:opacity-50"
+                title={agentPassReady ? undefined : 'Blocked until World allowlists your Google for auth.world.org/portal'}
+              >
+                Agent Pass {agentPassReady ? '' : '(needs portal access)'}
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         <Link href="/app/grants" className="inline-block text-sm font-medium text-[var(--blue)] underline">
           After creating → open Entitlements

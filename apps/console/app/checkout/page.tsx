@@ -2,7 +2,7 @@
 
 import { Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { BagsevenEmbed } from '@bagseven/sdk/react';
+import { BagsevenEmbed } from '../../lib/bagseven-sdk-react';
 
 function CheckoutInner() {
   const params = useSearchParams();

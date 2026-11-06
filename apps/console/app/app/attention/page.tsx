@@ -45,8 +45,8 @@ export default function AttentionPage() {
         }
         if ((live.grants ?? []).length === 0) {
           next.push({
-            title: 'No entitlements',
-            detail: 'Create an entitlement so agents have living access to spend against.',
+            title: 'No live entitlements yet',
+            detail: 'Create an entitlement so agents have living Arkiv access to spend against.',
             href: '/app/mint',
             tone: 'warn',
           });

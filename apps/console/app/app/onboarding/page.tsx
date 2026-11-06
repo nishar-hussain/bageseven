@@ -2,7 +2,7 @@
 
 import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { connectWhitechainWallet } from '@bagseven/sdk/wallet';
+import { ConnectWallet } from '../../../components/wallet/ConnectWallet';
 
 type Step = 'email' | 'wallet';
 
@@ -176,20 +176,17 @@ function OnboardingInner() {
           <div className="space-y-4">
             <h2 className="text-base font-semibold">Connect payout wallet</h2>
             <p className="text-sm text-[var(--muted)]">
-              Whitechain / injected EVM wallet for plan payouts. You can connect later from Account.
+              RainbowKit on Whitechain Testnet for plan payouts. You can connect later from Account.
             </p>
-            <button
-              type="button"
-              disabled={busy}
-              className="w-full rounded-full bg-[var(--ink)] py-2.5 text-sm font-semibold text-white disabled:opacity-60"
-              onClick={() =>
-                void connectWhitechainWallet()
-                  .then(({ address }) => saveWallet(address))
-                  .catch((e) => setMsg(e instanceof Error ? e.message : String(e)))
-              }
-            >
-              Connect Whitechain wallet
-            </button>
+            <div className="flex justify-center py-1">
+              <ConnectWallet
+                persistToAccount
+                onConnected={(address) => {
+                  setWallet(address);
+                  setMsg(`Wallet connected: ${address}`);
+                }}
+              />
+            </div>
             <form
               className="space-y-3"
               onSubmit={(e) => {

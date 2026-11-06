@@ -24,7 +24,7 @@ import {
 } from '@bagseven/world';
 import { gte } from '@bagseven/money';
 import type { FastifyInstance } from 'fastify';
-import { settleWhitechainUsdt, whitechainDemoAllowed } from './whitechain-settle.js';
+import { resolveWhitechainPayTo, settleWhitechainUsdt, whitechainDemoAllowed } from './whitechain-settle.js';
 import { notifyConfigured, notifyOperator } from '@bagseven/notify';
 import { claimSettlement, type PaymentLedger } from './payment-ledger.js';
 import { whitechainConfig } from '@bagseven/onchain';
@@ -165,9 +165,9 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
           network: whitechainNetwork,
           chain_id: Number(process.env.CHAIN_ID ?? 1874),
           explorer: process.env.WHITECHAIN_NETWORK === 'mainnet' ? 'https://explorer.whitechain.io' : 'https://explorer.testnet.whitechain.io',
-          operator: Boolean((process.env.WHITECHAIN_PRIVATE_KEY ?? '').trim() && (process.env.WHITECHAIN_PAY_TO ?? '').trim()),
+          operator: Boolean((process.env.WHITECHAIN_PRIVATE_KEY ?? '').trim() && Boolean(resolveWhitechainPayTo())),
           demo_settle: whitechainDemoAllowed(),
-          pay_to: process.env.WHITECHAIN_PAY_TO || null,
+          pay_to: resolveWhitechainPayTo(),
           usdt: whitechainConfig().usdt,
         },
         arkiv: {

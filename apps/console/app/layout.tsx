@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { ThemeProvider } from '../components/theme-provider';
+import { WalletProviders } from '../components/wallet/WalletProviders';
 import { Toaster } from '../components/ui/sonner';
 import './globals.css';
 
@@ -23,8 +24,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="antialiased">
         <ThemeProvider>
-          {children}
-          <Toaster />
+          <WalletProviders>
+            {children}
+            <Toaster />
+          </WalletProviders>
         </ThemeProvider>
       </body>
     </html>

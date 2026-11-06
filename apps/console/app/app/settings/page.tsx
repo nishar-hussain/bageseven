@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { StatusBadges } from '../../../components/app/StatusBadges';
+import { WalletStatusCard } from '../../../components/wallet/WalletStatus';
 import { entitlementsApi, type MumbaiStatus } from '../../../lib/entitlements-client';
 
 type Check = { id: string; ok: boolean; title: string; need: string; action?: string };
@@ -33,12 +34,14 @@ export default function SettingsPage() {
         },
         {
           id: 'whitechain',
-          ok: status.tracks.whitechain.operator || !status.tracks.whitechain.demo_settle,
+          ok: Boolean(status.tracks.whitechain.pay_to && status.tracks.whitechain.usdt),
           title: 'Whitechain USDT (money clock)',
-          need: status.tracks.whitechain.demo_settle
-            ? 'Buyer wallet pay works with demo confirm until you set WHITECHAIN_DEMO_SETTLE=false, WHITECHAIN_PAY_TO, WHITECHAIN_USDT. Operator Credits also need WHITECHAIN_PRIVATE_KEY.'
-            : 'Live settle path configured.',
-          action: '/app/credits',
+          need: !status.tracks.whitechain.pay_to
+            ? 'Set WHITECHAIN_PAY_TO (payout wallet) or WHITECHAIN_PRIVATE_KEY — Mint / Buy credits need a recipient. Restart daemon after changing .env.'
+            : status.tracks.whitechain.demo_settle
+              ? `Recipient ${status.tracks.whitechain.pay_to.slice(0, 10)}… · demo settle on. Set WHITECHAIN_DEMO_SETTLE=false for live verify.`
+              : `Live · recipient ${status.tracks.whitechain.pay_to.slice(0, 10)}… · USDT configured.`,
+          action: '/app/mint',
         },
         {
           id: 'arkiv',
@@ -65,6 +68,8 @@ export default function SettingsPage() {
       </div>
 
       {error && <p className="text-sm text-[var(--deny)]">{error}</p>}
+
+      <WalletStatusCard title="Browser wallet" persistToAccount />
 
       <section className="rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
         <h2 className="font-semibold">Go-live checklist</h2>
@@ -115,6 +120,11 @@ export default function SettingsPage() {
             {
               t: 'Arkiv',
               lines: [`Store: ${status.tracks.arkiv.store}`, `Live entities: ${status.tracks.arkiv.live}`],
+              extra: (
+                <Link href="/app/arkiv" className="mt-3 inline-block text-xs font-semibold text-[var(--blue)] underline">
+                  Open Arkiv studio →
+                </Link>
+              ),
             },
           ].map((c) => (
             <div key={c.t} className="rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
@@ -125,6 +135,7 @@ export default function SettingsPage() {
                   {l}
                 </p>
               ))}
+              {'extra' in c && c.extra ? c.extra : null}
             </div>
           ))}
         </div>

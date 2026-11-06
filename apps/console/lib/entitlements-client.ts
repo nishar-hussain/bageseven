@@ -89,7 +89,12 @@ export const entitlementsApi = {
     if (q?.holder) params.set('holder', q.holder);
     if (q?.feature) params.set('feature', q.feature);
     const qs = params.toString();
-    return api<{ grants: Grant[]; store?: unknown }>('GET', `grants/live${qs ? `?${qs}` : ''}`);
+    return api<{
+      grants: Grant[];
+      store?: { mode?: string; live?: boolean; rpcUrl?: string };
+      physics?: Record<string, string>;
+      features?: string[];
+    }>('GET', `grants/live${qs ? `?${qs}` : ''}`);
   },
   mint: (body: Record<string, unknown>) => api<{ grant: Grant; settlement?: { payment_tx?: string; explorer_url?: string; mode?: string }; world?: { mode?: string } }>('POST', 'grants/mint', body),
   buyCredits: (body: Record<string, unknown>) => api<{ grant: Grant; settlement?: { payment_tx?: string; explorer_url?: string; mode?: string } }>('POST', 'grants/buy-credits', body),

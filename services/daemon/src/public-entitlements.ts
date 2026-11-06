@@ -64,6 +64,7 @@ export function isPublicEntitlementPath(url: string): boolean {
   if (path.startsWith('/v1/plans/')) return true;
   if (path.startsWith('/v1/checkout-sessions/')) return true;
   if (path.startsWith('/v1/public/checkout/')) return true;
+  if (path.startsWith('/v1/entitlements/') && path.endsWith('/cancel-renewal')) return true;
   return false;
 }
 
@@ -132,6 +133,24 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
       holder,
       entitlements: grants.map((g) => entitlementView(g, g.feature)),
       grants,
+    };
+  });
+
+  /** Customer portal — cancel renewal; access stays until paid_through. */
+  app.post('/v1/entitlements/:id/cancel-renewal', async (req) => {
+    const principal = principalFrom(req);
+    const { id } = req.params as { id: string };
+    const grant = await store.get(id);
+    if (!grant) throw new ApiError(404, 'GRANT_NOT_FOUND', 'grant not found');
+    assertCanWrite(principal, grant.holder);
+    if (principal.kind === 'embed' && principal.holder !== grant.holder) {
+      throw new ApiError(403, 'HOLDER_MISMATCH', 'embed token is scoped to a different holder');
+    }
+    const next = await store.cancelRenewal(id);
+    return {
+      entitlement: entitlementView(next, next.feature),
+      grant: next,
+      note: 'Renewal off; access remains until paid_through',
     };
   });
 

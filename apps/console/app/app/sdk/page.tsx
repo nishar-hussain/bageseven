@@ -8,7 +8,7 @@ import {
   useBagseven,
   useEntitlement,
   useFlag,
-} from '@bagseven/sdk/react';
+} from '../../../lib/bagseven-sdk-react';
 import { useOperator } from '../../../lib/use-operator';
 
 const PK = process.env.NEXT_PUBLIC_BAGSEVEN_PUBLISHABLE_KEY ?? '';
