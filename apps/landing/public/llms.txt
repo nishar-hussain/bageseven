@@ -1,9 +1,18 @@
 # Bagseven
 
-Operators sign in with World. Plans + checkout sessions settle USDT on Whitechain (WhiteWallet-ready) and mint living Arkiv entitlements. Humans and agents check/consume through `@bagseven/sdk`. Agents dual-gate under a mandate.
+Operators sign in with World. Plans + checkout sessions settle USDT on Whitechain (WhiteWallet-ready) and mint living Arkiv entitlements. Humans and agents check/consume through `@bagseven/sdk`. Prepaid credit consumption does not require a mandate. New agent payments require a mandate and living entitlement.
 
 Dashboard: /app (World login). Plans / checkouts / account. SDK: /app/sdk. Embed: /embed?token=. Checkout: /checkout?session=.
 
 SDK: react (Provider, FeatureFlagGuard, BagsevenEmbed checkout) · node (createPlan, createCheckoutSession, checkEntitlement) · wallet (Whitechain)
 
 MCP: bagseven_status, grant_status, check_entitlement, consume_entitlement, mint_with_world, buy_credits, create_checkout_session, paid_run, cancel_renewal, explain_denial, bagseven_fetch.
+
+Documentation: /docs/introduction
+Quickstart: /docs/quickstart
+SDK: /docs/sdk/node · /docs/sdk/react · /docs/sdk/agent
+API: /docs/api/overview · /docs/api/entitlements · /docs/api/checkout
+Agents: /docs/guides/mcp · /docs/guides/agent-spending
+Troubleshooting: /docs/troubleshooting
+
+Architecture: /docs/concepts/architecture

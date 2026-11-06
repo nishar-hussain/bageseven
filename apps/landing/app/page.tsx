@@ -25,7 +25,7 @@ export default function LandingPage() {
             <a href="#product" className="hover:text-white">Product</a>
             <a href="#how" className="hover:text-white">How it works</a>
             <a href="#developers" className="hover:text-white">Developers</a>
-            <a href="#security" className="hover:text-white">Security</a>
+            <a href="/docs/introduction" className="hover:text-white">Documentation</a>
           </nav>
           <div className="flex items-center gap-3">
             <a href={`${APP}/app/login`} className="hidden text-sm text-white/70 hover:text-white sm:inline">
@@ -220,6 +220,7 @@ check_entitlement · consume_entitlement · paid_run`}
           <div className="flex items-center gap-2 font-medium text-white">
             <Mark className="h-5 w-5" /> Bagseven
           </div>
+          <a href="/docs/introduction" className="hover:text-white">Documentation ↗</a>
           <div>World · Whitechain · Arkiv · © {new Date().getFullYear()}</div>
         </div>
       </footer>
