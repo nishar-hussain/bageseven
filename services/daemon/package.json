@@ -21,6 +21,7 @@
     "@bagseven/onchain": "workspace:*",
     "@bagseven/server": "workspace:*",
     "@bagseven/world": "workspace:*",
+    "@hashgraph/sdk": "^2.81.0",
     "@x402/core": "2.28.0",
     "fastify": "^5.12.5",
     "ioredis": "^6.0.0",

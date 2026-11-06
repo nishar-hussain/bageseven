@@ -1,9 +1,27 @@
 #!/usr/bin/env node
 /**
- * Mumbai smoke against daemon (memory + demo settle).
+ * Smoke against daemon (memory + demo settle).
  * Usage: pnpm smoke
  * Requires daemon on DAEMON_URL (default http://127.0.0.1:4001).
  */
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const envPath = resolve(root, '.env');
+if (existsSync(envPath)) {
+  for (const line of readFileSync(envPath, 'utf8').split('\n')) {
+    if (!line || line.startsWith('#')) continue;
+    const i = line.indexOf('=');
+    if (i <= 0) continue;
+    const k = line.slice(0, i);
+    let v = line.slice(i + 1);
+    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+    if (process.env[k] === undefined) process.env[k] = v;
+  }
+}
+
 const base = (process.env.DAEMON_URL ?? 'http://127.0.0.1:4001').replace(/\/$/, '');
 const auth = process.env.DAEMON_AUTH_TOKEN
   ? { authorization: `Bearer ${process.env.DAEMON_AUTH_TOKEN}` }

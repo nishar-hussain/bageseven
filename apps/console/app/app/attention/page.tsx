@@ -41,10 +41,10 @@ export default function AttentionPage() {
             tone: 'info',
           });
         }
-        if (s.tracks.world.mode !== 'live') {
+        if (s.tracks.world.mock_proofs) {
           next.push({
-            title: 'World mock proofs',
-            detail: 'Set WORLD_CLIENT_ID and paste id_token on Mint for live Agent Pass.',
+            title: 'World mock proofs on',
+            detail: 'Local OK. Paste a real Agent Pass id_token on Mint and set WORLD_MOCK_PROOFS=false for live World.',
             href: '/app/mint',
             tone: 'info',
           });

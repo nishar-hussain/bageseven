@@ -119,19 +119,23 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
     };
   });
 
+  // PKCE verifiers stay server-side only (never returned to the browser).
+  const pkceByState = new Map<string, { verifier: string; exp: number }>();
+
   app.get('/internal/world/authorize', async (req) => {
     const q = req.query as { redirect_uri?: string; state?: string };
     const clientId = process.env.WORLD_CLIENT_ID?.trim();
     if (!clientId) {
       return {
         mode: 'mock',
-        note: 'WORLD_CLIENT_ID unset — use world:ok:<id> proofs or paste a demo id_token with WORLD_SKIP_JWKS',
+        note: 'WORLD_CLIENT_ID unset — use world:ok:<id> proofs locally',
         authorize_url: null,
       };
     }
     const redirectUri = q.redirect_uri || process.env.WORLD_REDIRECT_URI || 'http://127.0.0.1:3000/app/mint';
     const state = q.state || randomUUID();
     const verifier = randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '');
+    pkceByState.set(state, { verifier, exp: Date.now() + 15 * 60 * 1000 });
     const challenge = pkceChallengeFromVerifier(verifier);
     const authorize_url = buildWorldAuthorizeUrl({
       clientId,
@@ -143,9 +147,8 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
       mode: 'live',
       authorize_url,
       state,
-      code_verifier: verifier,
       redirect_uri: redirectUri,
-      note: 'Complete Agent Pass, then POST id_token to /internal/grants/mint',
+      note: 'Complete Agent Pass, then POST id_token to /internal/grants/mint (PKCE verifier is server-held)',
     };
   });
 
@@ -253,7 +256,9 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
       };
     } catch (error) {
       if (error instanceof ApiError) throw error;
-      if (error && typeof error === 'object' && 'name' in error && (error as { name: string }).name === 'ZodError') throw error;
+      if (error && typeof error === 'object' && 'name' in error && (error as { name: string }).name === 'ZodError') {
+        throw new ApiError(400, 'VALIDATION', 'Invalid mint payload', error);
+      }
       mapGrantError(error);
     }
   });
@@ -262,8 +267,9 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
   app.post('/internal/grants/buy-credits', async (req) => {
     try {
       const body = buyCreditsSchema.parse(req.body);
+      const prod = (process.env.NODE_ENV ?? 'development') === 'production';
       const world = await verifyWorldAgentPass({
-        world_proof_id: body.world_proof_id ?? 'world:ok:buyer',
+        world_proof_id: body.world_proof_id ?? (prod ? undefined : 'world:ok:buyer'),
         id_token: body.id_token,
         world_denied: body.world_denied,
         outcome: body.outcome,
@@ -347,7 +353,9 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
         throw new ApiError(403, 'DUAL_GATE', 'GRANT_EMPTY: remaining credits insufficient');
       }
 
-      if (!body.skip_mandate_gate && body.worker_id && deps.resolveMandateCapacity) {
+      const prod = (process.env.NODE_ENV ?? 'development') === 'production';
+      const skipMandate = prod ? false : Boolean(body.skip_mandate_gate);
+      if (!skipMandate && body.worker_id && deps.resolveMandateCapacity) {
         const capacity = await deps.resolveMandateCapacity(body.worker_id);
         if (!capacity.ok) {
           throw new ApiError(

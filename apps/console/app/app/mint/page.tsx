@@ -12,9 +12,11 @@ export default function MintPage() {
   const [ttl, setTtl] = useState(120);
   const [msg, setMsg] = useState('');
   const [lastId, setLastId] = useState('');
+  const [busy, setBusy] = useState(false);
 
   const mint = async (denied: boolean) => {
-    setMsg(denied ? 'Deny path…' : 'Minting…');
+    setBusy(true);
+    setMsg(denied ? 'Deny path…' : 'Minting (World + Hedera stamp + Arkiv write — often 5–15s)…');
     try {
       const r = await entitlementsApi.mint({
         feature: 'ocr',
@@ -30,17 +32,22 @@ export default function MintPage() {
       setMsg(`Minted ${r.grant.id} · world=${r.world?.mode ?? '?'} · ${r.settlement?.hashscan_url ?? ''}`);
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
     }
   };
 
   const authorize = async () => {
-    setMsg('…');
+    setBusy(true);
+    setMsg('Resolving World authorize URL…');
     try {
       const r = await entitlementsApi.worldAuthorize();
       setMsg(r.authorize_url || r.note || r.mode);
       if (r.authorize_url) window.open(r.authorize_url, '_blank', 'noopener');
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -84,13 +91,13 @@ export default function MintPage() {
           <input id="ttl" type="number" value={ttl} onChange={(e) => setTtl(Number(e.target.value))} />
         </div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => void mint(false)} className="rounded-full bg-[var(--ink)] px-4 py-2 text-sm font-semibold text-white">
-            Mint with World
+          <button type="button" disabled={busy} onClick={() => void mint(false)} className="rounded-full bg-[var(--ink)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+            {busy ? 'Working…' : 'Mint with World'}
           </button>
-          <button type="button" onClick={() => void mint(true)} className="rounded-full bg-[var(--deny)] px-4 py-2 text-sm font-semibold text-white">
+          <button type="button" disabled={busy} onClick={() => void mint(true)} className="rounded-full bg-[var(--deny)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
             Deny path
           </button>
-          <button type="button" onClick={() => void authorize()} className="rounded-full border border-[var(--line)] px-4 py-2 text-sm font-medium">
+          <button type="button" disabled={busy} onClick={() => void authorize()} className="rounded-full border border-[var(--line)] px-4 py-2 text-sm font-medium disabled:opacity-50">
             World authorize URL
           </button>
           <Link href="/app/grants" className="rounded-full border border-[var(--line)] px-4 py-2 text-sm font-medium">

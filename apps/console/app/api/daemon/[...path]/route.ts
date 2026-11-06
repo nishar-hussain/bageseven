@@ -4,20 +4,48 @@ import { getSession } from '../../../../lib/auth';
 
 type Ctx = { params: Promise<{ path: string[] }> };
 
+/** Product BFF surface — never proxy arbitrary daemon internals. */
+const ALLOWED: Array<{ method: string; match: (parts: string[]) => boolean }> = [
+  { method: 'GET', match: (p) => p[0] === 'mumbai' && p[1] === 'status' && p.length === 2 },
+  { method: 'GET', match: (p) => p[0] === 'world' && p[1] === 'authorize' && p.length === 2 },
+  { method: 'GET', match: (p) => p[0] === 'grants' && p[1] === 'live' && p.length === 2 },
+  { method: 'GET', match: (p) => p[0] === 'grants' && p.length === 2 },
+  { method: 'POST', match: (p) => p[0] === 'grants' && p[1] === 'mint' && p.length === 2 },
+  { method: 'POST', match: (p) => p[0] === 'grants' && p[1] === 'buy-credits' && p.length === 2 },
+  { method: 'POST', match: (p) => p[0] === 'grants' && p[1] === 'paid-run' && p.length === 2 },
+  { method: 'POST', match: (p) => p[0] === 'grants' && p[1] === 'explain-denial' && p.length === 2 },
+  {
+    method: 'POST',
+    match: (p) => p[0] === 'grants' && p.length === 3 && p[2] === 'cancel-renewal',
+  },
+];
+
+function allowed(method: string, parts: string[]): boolean {
+  return ALLOWED.some((r) => r.method === method && r.match(parts));
+}
+
 async function proxy(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
+  const session = await getSession();
+  if (!session?.email) {
+    return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: 'Sign in required' } }, { status: 401 });
+  }
+
   const { path } = await ctx.params;
+  if (!allowed(req.method, path)) {
+    return NextResponse.json({ error: { code: 'NOT_FOUND', message: 'Unknown API route' } }, { status: 404 });
+  }
+
   const suffix = path.map(encodeURIComponent).join('/');
   const url = new URL(req.url);
   const target = `/internal/${suffix}${url.search}`;
 
-  const init: RequestInit = { method: req.method };
+  const headers = new Headers();
+  headers.set('x-bagseven-actor', session.email);
+  const init: RequestInit = { method: req.method, headers };
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     init.body = await req.text();
+    headers.set('content-type', req.headers.get('content-type') ?? 'application/json');
   }
-  const headers = new Headers(init.headers);
-  const session = await getSession();
-  if (session?.email) headers.set('x-bagseven-actor', session.email);
-  init.headers = headers;
 
   try {
     const res = await daemonFetch(target, init);
@@ -36,6 +64,3 @@ async function proxy(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
 
 export const GET = proxy;
 export const POST = proxy;
-export const PUT = proxy;
-export const PATCH = proxy;
-export const DELETE = proxy;

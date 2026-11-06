@@ -2,7 +2,7 @@ import { dec, defineSchema, str } from '@arkiv-network/sdk/schema';
 
 /**
  * Public Arkiv schema for Bagseven grants.
- * See `/arkiv/schema.md` for judge-facing docs.
+ * See `/docs/arkiv/schema.md` for judge-facing docs.
  */
 export const BagsevenGrants = defineSchema('bagseven_grants', {
   grant_id: str().indexed(),

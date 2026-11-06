@@ -63,18 +63,18 @@ export default function OverviewPage() {
   }, [grants.length, range]);
 
   const attentionBits: string[] = [];
-  if (grants.length === 0) attentionBits.push('no living grant');
+  if (grants.length === 0) attentionBits.push('no living grant — open Mint');
   if (status && !status.tracks.arkiv.live) attentionBits.push('Arkiv on memory store');
   if (status?.tracks.hedera.demo_settle) attentionBits.push('Hedera demo settle');
-  if (status?.tracks.world.mode !== 'live') attentionBits.push('World mock proofs');
+  if (status?.tracks.world.mock_proofs) attentionBits.push('World mock proofs (paste id_token for live Agent Pass)');
 
   return (
     <div className="mx-auto max-w-6xl space-y-5">
       <div>
         <h1 className="text-[2rem] font-semibold tracking-tight md:text-[2.35rem]">Overview</h1>
-        <button type="button" className="mt-1 text-sm text-[var(--muted)] underline decoration-dashed underline-offset-4">
-          How these numbers are built
-        </button>
+        <p className="mt-1 text-sm text-[var(--muted)]">
+          Living grant counts and credits are live. Charts below are illustrative until usage telemetry ships.
+        </p>
       </div>
 
       {attentionBits.length > 0 && (
@@ -95,7 +95,7 @@ export default function OverviewPage() {
 
       <section className="rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)] md:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-base font-semibold">Entitlement activity</h2>
+          <h2 className="text-base font-semibold">Credits remaining</h2>
           <div className="flex rounded-full border border-[var(--line)] bg-[var(--soft)] p-0.5 text-xs font-medium">
             {(['7', '30', '180'] as const).map((r) => (
               <button
@@ -153,8 +153,8 @@ export default function OverviewPage() {
         </section>
 
         <section className="rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
-          <h2 className="text-base font-semibold">Access by day</h2>
-          <p className="mt-1 text-sm text-[var(--muted)]">Heat from living grant TTLs (local demo visualization).</p>
+          <h2 className="text-base font-semibold">Access calendar</h2>
+          <p className="mt-1 text-sm text-[var(--muted)]">Placeholder heatmap (not usage telemetry).</p>
           <div className="mt-4 grid grid-cols-7 gap-1.5">
             {Array.from({ length: 28 }, (_, i) => {
               const intensity = grants.length === 0 ? 0 : ((i * 3 + grants.length * 5) % 5) / 4;

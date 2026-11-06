@@ -1,36 +1,72 @@
 # Agent instructions (Bagseven)
 
-You are working in the **Bagseven** monorepo. Prefer the live product path over leftover demos.
+Monorepo for **Bagseven**: humans mint living Arkiv entitlements; agents spend only through MCP under a **dual-gate** (mandate remaining ∧ living grant). Prefer the live product path — no extra UIs, ports, or demo apps.
 
-## Product path
+## Architecture
 
-- Landing: `apps/landing` → http://localhost:3001
-- Dashboard: `apps/console` → http://localhost:3000/app
-- Backend: `services/gateway` `:4000`, `services/daemon` `:4001`, `services/policy` `:4003`
-- Start: `pnpm run setup` then `pnpm start:local`
-- Design tokens: `docs/design.md` (Fianto: `--blue #0002f8`, landing dark, dashboard `#f2f2f2`)
+```
+apps/landing     marketing          :3001
+apps/console     operator dashboard :3000/app   (magic-link BFF)
+services/gateway public API         :4000
+services/daemon  grants + dual-gate :4001
+services/policy  spend tokens       :4003
+scripts/bagseven-mcp.ts  MCP HTTP/stdio  :4009  (agent surface)
+packages/        entitlements world notify db money onchain server
+```
 
-Do **not** add another UI, port, or marketing chrome inside the dashboard. Do **not** revive `bag-dashboard` or an inspector on `:3010`.
+Start: `pnpm run setup` then `pnpm start:local`. Design tokens: `docs/design.md` (`--blue #0002f8`, landing dark, dashboard `#f2f2f2`).
 
-There is no research-demo app. Do not add one.
+Do **not** add another web app, revive `bag-dashboard`, or put an inspector on `:3010`. Browser never holds `DAEMON_*` keys — console uses `/api/daemon/*`.
 
 ## Dual-gate
 
-Paid work (`paid_run`, `bagseven_fetch`) needs mandate remaining **and** a living Arkiv grant. Access evaporates at `paid_through`. `cancel_renewal` does not kill current access.
+| Clock | Truth |
+| --- | --- |
+| Payment | Hedera `payment_tx` |
+| Renewal | `grant.renewal_enabled` (cancel does **not** kill `paid_through`) |
+| Access | Arkiv grant `remaining` + `paid_through` (queryable object, not a private `/check`) |
 
-Browser never holds `DAEMON_*` keys. Dashboard uses `/api/daemon/*` BFF.
+`paid_run` / `bagseven_fetch` fail closed without both mandate capacity and a living grant (`BAGSEVEN_REQUIRE_GRANT=true`). When `BAGSEVEN_MCP_WORKER` is not a policy agent, MCP status is `entitlements_only` — grant tools still work; mandate spend via `bagseven_fetch` needs agent registration.
 
 ## Auth + email
 
-Magic link in `apps/console/lib/auth.ts` is a signed token (any email unless `AUTH_ALLOWLIST`). Set cookies on the **redirect response** (`attachSessionCookie`). Resend: `packages/notify` from `bags@cesthq.com`. Grant mails go to the signed-in actor (`x-bagseven-actor`) plus optional `OPERATOR_NOTIFY_EMAIL`.
+- Dashboard: magic link in `apps/console/lib/auth.ts` (signed token; any email unless `AUTH_ALLOWLIST`). Set session cookie on the **redirect** response (`attachSessionCookie`).
+- Resend via `packages/notify` from `bags@cesthq.com`. Grant mails → signed-in actor (`x-bagseven-actor`) + optional `OPERATOR_NOTIFY_EMAIL`.
+- Production secrets: `AUTH_SECRET`, `DAEMON_AUTH_TOKEN`, `RESEND_API_KEY`. Hosting: `docs/HOSTING.md`.
 
-Production: `AUTH_SECRET`, `DAEMON_AUTH_TOKEN`, `RESEND_API_KEY`. Hosting: `docs/HOSTING.md`. Developer map: `docs/DEVELOPERS.md`.
+**World vs MCP (different doors):** World proves the **human** at mint / OAuth authorize. MCP proves the **agent** to the daemon (daemon Bearer / OAuth access token). Agents never hold World credentials.
 
-## Docs for models
+## MCP (local + ChatGPT)
 
-- `llms.txt` — compact context
-- `docs/README.md` — index
-- `docs/hackathon/` — Mumbai notes, not the product README
+```bash
+BAGSEVEN_MCP_WORKER=<uuid> BAGSEVEN_MCP_PORT=4009 pnpm mcp:local
+# ChatGPT remote: HTTPS tunnel to :4009 + MCP_OAUTH_REQUIRED=true + BAGSEVEN_MCP_PUBLIC_URL=https://…
+```
+
+Tools: `bagseven_status`, `grant_status`, `mint_with_world`, `buy_credits`, `paid_run`, `cancel_renewal`, `explain_denial`, `bagseven_fetch` (+ search/spawn when wired).
+
+| Fact | Detail |
+| --- | --- |
+| ChatGPT | Needs **HTTPS** streamable HTTP (`/mcp`), not stdio/localhost |
+| Auth | World-gated OAuth AS (`scripts/mcp-oauth-as.ts`) — PKCE + DCR; ChatGPT gets a Bagseven Bearer, not World |
+| Sessions | In-memory `mcp-session-id`; after MCP restart clients must re-`initialize` (stale sid on initialize is accepted) |
+| `grant_status` | Defaults to feature filter only (aligns with `bagseven_status`). Do **not** force `worker_id` — console/curl mints often omit it |
+| JSON | `enableJsonResponse: true` — avoids SSE hangs behind ngrok |
+| Ngrok free | Browser interstitial on first visit; API POSTs with Bearer are fine. Update ChatGPT plugin URL when the tunnel hostname changes |
+
+Keep MCP alive in a long-lived process (`pnpm bagseven-mcp` / `mcp:local`). Killing the shell kills sessions and OAuth tokens in memory.
+
+## Code map
+
+| Concern | Where |
+| --- | --- |
+| Dual-gate + grants API | `services/daemon/src/grants.ts` |
+| Hedera settle | `services/daemon/src/hedera-x402.ts` |
+| Arkiv store | `packages/entitlements` |
+| World verify | `packages/world` |
+| Magic link | `apps/console/lib/auth.ts` |
+| Daemon BFF | `apps/console/app/api/daemon/[...path]/route.ts` |
+| MCP + OAuth | `scripts/bagseven-mcp.ts`, `scripts/mcp-oauth-as.ts` |
 
 ## Commands
 
@@ -40,3 +76,12 @@ pnpm smoke
 pnpm --filter @bagseven/console typecheck
 pnpm --filter @bagseven/daemon typecheck
 ```
+
+## Docs (keep this set small)
+
+- `README.md` — humans
+- `llms.txt` — compact model context
+- `docs/PRODUCT.md` · `docs/DEVELOPERS.md` · `docs/HOSTING.md` · `docs/DECISIONS.md` · `docs/design.md`
+- `docs/arkiv/` — schema / friction notes
+
+Do not add root audit/plan/report markdown; put durable notes here or in `docs/`.

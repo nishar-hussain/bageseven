@@ -19,7 +19,7 @@ export default function GrantsPage() {
         grant_id: grantId,
         amount,
         work,
-        skip_mandate_gate: true,
+        skip_mandate_gate: true, // console demo: grant gate only until worker/mandate bound
       });
       setMsg(`OK remaining=${r.grant.remaining}`);
     } catch (e) {

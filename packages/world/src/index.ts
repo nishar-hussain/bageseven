@@ -164,7 +164,8 @@ export async function verifyWorldAgentPass(
 
   const clientId = env.WORLD_CLIENT_ID?.trim();
   const mockAllowed = (env.WORLD_MOCK_PROOFS ?? 'true').toLowerCase() !== 'false';
-  const mode: 'live' | 'mock' = clientId ? 'live' : 'mock';
+  // Live when CLIENT_ID is set and an id_token is presented; otherwise mock if allowed.
+  const mode: 'live' | 'mock' = clientId && input.id_token ? 'live' : clientId && !mockAllowed ? 'live' : 'mock';
 
   if (input.world_denied) {
     return fail('denied', 'world_denied=true — Agent Pass unsuccessful; no grant written', mode);
@@ -179,12 +180,16 @@ export async function verifyWorldAgentPass(
   if (proof.startsWith('world:cancel:')) return fail('cancelled', 'user cancelled Agent Pass', mode);
   if (proof.startsWith('world:invalid:')) return fail('invalid', 'malformed or forged proof', mode);
 
-  if (mode === 'live') {
-    if (!input.id_token) {
-      return fail('invalid', 'live mode requires id_token from Agent Pass callback', 'live');
-    }
+  if (clientId && !input.id_token && !mockAllowed) {
+    return fail('invalid', 'live mode requires id_token from Agent Pass callback', 'live');
+  }
+
+  if (mode === 'live' && input.id_token) {
     try {
       const skipJwks = (env.WORLD_SKIP_JWKS ?? '').toLowerCase() === 'true';
+      if (skipJwks && (env.NODE_ENV ?? 'development') === 'production') {
+        return fail('invalid', 'WORLD_SKIP_JWKS is forbidden in production', 'live');
+      }
       let payload: Record<string, unknown>;
       if (skipJwks) {
         const decoded = decodeJwtPart(input.id_token.split('.')[1] ?? '');

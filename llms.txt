@@ -45,6 +45,8 @@ Events: magic_link, grant_minted, credits_bought, world_denied, paid_run, renewa
 bagseven_status, grant_status, mint_with_world, buy_credits, paid_run, cancel_renewal, explain_denial, bagseven_fetch
 Bind one worker: BAGSEVEN_MCP_WORKER=<uuid> pnpm mcp:local
 
+ChatGPT: HTTPS /mcp + World-gated OAuth (MCP_OAUTH_REQUIRED, BAGSEVEN_MCP_PUBLIC_URL). grant_status matches status (feature filter; do not force worker_id). Sessions are in-memory — re-initialize after MCP restart.
+
 ## Tracks (mock vs live)
 
 World: WORLD_MOCK_PROOFS vs WORLD_CLIENT_ID
@@ -64,4 +66,4 @@ docs/design.md — --blue #0002f8, landing dark hero, dashboard #f2f2f2 sidebar,
 
 ## More
 
-docs/DEVELOPERS.md, docs/HOSTING.md, AGENTS.md, .cursor/skills/bagseven/SKILL.md
+AGENTS.md (source of truth for agents), docs/DEVELOPERS.md, docs/HOSTING.md, docs/PRODUCT.md

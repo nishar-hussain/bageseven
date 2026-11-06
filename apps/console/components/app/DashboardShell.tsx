@@ -162,8 +162,9 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--faint)]" />
             <input
               className="w-full rounded-full border border-[var(--line)] bg-white py-2 pl-9 pr-3 text-sm shadow-[var(--sh)] placeholder:text-[var(--faint)]"
-              placeholder="Search grant id, holder, or payment_tx"
-              readOnly
+              placeholder="Search coming soon"
+              disabled
+              aria-disabled="true"
             />
           </div>
           <div className="ml-auto flex items-center gap-2">

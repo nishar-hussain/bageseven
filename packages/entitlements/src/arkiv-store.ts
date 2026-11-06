@@ -280,23 +280,38 @@ export class ArkivGrantStore implements GrantStore {
     if (this.fallback) return this.fallback.findLive(query);
 
     this.ensureClients();
-    // Indexed remaining/enabled on-chain; feature/holder/worker filtered client-side
-    // to keep the SDK FilterCheck happy across optional query dims.
-    const result = await this.public!
-      .select()
-      .from(BagsevenGrants)
-      .where(and(gt('remaining', dec('0')), eq('enabled', 'true')))
-      .fetch();
-
     const at = Date.now();
-    return (result.entities as unknown as Record<string, unknown>[])
-      .map((row) => this.rowToGrant(row))
-      .filter((g) => {
-        if (query.feature && g.feature !== query.feature) return false;
-        if (query.holder && g.holder !== query.holder) return false;
-        if (query.worker_id && g.worker_id !== query.worker_id) return false;
-        return !isExpired(g, at) && g.enabled;
-      });
+    const matches = (g: Grant): boolean => {
+      if (query.feature && g.feature !== query.feature) return false;
+      if (query.holder && g.holder !== query.holder) return false;
+      if (query.worker_id && g.worker_id !== query.worker_id) return false;
+      return !isExpired(g, at) && g.enabled && gte(g.remaining, '0') && moneyGt(g.remaining, '0');
+    };
+
+    // Always include process cache (covers query lag right after mint).
+    const byId = new Map<string, Grant>();
+    for (const g of this.cache.values()) {
+      if (matches(g)) byId.set(g.id, g);
+    }
+
+    try {
+      // Indexed remaining/enabled on-chain; feature/holder/worker filtered client-side
+      // to keep the SDK FilterCheck happy across optional query dims.
+      const result = await this.public!
+        .select()
+        .from(BagsevenGrants)
+        .where(and(gt('remaining', dec('0')), eq('enabled', 'true')))
+        .fetch();
+
+      for (const row of result.entities as unknown as Record<string, unknown>[]) {
+        const g = this.rowToGrant(row);
+        if (matches(g)) byId.set(g.id, g);
+      }
+    } catch {
+      // Query surface can lag or fail; cached mints still power the operator UI.
+    }
+
+    return [...byId.values()];
   }
 
   async consume(id: string, amount: string, idempotencyKey: string): Promise<Grant> {

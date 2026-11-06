@@ -25,7 +25,9 @@ If `pnpm` itself errors with a missing global path, your shell shim is broken �
 
 Then: landing → **Start free** → email → Overview → Mint / Credits / Grants.
 
-Docs: [docs/DEVELOPERS.md](./docs/DEVELOPERS.md) · [docs/HOSTING.md](./docs/HOSTING.md) · [llms.txt](./llms.txt) · [AGENTS.md](./AGENTS.md)
+**What ships + demo + World vs MCP auth:** [docs/PRODUCT.md](./docs/PRODUCT.md)
+
+Docs: [docs/](./docs/README.md) · [AGENTS.md](./AGENTS.md) · [llms.txt](./llms.txt)
 
 ## Dual-gate
 

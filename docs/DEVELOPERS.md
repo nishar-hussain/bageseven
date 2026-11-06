@@ -84,6 +84,12 @@ Live tracks: set World / Hedera / Arkiv keys in `.env`. Leave mock flags **off**
 
 `bagseven_status`, `grant_status`, `mint_with_world`, `buy_credits`, `paid_run`, `cancel_renewal`, `explain_denial`, `bagseven_fetch`
 
+```bash
+BAGSEVEN_MCP_WORKER=<uuid> BAGSEVEN_MCP_PORT=4009 pnpm mcp:local
+```
+
+**ChatGPT / remote:** expose `:4009` over HTTPS (`BAGSEVEN_MCP_PUBLIC_URL`), set `MCP_OAUTH_REQUIRED=true`. World consent runs on Bagseven’s authorize page; ChatGPT stores a Bagseven access token. Plugin Server URL is typically `https://…/mcp`. Durable notes: [`../AGENTS.md`](../AGENTS.md).
+
 ## Design
 
 [design.md](./design.md) — Fianto tokens (`#0002f8`, landing dark, dashboard `#f2f2f2`). Landing and dashboard stay separate.

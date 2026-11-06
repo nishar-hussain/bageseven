@@ -35,6 +35,6 @@ Build-track notes for judges. What slowed us down and how we worked around it.
 | Criterion | Where |
 | --- | --- |
 | Real write + read | `packages/entitlements/src/arkiv-store.ts` |
-| Schema documented | `arkiv/schema.md` |
+| Schema documented | `docs/arkiv/schema.md` |
 | Friction documented | this file |
-| Judge-runnable query | `arkiv/schema.md` + Inspector “live grants” |
+| Judge-runnable query | `docs/arkiv/schema.md` + Inspector “live grants” |

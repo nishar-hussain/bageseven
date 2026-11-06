@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { cookies } from 'next/headers';
 import type { NextResponse } from 'next/server';
+import { authSecretFromEnv } from './session-crypto';
 
 export const SESSION_COOKIE = 'bagseven_session';
 export const SESSION_MAX_AGE = 60 * 60 * 8;
@@ -9,7 +10,7 @@ const MAGIC_MAX_AGE = 15 * 60;
 export type Session = { email: string; exp: number; k?: 'session' | 'magic' };
 
 function secret(): string {
-  return process.env.AUTH_SECRET?.trim() || process.env.DAEMON_AUTH_TOKEN?.trim() || 'dev-only-change-me';
+  return authSecretFromEnv(process.env);
 }
 
 function sign(payload: string): string {
@@ -64,7 +65,8 @@ export function decodeToken(token: string | undefined | null, kind?: 'session' |
   try {
     const session = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as Session;
     if (!session.email || session.exp * 1000 < Date.now()) return null;
-    if (kind && session.k && session.k !== kind) return null;
+    if (kind === 'session' && session.k === 'magic') return null;
+    if (kind === 'magic' && session.k && session.k !== 'magic') return null;
     return session;
   } catch {
     return null;
@@ -72,7 +74,7 @@ export function decodeToken(token: string | undefined | null, kind?: 'session' |
 }
 
 export function decodeSession(token: string | undefined | null): Session | null {
-  return decodeToken(token, 'session') ?? decodeToken(token);
+  return decodeToken(token, 'session');
 }
 
 export async function getSession(): Promise<Session | null> {

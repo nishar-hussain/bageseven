@@ -68,7 +68,7 @@ export default function SettingsPage() {
         Dual-gate feature=<code className="fi-mono text-xs">{status?.dual_gate.feature ?? '…'}</code>
         {' · '}
         require_grant={String(status?.dual_gate.require_grant ?? '…')}
-        <div className="mt-2 text-white/75">See design.md · SETUP.md · arkiv/schema.md</div>
+        <div className="mt-2 text-white/75">See docs/design.md · docs/HOSTING.md · docs/arkiv/schema.md</div>
       </div>
     </div>
   );

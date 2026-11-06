@@ -209,7 +209,7 @@ function buildRoutes(app: FastifyInstance, { config, redis }: ServiceDeps): void
     // Dual gate (prize path): mandate capacity is checked via spend; also require a
     // living Arkiv grant for research_fetch / ocr when BAGSEVEN_REQUIRE_GRANT=true (default).
     const requireGrant = (config.BAGSEVEN_REQUIRE_GRANT ?? 'true').toLowerCase() !== 'false';
-    const grantFeature = config.BAGSEVEN_GRANT_FEATURE ?? 'research_fetch';
+    const grantFeature = config.BAGSEVEN_GRANT_FEATURE ?? 'ocr';
     let grantConsume: { grant_id: string; idempotency_key: string } | undefined;
     if (requireGrant) {
       const store = getGrantStore(config);
@@ -411,6 +411,10 @@ function validateEnvContract(): void {
   if (prod && !process.env.DAEMON_AUTH_TOKEN) missing.push('DAEMON_AUTH_TOKEN');
   if (prod && !process.env.RESEND_API_KEY) missing.push('RESEND_API_KEY');
   if (prod && !process.env.AUTH_SECRET) missing.push('AUTH_SECRET');
+  if (prod && (process.env.WORLD_SKIP_JWKS ?? '').toLowerCase() === 'true') {
+    console.error('[bagseven-daemon] refusing to start — WORLD_SKIP_JWKS is forbidden in production');
+    process.exit(1);
+  }
   if (prod && missing.length) {
     console.error(`[bagseven-daemon] refusing to start — missing env: ${missing.join(', ')}`);
     process.exit(1);
@@ -420,8 +424,9 @@ function validateEnvContract(): void {
   }
   const store = process.env.ENTITLEMENT_STORE ?? 'memory';
   const arkivLive = Boolean(process.env.ARKIV_ACCESS_KEY && (process.env.ARKIV_PRIVATE_KEY || process.env.PRIVATE_KEY));
+  const hederaDemo = process.env.HEDERA_DEMO_SETTLE ?? (prod ? 'false' : 'true');
   console.log(
-    `[bagseven-daemon] tracks world=${process.env.WORLD_CLIENT_ID ? 'live' : 'mock'} hedera_demo=${process.env.HEDERA_DEMO_SETTLE ?? 'true'} arkiv=${arkivLive ? 'live' : store}`,
+    `[bagseven-daemon] tracks world=${process.env.WORLD_CLIENT_ID ? 'live' : 'mock'} hedera_demo=${hederaDemo} arkiv=${arkivLive ? 'live' : store}`,
   );
 }
 

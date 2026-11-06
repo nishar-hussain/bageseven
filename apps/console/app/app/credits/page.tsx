@@ -12,9 +12,11 @@ export default function CreditsPage() {
   const [ttl, setTtl] = useState(120);
   const [paymentTx, setPaymentTx] = useState('');
   const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
 
   const buy = async () => {
-    setMsg('Settling…');
+    setBusy(true);
+    setMsg('Settling on Hedera (often 5–15s)…');
     try {
       const r = await entitlementsApi.buyCredits({
         feature: 'ocr',
@@ -28,6 +30,8 @@ export default function CreditsPage() {
       setMsg(`mode=${r.settlement?.mode ?? '?'} · ${r.settlement?.payment_tx} · ${r.settlement?.hashscan_url}\ngrant=${r.grant.id}`);
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -70,8 +74,8 @@ export default function CreditsPage() {
           <input id="paymentTx" className="fi-mono text-sm" value={paymentTx} onChange={(e) => setPaymentTx(e.target.value)} />
         </div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => void buy()} className="rounded-full bg-[var(--ink)] px-4 py-2 text-sm font-semibold text-white">
-            Buy credits
+          <button type="button" disabled={busy} onClick={() => void buy()} className="rounded-full bg-[var(--ink)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+            {busy ? 'Settling…' : 'Buy credits'}
           </button>
           <Link href="/app/grants" className="rounded-full border border-[var(--line)] px-4 py-2 text-sm font-medium">
             View grants

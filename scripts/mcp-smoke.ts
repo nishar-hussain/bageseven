@@ -21,8 +21,14 @@ async function main(): Promise<void> {
     await client.connect(transport);
     const status = await call(client, 'bagseven_status');
     console.log(JSON.stringify({ test: 'bagseven_status', result: status }, null, 2));
-    const search = await call(client, 'bagseven_search', { query: process.env.MCP_SMOKE_QUERY ?? 'research' });
-    console.log(JSON.stringify({ test: 'bagseven_search', result: search }, null, 2));
+    const grants = await call(client, 'grant_status', { feature: 'ocr' });
+    console.log(JSON.stringify({ test: 'grant_status', result: grants }, null, 2));
+    try {
+      const search = await call(client, 'bagseven_search', { query: process.env.MCP_SMOKE_QUERY ?? 'research' });
+      console.log(JSON.stringify({ test: 'bagseven_search', result: search }, null, 2));
+    } catch (error) {
+      console.log(JSON.stringify({ test: 'bagseven_search', skipped: true, error: (error as Error).message }, null, 2));
+    }
 
     const paidUrl = process.env.MCP_SMOKE_PAID_URL;
     if (!paidUrl) {

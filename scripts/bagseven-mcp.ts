@@ -58,10 +58,31 @@ function buildServer(): McpServer {
     'bagseven_status',
     {
       title: 'Bagseven worker status',
-      description: 'Read the worker identity, mandate limits and live remaining vault capacity.',
+      description:
+        'Read worker mandate capacity when the UUID is a registered policy agent; otherwise return dual-gate track status + living grants (entitlements-only mode).',
       inputSchema: {},
     },
-    async () => text(await daemon('POST', `/internal/workers/${encodeURIComponent(WORKER)}/status`)),
+    async () => {
+      try {
+        return text(await daemon('POST', `/internal/workers/${encodeURIComponent(WORKER)}/status`));
+      } catch (error) {
+        const message = (error as Error).message;
+        if (!/NOT_FOUND|no agent found/i.test(message)) throw error;
+        const tracks = await daemon('GET', '/internal/mumbai/status');
+        const grants = await daemon(
+          'GET',
+          `/internal/grants/live?feature=${encodeURIComponent(process.env.BAGSEVEN_GRANT_FEATURE ?? 'ocr')}`,
+        );
+        return text({
+          mode: 'entitlements_only',
+          worker: WORKER,
+          note:
+            'This BAGSEVEN_MCP_WORKER is not registered as a policy agent. Grant tools (grant_status, paid_run, mint_with_world) still work. Register a mandate/agent for bagseven_fetch mandate spend.',
+          tracks,
+          grants,
+        });
+      }
+    },
   );
 
   server.registerTool(
@@ -131,7 +152,8 @@ function buildServer(): McpServer {
     'grant_status',
     {
       title: 'Live entitlement status',
-      description: 'List living grants (Arkiv/query surface). Expired grants disappear — that is the access clock.',
+      description:
+        'List living grants (Arkiv/query surface). Expired grants disappear — that is the access clock. Matches bagseven_status: feature filter defaults to ocr; optional holder filters the human owner. Operator-minted grants without worker_id are included.',
       inputSchema: {
         holder: z.string().optional(),
         feature: z.string().optional(),
@@ -140,8 +162,9 @@ function buildServer(): McpServer {
     async ({ holder, feature }) => {
       const params = new URLSearchParams();
       if (holder) params.set('holder', holder);
-      if (feature) params.set('feature', feature);
-      params.set('worker_id', WORKER);
+      // Align with bagseven_status entitlements_only path (do not force worker_id —
+      // console/curl mints often omit it; filtering by WORKER returned empty lists).
+      params.set('feature', feature?.trim() || process.env.BAGSEVEN_GRANT_FEATURE || 'ocr');
       const qs = params.toString();
       return text(await daemon('GET', `/internal/grants/live?${qs}`));
     },
@@ -209,10 +232,18 @@ function buildServer(): McpServer {
         idempotency_key: z.string().optional(),
       },
     },
-    async (input) => text(await daemon('POST', '/internal/grants/paid-run', {
-      ...input,
-      worker_id: WORKER,
-    })),
+    async (input) => {
+      const prod = (process.env.NODE_ENV ?? 'development') === 'production';
+      // Local/demo: console also skips mandate when the MCP worker is not a policy agent.
+      // Production always enforces mandate capacity via the daemon (skip forced off).
+      return text(
+        await daemon('POST', '/internal/grants/paid-run', {
+          ...input,
+          worker_id: WORKER,
+          skip_mandate_gate: prod ? false : true,
+        }),
+      );
+    },
   );
 
   server.registerTool(
@@ -249,37 +280,173 @@ function buildServer(): McpServer {
   return server;
 }
 
+function isInitializeRequest(body: unknown): boolean {
+  if (!body || typeof body !== 'object') return false;
+  const msg = body as { method?: string };
+  return msg.method === 'initialize';
+}
+
 async function main(): Promise<void> {
   if (!WORKER) throw new Error('BAGSEVEN_MCP_WORKER is required');
   const httpPort = process.env.BAGSEVEN_MCP_PORT ?? process.env.MCP_HTTP_PORT;
   if (httpPort) {
+    const { randomUUID } = await import('node:crypto');
     const { StreamableHTTPServerTransport } = await import('@modelcontextprotocol/sdk/server/streamableHttp.js');
     const express = (await import('express')).default;
+    const { mountMcpOAuth, verifyMcpAccessToken, oauthChallenge } = await import('./mcp-oauth-as.ts');
     const app = express();
-    app.use(express.json());
+    app.use(express.json({ limit: '2mb' }));
+    app.use(express.urlencoded({ extended: false }));
+    /** ChatGPT / remote clients: one transport per MCP session id. */
     const transports = new Map<string, InstanceType<typeof StreamableHTTPServerTransport>>();
-    app.get('/v1/mcp', (_req, res) => {
-      // The console uses this unauthenticated localhost health response to
-      // confirm that the selected worker-bound process is running. It exposes
-      // no secrets and is never a tool or daemon authorization endpoint.
-      res.setHeader('access-control-allow-origin', process.env.BAGSEVEN_MCP_CORS_ORIGIN ?? 'http://localhost:3000');
-      res.json({ ok: true, service: 'bagseven-mcp', worker: WORKER });
-    });
-    app.post('/v1/mcp', async (req, res) => {
-      if (process.env.MCP_AUTH_TOKEN && req.headers.authorization !== `Bearer ${process.env.MCP_AUTH_TOKEN}`) {
-        res.status(401).json({ error: 'unauthorized' });
+    const corsOrigin = process.env.BAGSEVEN_MCP_CORS_ORIGIN ?? '*';
+    const publicUrl = (process.env.BAGSEVEN_MCP_PUBLIC_URL ?? '').replace(/\/$/, '');
+    const oauthRequired =
+      (process.env.MCP_OAUTH_REQUIRED ?? (publicUrl ? 'true' : 'false')).toLowerCase() === 'true';
+
+    app.use((req, res, next) => {
+      res.setHeader('access-control-allow-origin', corsOrigin);
+      res.setHeader(
+        'access-control-allow-headers',
+        'authorization, content-type, mcp-session-id, accept, mcp-protocol-version',
+      );
+      res.setHeader('access-control-allow-methods', 'GET,POST,DELETE,OPTIONS');
+      res.setHeader('access-control-expose-headers', 'mcp-session-id');
+      if (req.method === 'OPTIONS') {
+        res.status(204).end();
         return;
       }
-      const sessionId = (req.headers['mcp-session-id'] as string) ?? crypto.randomUUID();
-      let transport = transports.get(sessionId);
-      if (!transport) {
-        transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => sessionId, onsessioninitialized: () => undefined });
-        transports.set(sessionId, transport);
-        await buildServer().connect(transport);
-      }
-      await transport.handleRequest(req, res, req.body);
+      next();
     });
-    app.listen(Number(httpPort), '127.0.0.1', () => console.error(`[bagseven-mcp] HTTP listening on http://127.0.0.1:${httpPort}/v1/mcp`));
+
+    // Lightweight request log so we can see ChatGPT tool traffic.
+    app.use((req, _res, next) => {
+      if (req.path === '/mcp' || req.path === '/v1/mcp' || req.path.startsWith('/oauth')) {
+        const method = typeof req.body?.method === 'string' ? req.body.method : req.method;
+        console.error(`[bagseven-mcp] ${req.method} ${req.path} rpc=${method} sid=${req.headers['mcp-session-id'] ?? '-'}`);
+      }
+      next();
+    });
+
+    mountMcpOAuth(app);
+
+    const health = (_req: import('express').Request, res: import('express').Response) => {
+      res.json({
+        ok: true,
+        service: 'bagseven-mcp',
+        worker: WORKER,
+        paths: ['/mcp', '/v1/mcp'],
+        oauth: oauthRequired,
+        public_url: publicUrl || null,
+      });
+    };
+
+    const requireBearer = (req: import('express').Request, res: import('express').Response): boolean => {
+      if (!(oauthRequired || process.env.MCP_AUTH_TOKEN)) return true;
+      const base = publicUrl || `${req.protocol}://${req.headers.host}`;
+      const tok = verifyMcpAccessToken(req.headers.authorization);
+      if (tok) return true;
+      res.setHeader('WWW-Authenticate', oauthChallenge(base));
+      res.status(401).json({
+        error: 'unauthorized',
+        message: oauthRequired
+          ? 'Complete ChatGPT OAuth (World gate on authorize page) to obtain a Bearer token.'
+          : 'Bearer MCP_AUTH_TOKEN required.',
+      });
+      return false;
+    };
+
+    const mcpHandler = async (req: import('express').Request, res: import('express').Response) => {
+      try {
+        if (!requireBearer(req, res)) return;
+
+        const sessionHeader = req.headers['mcp-session-id'];
+        const sessionId = Array.isArray(sessionHeader) ? sessionHeader[0] : sessionHeader;
+
+        if (req.method === 'GET' || req.method === 'DELETE') {
+          if (!sessionId || !transports.has(sessionId)) {
+            res.status(400).json({
+              jsonrpc: '2.0',
+              error: { code: -32000, message: 'Invalid or missing mcp-session-id' },
+              id: null,
+            });
+            return;
+          }
+          await transports.get(sessionId)!.handleRequest(req, res);
+          if (req.method === 'DELETE') {
+            transports.delete(sessionId);
+          }
+          return;
+        }
+
+        // POST
+        if (sessionId && transports.has(sessionId)) {
+          await transports.get(sessionId)!.handleRequest(req, res, req.body);
+          return;
+        }
+
+        // After MCP restarts the in-memory session map is empty. ChatGPT often
+        // retries with a stale mcp-session-id on initialize — accept it as a
+        // fresh session instead of 400ing forever.
+        if (isInitializeRequest(req.body)) {
+          if (sessionId) {
+            console.error(`[bagseven-mcp] stale session ${sessionId} on initialize — minting new session`);
+          }
+          const transport = new StreamableHTTPServerTransport({
+            // JSON responses avoid SSE hangs behind ngrok / some MCP hosts.
+            enableJsonResponse: true,
+            sessionIdGenerator: () => randomUUID(),
+            onsessioninitialized: (sid) => {
+              transports.set(sid, transport);
+              console.error(`[bagseven-mcp] session initialized ${sid}`);
+            },
+          });
+          transport.onclose = () => {
+            const sid = transport.sessionId;
+            if (sid) transports.delete(sid);
+          };
+          await buildServer().connect(transport);
+          await transport.handleRequest(req, res, req.body);
+          return;
+        }
+
+        res.status(400).json({
+          jsonrpc: '2.0',
+          error: {
+            code: -32000,
+            message: sessionId
+              ? 'Unknown mcp-session-id — re-initialize the MCP session'
+              : 'mcp-session-id required (send initialize first)',
+          },
+          id: (req.body as { id?: unknown })?.id ?? null,
+        });
+      } catch (error) {
+        console.error('[bagseven-mcp] request failed', error);
+        if (!res.headersSent) {
+          res.status(500).json({
+            jsonrpc: '2.0',
+            error: { code: -32603, message: error instanceof Error ? error.message : String(error) },
+            id: null,
+          });
+        }
+      }
+    };
+
+    // Health must NOT be on /mcp — ChatGPT uses GET /mcp for the SSE stream.
+    app.get('/health', health);
+    app.get('/', health);
+    app.get('/mcp', mcpHandler);
+    app.get('/v1/mcp', mcpHandler);
+    app.post('/mcp', mcpHandler);
+    app.post('/v1/mcp', mcpHandler);
+    app.delete('/mcp', mcpHandler);
+    app.delete('/v1/mcp', mcpHandler);
+
+    app.listen(Number(httpPort), '127.0.0.1', () =>
+      console.error(
+        `[bagseven-mcp] HTTP :${httpPort}/mcp oauth=${oauthRequired} public=${publicUrl || 'unset'} json=true`,
+      ),
+    );
   } else {
     await buildServer().connect(new StdioServerTransport());
     console.error('[bagseven-mcp] stdio server ready');
