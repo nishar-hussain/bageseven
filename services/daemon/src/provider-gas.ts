@@ -14,7 +14,14 @@ export function providerFromRequest(req: { headers: Record<string, unknown> }, e
 }
 export async function assertProviderReady(gas: ProviderGasManager, provider: string, env: NodeJS.ProcessEnv) {
   if (!providerGasEnabled(env)) return;
-  await gas.assertActive(provider);
+  try { await gas.assertActive(provider); }
+  catch (error) {
+    const code = error instanceof Error ? error.message.split(':')[0] : '';
+    if (code === 'PROVIDER_GAS_REQUIRED' || code === 'PROVIDER_GAS_INACTIVE') {
+      throw new ApiError(409, code, 'Authorize the provider gas account in Tracks before accepting a checkout');
+    }
+    throw error;
+  }
   const status = await gas.status(provider);
   if (!status.configured) throw new ApiError(409, 'PROVIDER_GAS_REQUIRED', 'Configure provider gas before accepting a checkout');
   const client = createPublicClient({ transport: http(arkivTransportUrl(env.ARKIV_RPC_URL ?? 'https://rpc.rabdi.db-chain.testnet.arkiv.network', env.ARKIV_ACCESS_KEY ?? ''), { timeout: 10000 }) });

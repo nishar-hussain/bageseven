@@ -30,6 +30,7 @@ const env = {
   DAEMON_URL: `http://${prefix}-daemon:4001`, POLICY_URL: `http://${prefix}-policy:4003`,
   BAGSEVEN_MCP_WORKER: '00000000-0000-4000-8000-000000000001',
   BAGSEVEN_MCP_PUBLIC_URL: 'https://bagseven.invalid', MCP_OAUTH_REQUIRED: 'true',
+  BAGSEVEN_SECRET_KEY: `sk_test_${token}`,
 };
 const variables = Object.entries(env).flatMap(([key, value]) => ['-e', `${key}=${value}`]);
 try {
@@ -45,6 +46,7 @@ try {
   for (const [name, port] of Object.entries({ daemon: 4001, policy: 4003, gateway: 4000, mcp: 4009 })) {
     run(name, [...variables, '-e', `PORT=${port}`, image, 'node', ...(name === 'mcp' ? ['--import', 'tsx', 'scripts/bagseven-mcp.ts'] : [`services/${name}/dist/index.js`])]);
   }
+  run('combined', [...variables, '-e', 'PORT=4009', '-e', 'BAGSEVEN_MCP_EMBEDDED=true', image, 'node', 'scripts/start-daemon.mjs']);
   const checks = `
     import assert from 'node:assert/strict';
     const base = name => 'http://${prefix}-'+name+':'+({daemon:4001,policy:4003,gateway:4000,mcp:4009})[name];
@@ -64,6 +66,17 @@ try {
     const discovery=await fetch(base('mcp')+'/.well-known/oauth-authorization-server');
     assert.equal(discovery.status,200);
     console.log('PASS daemon authentication, MCP OAuth gate and discovery');
+    const combined='http://${prefix}-combined:4009';
+    for(let attempt=0;;attempt++) {
+      try { assert.equal((await fetch(combined+'/healthz')).status,200); break; }
+      catch(e) { if(attempt===30) throw e; await new Promise(r=>setTimeout(r,1000)); }
+    }
+    assert.equal((await fetch(combined+'/internal/grants/live')).status,401);
+    assert.equal((await fetch(combined+'/mcp',{headers:{accept:'application/json, text/event-stream'}})).status,401);
+    const plans=await fetch(combined+'/v1/plans',{headers:{authorization:'Bearer '+process.env.BAGSEVEN_SECRET_KEY}});
+    assert.equal(plans.status,200); assert.deepEqual((await plans.json()).plans,[]);
+    assert.equal((await fetch(combined+'/.well-known/oauth-authorization-server')).status,200);
+    console.log('PASS shared daemon/MCP: readiness, both auth gates, OAuth and authenticated database-backed API');
   `;
   console.log(docker('run', '--rm', '--network', prefix, ...variables, image, 'node', '--input-type=module', '-e', checks).trim());
   const columns = docker('exec', db, 'psql', '-U', 'bagseven', '-Atc', "SELECT column_name FROM information_schema.columns WHERE table_name='provider_gas_accounts'");

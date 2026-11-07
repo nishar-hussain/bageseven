@@ -5,7 +5,7 @@
   "description": "Bagseven — mandates, living entitlements, Whitechain settlement, World mint, SDK + MCP",
   "packageManager": "pnpm@10.33.0",
   "engines": {
-    "node": ">=24"
+    "node": "24.x"
   },
   "scripts": {
     "setup": "node scripts/setup-platform.mjs",
@@ -13,6 +13,7 @@
     "setup:prod": "node scripts/setup-prod.mjs",
     "check:prod": "node scripts/check-production.mjs",
     "check:railway": "node --import tsx .railway/check.mjs",
+    "check:hosted": "node --env-file=.env.prod scripts/check-hosted-backend.mjs",
     "test:railway-image": "node .railway/smoke.mjs",
     "dev": "node scripts/start-local.mjs",
     "start:local": "node scripts/start-local.mjs",

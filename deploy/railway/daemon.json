@@ -5,7 +5,7 @@
     "dockerfilePath": "deploy/Dockerfile.backend"
   },
   "deploy": {
-    "startCommand": "node services/daemon/dist/index.js",
+    "startCommand": "node scripts/start-daemon.mjs",
     "healthcheckPath": "/healthz",
     "healthcheckTimeout": 120,
     "numReplicas": 1,

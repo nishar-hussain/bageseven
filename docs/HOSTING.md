@@ -1,6 +1,6 @@
 # Hosting Bagseven: Vercel + Railway
 
-Use **two Vercel projects** and **four Railway services**, plus Railway Postgres and Redis. Keep the existing product paths.
+Use **two Vercel projects** and **three Railway application services**, plus Railway Postgres and Redis. The default deployment shares daemon and MCP in one container so the backend fits a five-service Railway project. Keep the existing product paths.
 
 ```text
 Vercel landing (apps/landing)
@@ -8,8 +8,8 @@ Vercel console (apps/console, including Next API/BFF routes)
   ├── HTTPS + service Bearer → Railway daemon
   └── HTTPS + service Bearer → Railway gateway
 Railway gateway / daemon → private network → Railway policy
-Railway MCP → private network + Bearer → Railway daemon
-ChatGPT / Cursor → HTTPS OAuth → Railway MCP /mcp
+Railway MCP → local HTTP + Bearer → Railway daemon (shared container)
+ChatGPT / Cursor → HTTPS OAuth → daemon's public URL /mcp
 Railway services → Railway Postgres + Redis
 Daemon → World, Whitechain and Arkiv
 ```
@@ -20,7 +20,11 @@ Vercel runs the console's Next API routes; all long-lived backend services run o
 
 ### Recommended: configure the entire project together
 
-The repository includes `.railway/railway.ts`, using Railway's project-wide Infrastructure as Code API. It declares daemon, gateway, policy, MCP, managed Postgres and Redis, and a persistent daemon volume in **one project/environment in one account**. Workspace packages are installed and built inside each backend image; they are not separate hosted services. Whitechain, Arkiv, World and Resend remain external integrations configured through credentials/RPC URLs.
+The repository includes `.railway/railway.ts`, using Railway's project-wide Infrastructure as Code API. It declares daemon (including MCP), gateway, policy, managed Postgres and Redis, and a persistent daemon volume in **one project/environment in one account**. Workspace packages are installed and built inside each backend image; they are not separate hosted services. Whitechain, Arkiv, World and Resend remain external integrations configured through credentials/RPC URLs.
+
+`.railway/deployment.json` selects `embeddedMcp: true` by default. In this mode daemon's Railway `PORT` and public domain target are **4009**; `node scripts/start-daemon.mjs` supervises daemon on internal 4001 and MCP on public 4009. MCP routes `/internal/*` and daemon `/v1/*` APIs locally while preserving caller authorization; it never adds a service token. `/mcp`, `/v1/mcp`, OAuth and discovery stay on MCP. `/healthz` is ready only when the local daemon is healthy. Either process exiting stops the container. Use the **same public HTTPS origin** for `DAEMON_URL` and `BAGSEVEN_MCP_PUBLIC_URL`. Gateway remains public on 4000 and policy private on 4003.
+
+To use four separate application services, set `embeddedMcp: false`, regenerate import files, review/apply the IaC plan, and use separate daemon (4001) and MCP (4009) domains. Switching modes restarts MCP and invalidates its process-local OAuth sessions.
 
 Selecting a GitHub repository alone does not create the other services or databases. To prepare the full graph:
 
@@ -28,7 +32,7 @@ Selecting a GitHub repository alone does not create the other services or databa
 2. Install the current Railway CLI, run `railway login`, and `railway link` to **your existing project and environment**. All resources must live in that same environment for private references to resolve.
 3. In Railway's environment **Shared Variables**, import the ignored `.railway/.env.prod` generated above. It contains the matching secrets/configuration referenced by the services. Do not commit or publish it. Service variables receive only their declared subset.
 4. Run `pnpm check:railway`, then `railway config plan`. Review the plan against your existing resources. If Railway reports legacy config ownership, follow its migration instructions and clear the service's legacy config file path before planning again. For an existing deployment with different database names or volumes, preserve those resources by importing with `railway config pull` and adapting the graph; do not apply a plan that replaces your data services.
-5. Run `railway config apply` to apply the reviewed plan. The GitHub source is `nishar-hussain/bageseven`, branch `main`, root `/`. Grant Railway access to that repository. Generate public domains for daemon (4001), gateway (4000), and MCP (4009). Keep policy private.
+5. Run `railway config apply` to apply the reviewed plan. The GitHub source is `nishar-hussain/bageseven`, branch `main`, root `/`. Grant Railway access to that repository. Generate public domains for daemon/MCP (4009) and gateway (4000). Keep policy private.
 6. Fill the resulting public URLs in root `.env.prod`, rerun `pnpm setup:prod`, reimport `.railway/.env.prod` into Shared Variables and import the generated app files into Vercel. Run `pnpm check:prod`, then redeploy affected services and frontends. Daemon's pre-deploy command applies migrations; verify it succeeds before using the other services.
 
 The CLI evaluates this file and applies project configuration; a GitHub push by itself does not apply infrastructure changes. Subsequent application deployments use each configured GitHub source. Public domains and external integration credentials still need to be configured before login, billing and MCP can work end to end. New projects may initially show failed deployments until these variables are supplied.
@@ -36,6 +40,8 @@ The CLI evaluates this file and applies project configuration; a GitHub push by 
 Railway's current documentation recommends IaC for new services and deprecates `railway.json`/`railway.toml`; see [Infrastructure as Code](https://docs.railway.com/infrastructure-as-code) and its [API reference](https://docs.railway.com/infrastructure-as-code/reference). The service-specific JSON files below are retained for existing legacy deployments, not the new-project provisioning path.
 
 ### Existing legacy config-as-code deployments
+
+The following four-service table describes separate MCP mode (`embeddedMcp: false`). For the default shared mode, omit the MCP service, use daemon port 4009, and import the generated daemon variables with `BAGSEVEN_MCP_EMBEDDED=true`.
 
 Create one Railway project/environment with Postgres and Redis, then four services from this repository. Name them exactly `daemon`, `gateway`, `policy`, `mcp` so the supplied variable references work. The database service names in the templates are `Postgres` and `Redis`; adjust references if you use different names.
 
@@ -68,9 +74,20 @@ docker build -f deploy/Dockerfile.backend -t bagseven-backend:railway-check .
 pnpm test:railway-image
 ```
 
-The image smoke test creates disposable Postgres 17 and Valkey 8 containers on an isolated Docker network, migrates a clean database and starts all four production processes. It checks gateway-to-policy database access, health endpoints, daemon authentication and MCP OAuth discovery/gating, then removes its containers/network. It uses no production credentials or host ports and cannot make external blockchain calls. Hosted World consent, provider gas funding, customer checkout and actual Railway resource health require separate live verification.
+The image smoke test creates disposable Postgres 17 and Valkey 8 containers on an isolated Docker network, migrates a clean database and starts separate and shared-container production modes. It checks gateway-to-policy database access, health endpoints, daemon authentication, MCP OAuth discovery/gating and authenticated database-backed API access through the combined public port, then removes its containers/network. It uses no production credentials or host ports and cannot make external blockchain calls. Hosted World consent, provider gas funding, customer checkout and actual Railway resource health require separate live verification.
 
 ### Prepare the production environment files
+
+If daemon logs `refusing to start — missing env: DATABASE_URL, REDIS_URL`, open **daemon → Variables** in the same Railway environment as your databases and add references to the databases there. For services named `Postgres` and `Redis`:
+
+```dotenv
+DATABASE_URL=${{Postgres.DATABASE_URL}}
+REDIS_URL=${{Redis.REDIS_URL}}
+```
+
+Use the actual database service names, including their capitalization. Repeat for policy and gateway. Adding databases to the project canvas or importing Shared Variables alone does not attach variables to an application service. If using shared variables instead, attach them through Railway's Share control, or add `DATABASE_URL=${{shared.DATABASE_URL}}` and `REDIS_URL=${{shared.REDIS_URL}}` in each application service. `setup:prod` includes the database references in both shared and service import files. Deploy the staged variable changes and rerun failed deployments/migrations. See [Railway variables](https://docs.railway.com/variables).
+
+Do not copy database credentials to Vercel. The console import file has public backend URLs and server-held service tokens; it connects through the backend. Import it into Vercel Production variables and redeploy: the ignored `.env.prod` file is not loaded by hosting automatically.
 
 From the repository root:
 
@@ -119,6 +136,10 @@ All `.env.prod` files are ignored by Git, excluded from Docker images and create
 Daemon refuses production startup without `DATABASE_URL`, `REDIS_URL`, `DAEMON_AUTH_TOKEN`, `AUTH_SECRET` and `RESEND_API_KEY`. Configure `PROVIDER_ADMIN_TOKEN` on policy for provider administration. Keep signing keys in Railway; console mandate scoping only needs `DAEMON_OWNER_ADDRESS` (the operator owner wallet's public address).
 
 `pnpm check:prod` validates the private source, public origins, live-mode flags, chain settings and matching imported secrets without printing values or making transactions. It exits unsuccessfully while required setup is missing. `pnpm integrations:check --env-file .env.prod` additionally reads the World/Whitechain configuration and live Whitechain RPC. Neither command replaces hosted login and customer checkout verification.
+
+`pnpm check:hosted` verifies the configured public backend and dashboard endpoints, live Arkiv reads, authenticated database routing and World challenge signing. It creates short-lived verification nonces, but no payments, grants or emails. The console's World readiness endpoint asks the daemon which owns the RP key; do not copy `WORLD_RP_SIGNING_KEY` into Vercel to make the login button appear.
+
+If the official Railway plugin reports `invalid_redirect_uri`, its requested callback differs from its OAuth client's registered callback. Repository `.env.prod` and World callbacks do not control that plugin registration. Start a fresh plugin authorization; if it persists, report it to the integration maintainer. The supported alternative is `npx --yes @railway/cli login --browserless`, then `npx --yes @railway/cli link` to your existing project/environment. Complete the CLI's device authorization yourself; never paste account tokens into chat.
 
 ## 3. Configure both Vercel projects
 

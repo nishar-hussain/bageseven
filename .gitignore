@@ -1,4 +1,5 @@
 node_modules/
+.vercel/
 dist/
 .next/
 .next-dev/
@@ -15,3 +16,5 @@ dump.rdb
 .bagseven-bin
 .data/
 services/daemon/.data/
+.vercel
+.env*

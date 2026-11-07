@@ -54,6 +54,15 @@ export function buildServer(worker = WORKER, callDaemon = daemon): McpServer {
   if (!worker) throw new Error('BAGSEVEN_MCP_WORKER must bind this MCP instance to one worker');
   const server = new McpServer({ name: 'bagseven-mcp', version: '0.1.0' }, { capabilities: { tools: {} } });
   registerManagementTools(server, worker, callDaemon);
+  async function optionalCheckoutWorker() {
+    try {
+      const bound = await callDaemon('POST', `/internal/workers/${encodeURIComponent(worker!)}/status`) as { mandate: { owner_address: string } };
+      return { worker_id: worker!, owner: bound.mandate.owner_address };
+    } catch (error) {
+      if (/NOT_FOUND|no agent found/i.test((error as Error).message)) return undefined;
+      throw error;
+    }
+  }
 
   server.registerTool(
     'bagseven_status',
@@ -167,8 +176,9 @@ export function buildServer(worker = WORKER, callDaemon = daemon): McpServer {
       const matching = plans.plans.filter(plan => plan.active && plan.feature === feature);
       if (!plan_id) return text({ requires_plan: true, plans: matching, next_step: 'Choose plan_id and call this tool again to open wallet checkout.' });
       if (!matching.some(plan => plan.id === plan_id)) throw new Error('Choose an active provider plan for this feature');
-      const bound = await callDaemon('POST', `/internal/workers/${encodeURIComponent(worker)}/status`) as { mandate: { owner_address: string } };
-      const result = await callDaemon('POST', '/v1/checkout-sessions', { plan_id, holder: holder ?? `wallet:${bound.mandate.owner_address.toLowerCase()}`, worker_id: worker }) as { session: { id: string } };
+      const bound = await optionalCheckoutWorker();
+      if (!holder && !bound) return text({ requires_holder: true, next_step: 'Provide the customer holder for wallet checkout. Registering a spending agent is optional.' });
+      const result = await callDaemon('POST', '/v1/checkout-sessions', { plan_id, holder: holder ?? `wallet:${bound!.owner.toLowerCase()}`, ...(bound ? { worker_id: bound.worker_id } : {}) }) as { session: { id: string } };
       const base = (process.env.NEXT_PUBLIC_CONSOLE_URL || 'http://localhost:3000').replace(/\/$/, '');
       return text({ ...result, checkout_url: `${base}/checkout?session=${encodeURIComponent(result.session.id)}`, requires_wallet_payment: true });
     });
@@ -189,7 +199,9 @@ export function buildServer(worker = WORKER, callDaemon = daemon): McpServer {
       },
     },
     async (input) => {
-      const result = await callDaemon('POST', '/v1/checkout-sessions', { ...input, worker_id: input.worker_id ?? worker }) as { session: { id: string } };
+      const { worker_id: explicitWorker, ...checkoutInput } = input;
+      const checkoutWorker = explicitWorker ?? (await optionalCheckoutWorker())?.worker_id;
+      const result = await callDaemon('POST', '/v1/checkout-sessions', { ...checkoutInput, ...(checkoutWorker ? { worker_id: checkoutWorker } : {}) }) as { session: { id: string } };
       const consoleUrl = (process.env.NEXT_PUBLIC_CONSOLE_URL || 'http://localhost:3000').replace(/\/$/, '');
       return text({ ...result, checkout_url: `${consoleUrl}/checkout?session=${encodeURIComponent(result.session.id)}` });
     },
@@ -365,10 +377,17 @@ async function main(): Promise<void> {
 
     mountMcpOAuth(app);
 
-    const health = (_req: import('express').Request, res: import('express').Response) => {
+    const proxyUrl = process.env.BAGSEVEN_DAEMON_PROXY_URL;
+    const health = async (_req: import('express').Request, res: import('express').Response) => {
+      if (proxyUrl) {
+        try {
+          const upstream = await fetch(`${proxyUrl}/healthz`, { signal: AbortSignal.timeout(2000) });
+          if (!upstream.ok || !(await upstream.json() as { ok?: boolean }).ok) throw new Error('daemon not ready');
+        } catch { res.status(503).json({ ok: false, service: 'bagseven-daemon-mcp', reason: 'daemon not ready' }); return; }
+      }
       res.json({
         ok: true,
-        service: 'bagseven-mcp',
+        service: proxyUrl ? 'bagseven-daemon-mcp' : 'bagseven-mcp',
         worker: WORKER,
         paths: ['/mcp', '/v1/mcp'],
         oauth: oauthRequired,
@@ -478,6 +497,10 @@ async function main(): Promise<void> {
     app.delete('/mcp', mcpHandler);
     app.delete('/v1/mcp', mcpHandler);
 
+    if (proxyUrl) {
+      const { daemonHttpProxy } = await import('./daemon-http-proxy.ts');
+      app.use(daemonHttpProxy(proxyUrl));
+    }
     app.listen(Number(httpPort), process.env.HOST ?? '::', () =>
       console.error(
         `[bagseven-mcp] HTTP :${httpPort}/mcp oauth=${oauthRequired} public=${publicUrl || 'unset'} json=true`,

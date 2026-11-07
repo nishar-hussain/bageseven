@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 /** Static deployment check. Never prints credentials or contacts live services. */
 import { readFileSync, existsSync } from 'node:fs';
+import console from 'node:console';
+import process from 'node:process';
 import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, URL } from 'node:url';
 import { parseEnv } from 'node:util';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -18,10 +20,18 @@ if (!existsSync(path)) {
 }
 const env = parseEnv(readFileSync(path, 'utf8'));
 const supplied = key => Boolean(env[key]?.trim() && !env[key].includes('REPLACE_'));
+for (const [key, protocols] of [['DATABASE_URL', ['postgres:', 'postgresql:']], ['REDIS_URL', ['redis:', 'rediss:']]]) {
+  let valid = /^\$\{\{\s*[^{}\s]+\.[^{}\s]+\s*\}\}$/.test(env[key] ?? '');
+  if (!valid) {
+    try { valid = protocols.includes(new URL(env[key]).protocol); } catch { /* Do not print credential-bearing URLs. */ }
+  }
+  check(key, valid, 'Railway reference or connection URL required; attach it to daemon, policy and gateway Variables');
+}
 for (const key of ['AUTH_SECRET', 'DAEMON_AUTH_TOKEN', 'POLICY_INTERNAL_TOKEN', 'PROVIDER_ADMIN_TOKEN', 'RESEND_API_KEY', 'ARKIV_ACCESS_KEY', 'WORLD_APP_ID', 'WORLD_RP_ID', 'WORLD_RP_SIGNING_KEY', 'WORLD_SIGNER_ADDRESS', 'BAGSEVEN_SECRET_KEY', 'BAGSEVEN_PUBLISHABLE_KEY', 'NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID']) {
   check(key, supplied(key), 'credential required; value hidden');
 }
 check('Provider gas encryption key', /^[a-f0-9]{64}$/i.test(env.PROVIDER_GAS_ENCRYPTION_KEY ?? ''), 'must be the same backed-up key on console, daemon and policy');
+check('Production auth secret', supplied('AUTH_SECRET') && (env.AUTH_SECRET?.length ?? 0) >= 32 && !/dev-auth|change-in-prod/i.test(env.AUTH_SECRET), 'must be a strong production secret, shared with console and daemon');
 check('Provider-funded gas', env.PROVIDER_FUNDED_GAS !== 'false', 'platform-funded mode is forbidden in production');
 for (const key of ['DAEMON_URL', 'GATEWAY_URL', 'BAGSEVEN_MCP_PUBLIC_URL', 'NEXT_PUBLIC_CONSOLE_URL', 'NEXT_PUBLIC_LANDING_URL']) {
   let valid = false;
@@ -37,7 +47,7 @@ for (const [key, expected] of Object.entries({ NODE_ENV: 'production', WORLD_MOC
 check('World JWKS verification', env.WORLD_SKIP_JWKS !== 'true');
 check('Agent operator signer', /^0x[\da-f]{64}$/i.test(env.DAEMON_OPERATOR_KEY ?? ''), 'required for new agent mandate payments');
 check('Mandate executor configuration', /^0x[\da-f]{64}$/i.test(env.DAEMON_EXECUTOR_KEY ?? '') && /^0x[\da-f]{40}$/i.test(env.DAEMON_EXECUTOR_ADDRESS ?? ''), 'required by mandate capacity checks');
-check('Operator owner wallet', /^0x[\da-f]{40}$/i.test(env.DAEMON_OWNER_ADDRESS ?? ''), 'public owner address for dashboard spending scope');
+check('Operator owner wallet', !env.DAEMON_OWNER_ADDRESS || /^0x[\da-f]{40}$/i.test(env.DAEMON_OWNER_ADDRESS), 'optional public legacy allowlist; providers verify their connected wallet');
 if (env.WORLD_AGENT_PASS_ENABLED === 'true') {
   check('World Agent Pass', supplied('WORLD_CLIENT_ID') && supplied('WORLD_CLIENT_SECRET'), 'requires separate OIDC credentials and registered /app/mint callback');
 }
@@ -51,9 +61,10 @@ for (const key of ['RPC_URL', 'ARKIV_RPC_URL']) {
   check(key, valid, 'live HTTPS RPC required');
 }
 for (const [file, keys] of [
-  ['services/daemon/.env.prod', ['AUTH_SECRET', 'DAEMON_AUTH_TOKEN', 'POLICY_INTERNAL_TOKEN', 'PROVIDER_GAS_ENCRYPTION_KEY']],
-  ['services/policy/.env.prod', ['POLICY_INTERNAL_TOKEN', 'PROVIDER_GAS_ENCRYPTION_KEY']],
-  ['services/gateway/.env.prod', ['POLICY_INTERNAL_TOKEN']],
+  ['services/daemon/.env.prod', ['DATABASE_URL', 'REDIS_URL', 'AUTH_SECRET', 'DAEMON_AUTH_TOKEN', 'POLICY_INTERNAL_TOKEN', 'PROVIDER_GAS_ENCRYPTION_KEY']],
+  ['services/policy/.env.prod', ['DATABASE_URL', 'REDIS_URL', 'POLICY_INTERNAL_TOKEN', 'PROVIDER_GAS_ENCRYPTION_KEY']],
+  ['services/gateway/.env.prod', ['DATABASE_URL', 'REDIS_URL', 'POLICY_INTERNAL_TOKEN']],
+  ['.railway/.env.prod', ['DATABASE_URL', 'REDIS_URL', 'DAEMON_AUTH_TOKEN', 'PROVIDER_GAS_ENCRYPTION_KEY']],
   ['scripts/.env.prod', ['DAEMON_AUTH_TOKEN', 'BAGSEVEN_MCP_WORKER']],
   ['apps/console/.env.prod', ['AUTH_SECRET', 'DAEMON_AUTH_TOKEN', 'PROVIDER_GAS_ENCRYPTION_KEY']],
 ]) {

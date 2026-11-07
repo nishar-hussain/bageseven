@@ -37,6 +37,18 @@ async function fixture(deps: GrantRouteDeps = {}) {
 }
 
 describe('live payment and worker binding', () => {
+  it('rejects legacy purchases before parsing proofs or attempting platform settlement in provider mode', async () => {
+    const { app, store } = await fixture();
+    vi.stubEnv('PROVIDER_FUNDED_GAS', 'true');
+    try {
+      for (const path of ['mint', 'buy-credits']) {
+        const result = await app.inject({ method: 'POST', url: `/internal/grants/${path}`, payload: {} });
+        expect(result.statusCode).toBe(409);
+        expect(result.json().error.code).toBe('PROVIDER_CHECKOUT_REQUIRED');
+      }
+      expect(await store.findLive({ holder: 'new-customer' })).toHaveLength(0);
+    } finally { await app.close(); }
+  });
   it('cannot use a paid grant assigned to another worker', async () => {
     const { app, store } = await fixture({ resolveMandateCapacity: async () => ({ ok: true }) });
     try {

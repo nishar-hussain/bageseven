@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'node:crypto';
-import { worldIdKitConfig, worldMocksAllowed } from '@bagseven/world';
+import { worldMocksAllowed } from '@bagseven/world';
 import {
   WORLD_IDENTITY_COOKIE,
   attachSessionCookie,
@@ -11,7 +11,21 @@ import { daemonJson } from '../../../../lib/daemon-bff';
 
 /** Public configuration contains IDs and readiness only, never signing keys. */
 export async function GET(req: NextRequest) {
-  const cfg = worldIdKitConfig();
+  // The daemon owns RP signing. Vercel intentionally has no RP private key;
+  // derive readiness from the signer instead of Vercel's local environment.
+  type WorldReadiness = {
+    app_id?: string; rp_id?: string; action?: string; login_action?: string;
+    login_signal?: string; environment?: string; mock_proofs?: boolean;
+    idkit?: boolean; signing_configured?: boolean;
+  };
+  let cfg: WorldReadiness;
+  try {
+    const result = await daemonJson<{ tracks?: { world?: WorldReadiness } }>('/internal/mumbai/status');
+    if (!result.ok || !result.body.tracks?.world) throw new Error('World signer unavailable');
+    cfg = result.body.tracks.world;
+  } catch {
+    return NextResponse.json({ error: { code: 'WORLD_SERVICE_UNAVAILABLE', message: 'World verification service is temporarily unavailable' } }, { status: 503, headers: { 'cache-control': 'no-store' } });
+  }
   const canResume = Boolean(readWorldIdentityCookie(req.cookies.get(WORLD_IDENTITY_COOKIE)?.value));
   return NextResponse.json(
     {
@@ -22,7 +36,7 @@ export async function GET(req: NextRequest) {
       login_signal: cfg.login_signal,
       environment: cfg.environment,
       mock_proofs: cfg.mock_proofs,
-      idkit: cfg.idkit && cfg.signing_configured,
+      idkit: Boolean(cfg.idkit && cfg.signing_configured),
       signing_configured: cfg.signing_configured,
       device_resume: canResume,
     },

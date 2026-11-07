@@ -60,9 +60,9 @@ export function ProviderGas() {
     const result = await api('recover', { signature });
     setMessage(`Recovery submitted: ${result.hash}. Funds return only to the authorized provider owner.`);
   }
-  return <section className="space-y-4 rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
+  return <section id="provider-gas" className="space-y-4 rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
     <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-base font-semibold">Provider-funded gas</h2><ConnectWallet compact /></div>
-    <p className="text-sm text-[var(--muted)]">Your dedicated account pays for your entitlement writes and new provider-bound mandate operations. Fund WBT on Whitechain and tGLM on Arkiv separately. Platform wallets do not subsidize these operations. Revoke signing before recovering unused gas funds.</p>
+    <p className="text-sm text-[var(--muted)]">Your dedicated account pays for your entitlement writes and new provider-bound mandate operations. Fund WBT on Whitechain and tGLM on Arkiv separately. This is not your plan’s merchant payout wallet: funds sent to a merchant wallet cannot pay operating gas. Platform wallets do not subsidize these operations. Revoke signing before recovering unused gas funds.</p>
     {error && <p role="alert" className="break-words text-sm text-[var(--deny)]">{error}</p>}
     {message && <p role="status" className="break-words text-sm">{message}</p>}
     {status?.address && <div className="rounded-xl bg-[var(--soft)] p-3 text-sm"><p className="font-semibold">Dedicated gas address · {status.status}</p><p className="mt-1 break-all font-mono text-xs">{status.address}</p><p className="mt-2 text-[var(--muted)]">Whitechain: {status.balances?.whitechain ?? 'unavailable'} WBT · Arkiv: {status.balances?.arkiv ?? 'unavailable'} tGLM</p><p className="mt-2 break-all text-xs text-[var(--muted)]">Maximum fees reserved: {status.whitechain_reserved_wei ?? '0'} wei (Whitechain), {status.arkiv_reserved_wei ?? '0'} wei (Arkiv). Reservations are conservative limits, not measured transaction costs.</p></div>}

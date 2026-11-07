@@ -2,7 +2,7 @@
 /** Prepare private hosting import files without reading local development keys. */
 import { randomBytes, randomUUID } from 'node:crypto';
 import console from 'node:console';
-import { existsSync, readFileSync, writeFileSync, chmodSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, chmodSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseEnv } from 'node:util';
@@ -20,6 +20,7 @@ const targets = [
 
 const serialize = (values) => Object.entries(values).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join('\n') + '\n';
 function save(path, contents) {
+  mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, contents, { mode: 0o600 });
   chmodSync(path, 0o600);
 }
@@ -64,6 +65,18 @@ if (!existsSync(master)) {
 }
 
 const values = parseEnv(readFileSync(master, 'utf8'));
+const deploymentPath = resolve(root, '.railway/deployment.json');
+const embeddedMcp = existsSync(deploymentPath) ? JSON.parse(readFileSync(deploymentPath, 'utf8')).embeddedMcp === true : values.BAGSEVEN_MCP_EMBEDDED === 'true';
+values.BAGSEVEN_MCP_EMBEDDED = String(embeddedMcp);
+// Existing sources may predate database references or contain blank values.
+// Keep explicit connection strings and service names; restore only missing ones.
+for (const key of ['DATABASE_URL', 'REDIS_URL']) {
+  if (!values[key]?.trim()) {
+    values[key] = targets[0].values[key];
+    save(master, readFileSync(master, 'utf8').replace(new RegExp(`^${key}=.*\\n?`, 'm'), '') +
+      `\n${key}=${JSON.stringify(values[key])}\n`);
+  }
+}
 // Upgrade existing deployment sources without rotating deposited-account keys.
 if (!values.PROVIDER_GAS_ENCRYPTION_KEY || values.PROVIDER_GAS_ENCRYPTION_KEY.startsWith('REPLACE_')) {
   values.PROVIDER_GAS_ENCRYPTION_KEY = randomBytes(32).toString('hex');
@@ -73,7 +86,7 @@ if (!values.PROVIDER_GAS_ENCRYPTION_KEY || values.PROVIDER_GAS_ENCRYPTION_KEY.st
 if (!/^[a-f0-9]{64}$/i.test(values.PROVIDER_GAS_ENCRYPTION_KEY)) {
   throw new Error('PROVIDER_GAS_ENCRYPTION_KEY must be 32 bytes encoded as 64 hexadecimal characters; existing value was preserved.');
 }
-const consoleUrl = values.NEXT_PUBLIC_CONSOLE_URL?.replace(/\/$/, '');
+const consoleUrl = (values.NEXT_PUBLIC_CONSOLE_URL || targets.find(target => target.output === 'apps/console/.env.prod').values.NEXT_PUBLIC_CONSOLE_URL).replace(/\/$/, '');
 const derived = {
   GATEWAY_AUTH_TOKEN: values.POLICY_INTERNAL_TOKEN,
   NEXT_PUBLIC_BAGSEVEN_PUBLISHABLE_KEY: values.BAGSEVEN_PUBLISHABLE_KEY,
@@ -97,12 +110,14 @@ for (const target of targets) {
   if (target.output === 'scripts/.env.prod') {
     output.DAEMON_URL = target.values.DAEMON_URL; // MCP uses Railway private networking.
   }
+  if (target.output === 'services/daemon/.env.prod' && embeddedMcp) output.PORT = '4009';
   save(resolve(root, target.output), `# Import into ${target.output.startsWith('apps/') ? 'Vercel Production variables' : 'the matching Railway service variables'}.\n# Generated from root .env.prod by pnpm setup:prod; do not edit this copy.\n` + serialize(output));
   console.log(`Prepared ${target.output}`);
 }
 // IaC services read only their own subset of these environment-level references.
-// Internal URLs, ports and managed database references are supplied by the graph.
-const internal = new Set(['PORT', 'HOST', 'DATABASE_URL', 'REDIS_URL', 'POLICY_URL', 'DAEMON_URL', 'BAGSEVEN_DATA_DIR']);
+// Keep DB/cache references available for dashboard-managed services as well.
+// The IaC graph overrides them with its managed resource references when applied.
+const internal = new Set(['PORT', 'HOST', 'POLICY_URL', 'DAEMON_URL', 'BAGSEVEN_DATA_DIR']);
 const shared = {};
 for (const target of targets.filter(target => !target.output.startsWith('apps/'))) {
   for (const [key, fallback] of Object.entries(target.values)) {
@@ -111,6 +126,8 @@ for (const target of targets.filter(target => !target.output.startsWith('apps/')
 }
 save(resolve(root, '.railway/.env.prod'), '# Import into Railway environment Shared Variables before config apply.\n' + serialize(shared));
 console.log('Prepared .railway/.env.prod (Railway shared variables for project-wide deployment)');
+console.log('Railway: attach DATABASE_URL and REDIS_URL to daemon, policy and gateway (shared variables are not automatically attached).');
+console.log('Alternatively import services/<service>/.env.prod directly into that service Variables editor, then deploy staged changes.');
 const unresolved = Object.entries(values).filter(([, value]) => value.includes('REPLACE_')).map(([key]) => key);
 console.log(`Source: .env.prod (preserved). ${unresolved.length} values still need your hosted URLs or provider credentials.`);
 if (unresolved.length) console.log(`Update: ${unresolved.join(', ')}`);

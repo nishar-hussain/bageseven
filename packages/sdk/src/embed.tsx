@@ -20,6 +20,7 @@ type PublicPlan = {
 };
 
 type PublicCheckout = {
+  expires_at: string;
   id: string;
   status: string;
   amount: string;
@@ -354,6 +355,7 @@ export function BagsevenEmbed({
       if (!res.ok) throw new Error(json.error?.message ?? `checkout ${res.status}`);
       setCheckout(json.session ?? null);
       setSessionId(sid);
+      return json.session;
     },
     [base, sessionId],
   );
@@ -714,9 +716,11 @@ export function BagsevenEmbed({
                 Paid — entitlement is live for {checkout.holder}
               </p>
               <div style={{ marginTop: 12 }}>
-                <PrimaryBtn onClick={() => setView('portal')}>Go to plan manager</PrimaryBtn>
+                {accessToken ? <PrimaryBtn onClick={() => setView('portal')}>Go to plan manager</PrimaryBtn> : null}
               </div>
             </div>
+          ) : checkout.status !== 'PENDING' ? (
+            <p style={{ marginTop: 16, color: 'var(--bs-muted)', fontSize: 13 }}>This checkout is {checkout.status.toLowerCase()}. Open a new checkout before paying.</p>
           ) : (
             <div style={{ marginTop: 16, display: 'grid', gap: 8 }}>
               <PrimaryBtn
@@ -724,6 +728,8 @@ export function BagsevenEmbed({
                 onClick={() =>
                   void act(async () => {
                     if (!checkout.plan) return;
+                    const fresh = await loadCheckout(checkout.id);
+                    if (!fresh || fresh.status !== 'PENDING' || new Date(fresh.expires_at).getTime() <= Date.now()) throw new Error('This checkout has expired or is no longer payable. Open a new checkout.');
                     const paid = await payUsdtOnWhitechain({
                       merchantWallet: checkout.plan.merchant_wallet,
                       amount: checkout.amount,
@@ -744,7 +750,8 @@ export function BagsevenEmbed({
                       if (!r.ok) throw new Error(j.error?.message ?? `confirm ${r.status}`);
                     });
                     setMsg('Payment confirmed — entitlement minted');
-                    setView('portal');
+                    await loadCheckout(checkout.id);
+                    if (accessToken) setView('portal');
                   })
                 }
               >
@@ -797,7 +804,8 @@ export function BagsevenEmbed({
                         if (!r.ok) throw new Error(j.error?.message ?? `confirm ${r.status}`);
                       });
                       setMsg('Payment verified — entitlement live');
-                      setView('portal');
+                      await loadCheckout(checkout.id);
+                      if (accessToken) setView('portal');
                     })
                   }
                   style={{

@@ -17,6 +17,7 @@ async function api<T>(method: string, path: string, body?: unknown): Promise<T> 
 
 export type Plan = {
   id: string;
+  provider_id?: string;
   feature: string;
   name: string;
   amount: string;

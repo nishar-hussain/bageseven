@@ -6,4 +6,4 @@ RUN pnpm install --frozen-lockfile --prod=false
 RUN pnpm exec turbo run build --filter=@bagseven/daemon... --filter=@bagseven/gateway... --filter=@bagseven/policy...
 ENV NODE_ENV=production
 ENV HOST=::
-CMD ["node", "services/daemon/dist/index.js"]
+CMD ["node", "scripts/start-daemon.mjs"]

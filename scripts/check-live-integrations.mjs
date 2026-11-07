@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // Read-only readiness check. Never signs a proof, sends a payment, or writes a grant.
 import { readFileSync } from 'node:fs';
+import console from 'node:console';
+import process from 'node:process';
 import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, URL } from 'node:url';
 import { parseEnv } from 'node:util';
 import { createPublicClient, http, parseAbi } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -43,7 +45,9 @@ try {
   const abi = parseAbi(['function symbol() view returns(string)', 'function decimals() view returns(uint8)', 'function balanceOf(address) view returns(uint256)']);
   const [symbol, decimals] = await Promise.all([rpc.readContract({ address: config.usdt, abi, functionName: 'symbol' }), rpc.readContract({ address: config.usdt, abi, functionName: 'decimals' })]);
   check('USDT token', decimals === 6, `${config.usdt} (${symbol}, ${decimals} decimals)`);
-  if (/^0x[0-9a-f]{64}$/i.test(env.DAEMON_EXECUTOR_KEY || '')) {
+  if (env.PROVIDER_FUNDED_GAS !== 'false') {
+    console.log('INFO Provider-funded gas: server signing identities do not need funding. Each provider must authorize and fund its dedicated WBT/tGLM account before paid operations.');
+  } else if (/^0x[0-9a-f]{64}$/i.test(env.DAEMON_EXECUTOR_KEY || '')) {
     const account = privateKeyToAccount(env.DAEMON_EXECUTOR_KEY);
     const gas = await rpc.getBalance({ address: account.address });
     const tokens = await rpc.readContract({ address: config.usdt, abi, functionName: 'balanceOf', args: [account.address] });

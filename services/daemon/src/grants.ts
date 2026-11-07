@@ -550,6 +550,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
 
   app.post('/internal/grants/mint', async (req) => {
     try {
+      if (providerGasEnabled(process.env)) throw new ApiError(409, 'PROVIDER_CHECKOUT_REQUIRED', 'Choose a provider plan in Create entitlement and complete its wallet checkout');
       const rawBody = (req.body ?? {}) as Record<string, unknown>;
       const idkitResponse = rawBody.idkit_response;
       const body = MintGrantInputSchema.parse(req.body);
@@ -641,6 +642,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
   /** Whitechain settle → mint/extend grant (buy_credits hero path). */
   app.post('/internal/grants/buy-credits', async (req) => {
     try {
+      if (providerGasEnabled(process.env)) throw new ApiError(409, 'PROVIDER_CHECKOUT_REQUIRED', 'Choose a provider plan in Buy credits and complete its wallet checkout');
       const rawBody = (req.body ?? {}) as Record<string, unknown>;
       const idkitResponse = rawBody.idkit_response;
       const body = buyCreditsSchema.parse(req.body);

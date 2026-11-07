@@ -259,6 +259,7 @@ export default function PlansPage() {
                   <th className="px-4 py-3 font-semibold">Credits</th>
                   <th className="px-4 py-3 font-semibold">Billing</th>
                   <th className="px-4 py-3 font-semibold">Feature</th>
+                  <th className="px-4 py-3 font-semibold">Checkout</th>
                 </tr>
               </thead>
               <tbody>
@@ -275,6 +276,7 @@ export default function PlansPage() {
                     <td className="px-4 py-3.5 tabular-nums">{p.credits}</td>
                     <td className="px-4 py-3.5 text-[var(--muted)]">{p.interval === 'month' ? 'Every month' : 'One time'}</td>
                     <td className="px-4 py-3.5">{featureLabel(p.feature, features)}</td>
+                    <td className="px-4 py-3.5">{p.active && p.provider_id !== 'legacy' ? <Link className="font-semibold text-[var(--blue)] underline" href={`/app/mint?plan_id=${encodeURIComponent(p.id)}`}>Open checkout</Link> : <span className="text-[var(--muted)]">Unavailable</span>}</td>
                   </tr>
                 ))}
               </tbody>
