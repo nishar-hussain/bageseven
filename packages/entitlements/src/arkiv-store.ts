@@ -15,6 +15,7 @@ import { BagsevenGrants } from './schema.js';
 import type { Grant, GrantStore, MintGrantInput } from './types.js';
 import { MintGrantInputSchema } from './types.js';
 import { providerGrantSigner } from './provider-signers.js';
+import { decodeGrantIdentities, encodeGrantIdentities, identityIndex } from './grant-identities.js';
 
 interface HoldRecord {
   holdId: string;
@@ -151,21 +152,28 @@ export class ArkivGrantStore implements GrantStore {
   }
 
   private rowToGrant(row: Record<string, unknown>): Grant {
+    const identities = decodeGrantIdentities(row.identity_data);
+    const identity = (field: string): string => {
+      const index = bareStr(row[field] as { value: string });
+      const full = identities[field];
+      if (full !== undefined && identityIndex(full) !== index) throw new Error('ARKIV_IDENTITY_INVALID');
+      return full ?? index;
+    };
     if (typeof row.$key === 'string' && typeof row.$owner === 'string') this.entityOwners.set(row.$key, row.$owner);
     const id = bareStr(row.grant_id as { value: string });
     const grant: Grant = {
       id,
       feature: bareStr(row.feature as { value: string }),
-      holder: bareStr(row.holder as { value: string }),
-      human_id: bareStr(row.human_id as { value: string }) || undefined,
-      merchant: bareStr(row.merchant as { value: string }) || undefined,
+      holder: identity('holder'),
+      human_id: identity('human_id') || undefined,
+      merchant: identity('merchant') || undefined,
       enabled: parseFlag(bareStr(row.enabled as { value: string })),
       remaining: bareDec(row.remaining as { value: string }),
       renewal_enabled: parseFlag(bareStr(row.renewal_enabled as { value: string })),
       paid_through: bareStr(row.paid_through as { value: string }),
       payment_tx: bareStr(row.payment_tx as { value: string }) || undefined,
       settlement_network: normalizeSettlement(bareStr(row.settlement_network as { value: string })),
-      world_proof_id: bareStr(row.world_proof_id as { value: string }) || undefined,
+      world_proof_id: identity('world_proof_id') || undefined,
       mandate_id: bareStr(row.mandate_id as { value: string }) || undefined,
       worker_id: bareStr(row.worker_id as { value: string }) || undefined,
       schema_version: 1,
@@ -216,16 +224,13 @@ export class ArkivGrantStore implements GrantStore {
       {
         grant_id: id,
         feature: input.feature,
-        holder: input.holder,
-        human_id: input.human_id ?? '',
-        merchant: input.merchant ?? '',
+        ...encodeGrantIdentities(input),
         enabled: flag(true),
         remaining: dec(input.remaining),
         renewal_enabled: flag(input.renewal_enabled),
         paid_through: paidThrough,
         payment_tx: input.payment_tx ?? '',
         settlement_network: settlement,
-        world_proof_id: input.world_proof_id ?? '',
         mandate_id: input.mandate_id ?? '',
         worker_id: input.worker_id ?? '',
         created_at: created,

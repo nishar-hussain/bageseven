@@ -3,8 +3,9 @@
 import { useEffect, useState } from 'react';
 import { useAccount } from 'wagmi';
 import { parseEther } from 'viem';
-import { connectedSpendingWallet, type SpendingWallet } from '../../lib/spending-wallet-client';
+import { connectedSpendingWallet, fundProviderGas, signSpendingMessage } from '../../lib/spending-wallet-client';
 import { ConnectWallet } from '../wallet/ConnectWallet';
+import { errorMessage } from '../../lib/error-message';
 
 type Authorization = { whitechainBudget: string; arkivBudget: string; whitechainTxLimit: string; arkivTxLimit: string };
 type Status = { configured: boolean; enabled: boolean; whitechain_id: number; arkiv_id: number; address?: string; owner?: string; status?: string; authorization?: Authorization; balances?: { whitechain: string | null; arkiv: string | null }; whitechain_reserved_wei?: string; arkiv_reserved_wei?: string };
@@ -13,12 +14,8 @@ const button = 'rounded-full bg-[var(--ink)] px-4 py-2 text-sm font-semibold tex
 async function api(path = '', body?: unknown) {
   const res = await fetch(`/api/provider-gas${path ? `/${path}` : ''}`, { cache: 'no-store', ...(body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {}) });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error?.message ?? 'Provider gas request failed');
+  if (!res.ok) throw new Error(errorMessage(data.error, 'Provider gas request failed'));
   return data;
-}
-async function sign(wallet: SpendingWallet, owner: string, message: string) {
-  const hex = '0x' + [...new TextEncoder().encode(message)].map(b => b.toString(16).padStart(2, '0')).join('');
-  return wallet.request({ method: 'personal_sign', params: [hex, owner] }) as Promise<string>;
 }
 export function ProviderGas() {
   const { address, connector, isConnected } = useAccount();
@@ -28,8 +25,8 @@ export function ProviderGas() {
   const [whiteMax, setWhiteMax] = useState('0.02'); const [arkivMax, setArkivMax] = useState('0.01');
   const [days, setDays] = useState('7'); const [amount, setAmount] = useState('0.01'); const [network, setNetwork] = useState<'whitechain' | 'arkiv'>('whitechain');
   async function refresh() { setStatus(await api()); }
-  useEffect(() => { void api().then(setStatus).catch(e => setError(e.message)); }, []);
-  async function run(action: () => Promise<void>) { setBusy(true); setError(''); setMessage(''); try { await action(); await refresh(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); } }
+  useEffect(() => { void api().then(setStatus).catch(e => setError(errorMessage(e))); }, []);
+  async function run(action: () => Promise<void>) { setBusy(true); setError(''); setMessage(''); try { await action(); await refresh(); } catch (e) { setError(errorMessage(e, 'Provider gas request failed.')); } finally { setBusy(false); } }
   async function wallet() {
     if (!isConnected || !connector || !address) throw new Error('Connect the provider owner wallet first.');
     return connectedSpendingWallet(connector, address, status?.owner);
@@ -37,7 +34,7 @@ export function ProviderGas() {
   async function authorize() {
     const providerWallet = await wallet();
     const prepared = await api('prepare', { owner: address, whitechainBudget: whiteBudget, arkivBudget, whitechainTxLimit: whiteMax, arkivTxLimit: arkivMax, expires: Date.now() + Number(days) * 86400_000 });
-    const signature = await sign(providerWallet, address!, prepared.message);
+    const signature = await signSpendingMessage(providerWallet, address!, prepared.message);
     await api('authorize', { signature });
     setMessage('Authorization saved. Fund the dedicated address on each network before enabling provider operations.');
   }
@@ -53,13 +50,13 @@ export function ProviderGas() {
       await providerWallet.request({ method: 'wallet_addEthereumChain', params: [{ chainId, chainName: network === 'arkiv' ? 'Arkiv Rabdi' : chain === 1874 ? 'Whitechain Testnet' : 'Whitechain', nativeCurrency: { name: network === 'arkiv' ? 'Golem' : 'WhiteBIT Coin', symbol: network === 'arkiv' ? 'tGLM' : 'WBT', decimals: 18 }, rpcUrls: [network === 'arkiv' ? 'https://rpc.rabdi.db-chain.testnet.arkiv.network' : chain === 1874 ? 'https://rpc.testnet.whitechain.io' : 'https://rpc.whitechain.io'] }] });
     }
     if (Number(await providerWallet.request({ method: 'eth_chainId' })) !== chain) throw new Error('Wallet is on the wrong funding network.');
-    const hash = await providerWallet.request({ method: 'eth_sendTransaction', params: [{ from: address, to: status.address, value: `0x${parseEther(amount).toString(16)}` }] });
+    const hash = await fundProviderGas(providerWallet, { owner: address!, to: status.address, value: parseEther(amount), symbol: network === 'arkiv' ? 'tGLM' : 'WBT' });
     setMessage(`Funding submitted: ${hash}. Refresh after confirmation. This transfers native gas currency, not USDT.`);
   }
   async function recover() {
     const providerWallet = await wallet();
     const draft = await api('recovery', { network, amount });
-    const signature = await sign(providerWallet, address!, draft.message);
+    const signature = await signSpendingMessage(providerWallet, address!, draft.message);
     const result = await api('recover', { signature });
     setMessage(`Recovery submitted: ${result.hash}. Funds return only to the authorized provider owner.`);
   }
@@ -77,7 +74,15 @@ export function ProviderGas() {
           <button type="submit" className={button}>Review and sign authorization</button>
         </form>
       </details>
-      {status?.configured && <div className="space-y-3 border-t border-[var(--line)] pt-4"><div className="grid gap-3 sm:grid-cols-2"><label className="text-sm">Network<select className={control} value={network} onChange={e => setNetwork(e.target.value as 'arkiv' | 'whitechain')}><option value="whitechain">Whitechain · WBT</option><option value="arkiv">Arkiv Rabdi · tGLM</option></select></label><label className="text-sm">Native amount<input className={control} value={amount} onChange={e => setAmount(e.target.value)} /></label></div><div className="flex flex-wrap gap-2"><button type="button" className={button} onClick={() => void run(fund)}>Fund from provider wallet</button><button type="button" className={button} onClick={() => void run(recover)}>Sign recovery to owner</button><button type="button" className={button} onClick={() => void run(async () => { await api('revoke', {}); setMessage('Future signing revoked. Remaining gas funds can still be recovered.'); })}>Revoke signing</button></div></div>}
+      {status?.configured && <div className="space-y-3 border-t border-[var(--line)] pt-4"><div className="grid gap-3 sm:grid-cols-2"><label className="text-sm">Network<select className={control} value={network} onChange={e => setNetwork(e.target.value as 'arkiv' | 'whitechain')}><option value="whitechain">Whitechain · WBT</option><option value="arkiv">Arkiv Rabdi · tGLM</option></select></label><label className="text-sm">Native amount<input className={control} value={amount} onChange={e => setAmount(e.target.value)} /></label></div><div className="space-y-3">
+        <button type="button" className={button} disabled={status.status !== 'active'} onClick={() => void run(fund)}>Fund {network === 'arkiv' ? 'tGLM on Arkiv' : 'WBT on Whitechain'}</button>
+        <p className="break-words text-xs text-[var(--muted)]">Transfer {amount || '0'} {network === 'arkiv' ? 'tGLM' : 'WBT'} from your connected wallet to the dedicated gas address above. Review the network and amount in your wallet. Authorization alone does not deposit funds.</p>
+        {status.status !== 'active' && <p className="text-xs text-[var(--warn)]">Authorize signing above before funding this account.</p>}
+        <details className="rounded-xl border border-[var(--line)] p-3"><summary className="cursor-pointer text-sm font-medium">Advanced: revoke signing or recover funds</summary>
+          <p className="my-3 text-xs text-[var(--muted)]">Recovery returns unused gas to your owner wallet. First revoke future signing; this stops provider operations until you authorize again.</p>
+          <div className="flex flex-wrap gap-2"><button type="button" className={button} disabled={status.status === 'active'} onClick={() => void run(recover)}>Sign recovery to owner</button><button type="button" className={button} disabled={status.status !== 'active'} onClick={() => void run(async () => { await api('revoke', {}); setMessage('Future signing revoked. Remaining gas funds can still be recovered.'); })}>Revoke signing</button></div>
+        </details>
+      </div></div>}
       <button type="button" className="text-sm font-medium text-[var(--blue)] underline" onClick={() => void run(refresh)}>Refresh account</button>
     </fieldset>
   </section>;

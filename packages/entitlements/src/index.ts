@@ -7,6 +7,8 @@ export * from './features.js';
 export { MemoryGrantStore } from './memory-store.js';
 export { ArkivGrantStore, arkivTransportUrl } from './arkiv-store.js';
 export { BagsevenGrants } from './schema.js';
+export { identityIndex } from './grant-identities.js';
+export { InvalidValueError as ArkivInvalidValueError } from '@arkiv-network/sdk/schema';
 export { configureProviderGrantSigners } from './provider-signers.js';
 export { explorerUrl, recordWhitechainPayment } from './whitechain-settlement.js';
 

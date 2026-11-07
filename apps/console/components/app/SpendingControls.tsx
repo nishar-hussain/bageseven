@@ -1,11 +1,12 @@
 'use client';
 
+import { errorMessage } from '../../lib/error-message';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useAccount } from 'wagmi';
 import { useConnectModal } from '@rainbow-me/rainbowkit';
 import { mandateApi, type MandateOverview, type SpendingConfig } from '../../lib/mandate-client';
-import { connectedSpendingWallet, type SpendingWallet as Wallet } from '../../lib/spending-wallet-client';
+import { connectedSpendingWallet, signSpendingMessage as sign } from '../../lib/spending-wallet-client';
 
 const inputClass = 'mt-1 w-full rounded-xl border border-[var(--line)] bg-white px-3 py-2 text-sm';
 const buttonClass = 'rounded-full bg-[var(--ink)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50';
@@ -31,7 +32,7 @@ export function SpendingControls({ selectedId, overview, onChange, onCreated }: 
   const [childOperator, setChildOperator] = useState('');
   const [share, setShare] = useState('10');
   useEffect(() => {
-    void mandateApi.config().then(c => { setConfig(c); setOperator(c.operator_address); setChildOperator(c.operator_address); }).catch(e => setError(String(e.message ?? e)));
+    void mandateApi.config().then(c => { setConfig(c); setOperator(c.operator_address); setChildOperator(c.operator_address); }).catch(e => setError(errorMessage(e)));
   }, []);
   const current = overview?.mandate_id === selectedId ? overview : null;
   const available = current?.onchain_state.status === 'available';
@@ -67,14 +68,10 @@ export function SpendingControls({ selectedId, overview, onChange, onCreated }: 
     }
     return { wallet, owner };
   }
-  async function sign(wallet: Wallet, owner: string, text: string) {
-    const hex = '0x' + Array.from(new TextEncoder().encode(text), b => b.toString(16).padStart(2, '0')).join('');
-    return wallet.request({ method: 'personal_sign', params: [hex, owner] }) as Promise<string>;
-  }
   async function run(action: () => Promise<void>) {
     setBusy(true); setError(''); setMessage('');
     try { await action(); await onChange(); }
-    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    catch (e) { setError(errorMessage(e)); }
     finally { setBusy(false); }
   }
   async function create() {

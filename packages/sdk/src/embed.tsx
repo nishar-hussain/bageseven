@@ -24,6 +24,7 @@ type PublicCheckout = {
   status: string;
   amount: string;
   holder: string;
+  payment_tx?: string;
   chain_id: number;
   payment: { chain_id: number; usdt: string };
   plan: {
@@ -53,6 +54,7 @@ const rootStyle = {
   fontFamily: 'var(--bagseven-font, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif)',
   color: 'var(--bs-ink)',
   maxWidth: 720,
+  overflowWrap: 'anywhere',
   margin: '0 auto',
   WebkitFontSmoothing: 'antialiased',
 } as CSSProperties;
@@ -313,6 +315,11 @@ export function BagsevenEmbed({
   const [checkout, setCheckout] = useState<PublicCheckout | null>(null);
   const [sessionId, setSessionId] = useState(checkoutSessionId ?? '');
   const [demoTx, setDemoTx] = useState('');
+  useEffect(() => {
+    if (!checkout?.id) return;
+    try { setDemoTx(sessionStorage.getItem(`bagseven-payment:${checkout.id}`) ?? checkout.payment_tx ?? ''); }
+    catch { setDemoTx(checkout.payment_tx ?? ''); }
+  }, [checkout?.id, checkout?.payment_tx]);
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -713,7 +720,7 @@ export function BagsevenEmbed({
           ) : (
             <div style={{ marginTop: 16, display: 'grid', gap: 8 }}>
               <PrimaryBtn
-                disabled={busy || !checkout.plan}
+                disabled={busy || !checkout.plan || Boolean(demoTx)}
                 onClick={() =>
                   void act(async () => {
                     if (!checkout.plan) return;
@@ -723,6 +730,10 @@ export function BagsevenEmbed({
                       chainId: checkout.chain_id,
                       usdt: checkout.payment.usdt,
                       context: `checkout:${checkout.id}`,
+                      onTransactionSubmitted: hash => {
+                        setDemoTx(hash);
+                        try { sessionStorage.setItem(`bagseven-payment:${checkout.id}`, hash); } catch { /* Receipt remains visible in memory. */ }
+                      },
                     });
                     await fetch(`${base}/public/checkout/${encodeURIComponent(checkout.id)}/confirm`, {
                       method: 'POST',
@@ -737,7 +748,7 @@ export function BagsevenEmbed({
                   })
                 }
               >
-                {busy ? 'Waiting for wallet…' : 'Pay with wallet'}
+                {busy ? 'Waiting for wallet…' : demoTx ? 'Payment submitted — confirm below' : 'Pay with wallet'}
               </PrimaryBtn>
               {!walletSlot ? (
                 <GhostBtn

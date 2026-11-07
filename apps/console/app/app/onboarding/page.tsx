@@ -1,5 +1,6 @@
 'use client';
 
+import { errorMessage } from '../../../lib/error-message';
 import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ConnectWallet } from '../../../components/wallet/ConnectWallet';
@@ -30,7 +31,7 @@ function OnboardingInner() {
       }
       router.replace(next.startsWith('/') && !next.startsWith('//') ? next : '/app');
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : String(e));
+      setMsg(errorMessage(e));
     } finally {
       setBusy(false);
     }

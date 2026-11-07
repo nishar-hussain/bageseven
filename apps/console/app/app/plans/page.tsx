@@ -1,5 +1,6 @@
 'use client';
 
+import { errorMessage } from '../../../lib/error-message';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { connectWhitechainWallet } from '../../../lib/bagseven-sdk-wallet';
@@ -41,7 +42,7 @@ export default function PlansPage() {
   }, []);
 
   useEffect(() => {
-    void refresh().catch((e) => setMsg(e instanceof Error ? e.message : String(e)));
+    void refresh().catch((e) => setMsg(errorMessage(e)));
   }, [refresh]);
 
   useEffect(() => {
@@ -77,7 +78,7 @@ export default function PlansPage() {
       setShowCreate(false);
       await refresh();
     } catch (err) {
-      setMsg(err instanceof Error ? err.message : String(err));
+      setMsg(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -196,7 +197,7 @@ export default function PlansPage() {
                   onClick={() =>
                     void connectWhitechainWallet()
                       .then(({ address }) => setWallet(address))
-                      .catch((e) => setMsg(e instanceof Error ? e.message : String(e)))
+                      .catch((e) => setMsg(errorMessage(e)))
                   }
                 >
                   Connect

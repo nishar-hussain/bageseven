@@ -228,7 +228,8 @@ export class PostgresBillingStore implements BillingStore {
   }
   async claimPayment(hash: string, id: string): Promise<void> {
     const rows = await this.db.select().from(checkoutSessions).where(eq(checkoutSessions.paymentTx, hash.toLowerCase()));
-    if (rows.length) throw new Error('PAYMENT_REUSED');
+    if (rows.some(row => row.id !== id)) throw new Error('PAYMENT_REUSED');
+    if (rows.length) return; // Receipt remains bound to the same checkout on a safe retry.
     await this.db.update(checkoutSessions).set({ paymentTx: hash.toLowerCase() }).where(eq(checkoutSessions.id, id));
   }
   async markPaid(id: string, input: { payment_tx: string; customer_wallet: string; grant_id: string }): Promise<CheckoutSession> {

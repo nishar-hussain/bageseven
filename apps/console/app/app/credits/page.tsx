@@ -1,5 +1,6 @@
 'use client';
 
+import { errorMessage } from '../../../lib/error-message';
 import { useState } from 'react';
 import Link from 'next/link';
 import { authorizeWhitechainPayment, payUsdtOnWhitechain } from '../../../lib/bagseven-sdk-wallet';
@@ -74,7 +75,7 @@ export default function CreditsPage() {
           (r.settlement?.explorer_url ? `\n${r.settlement.explorer_url}` : ''),
       );
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : String(e));
+      setMsg(errorMessage(e));
     } finally {
       setBusy(false);
     }

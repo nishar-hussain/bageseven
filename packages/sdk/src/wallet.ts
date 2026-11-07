@@ -108,6 +108,7 @@ export async function payUsdtOnWhitechain(input: {
   usdt?: string;
   chainId?: number;
   context?: string;
+  onTransactionSubmitted?: (hash: string) => void;
 }): Promise<{ payment_tx: string; customer_wallet: string; payment_signature?: string }> {
   const { address, provider } = await connectWhitechainWallet(input.chainId ?? 1874);
   const usdt = input.usdt || ((input.chainId ?? 1874) === 1874 ? WHITECHAIN_SEPOLIA.usdt : '');
@@ -125,6 +126,7 @@ export async function payUsdtOnWhitechain(input: {
     ],
   })) as string;
   if (!/^0x[0-9a-fA-F]{64}$/.test(payment_tx)) throw new Error('Wallet returned an invalid transaction hash');
+  input.onTransactionSubmitted?.(payment_tx);
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
     const receipt = await provider.request({ method: 'eth_getTransactionReceipt', params: [payment_tx] }) as { status: string; blockNumber: string } | null;

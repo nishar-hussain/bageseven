@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import { ApiError } from '@bagseven/server';
-import { getGrantStore } from '@bagseven/entitlements';
+import { ArkivInvalidValueError, getGrantStore } from '@bagseven/entitlements';
 import type { Redis } from 'ioredis';
 import type { Database } from '@bagseven/db';
 import { ProviderGasManager, providerGasEnabled, verifyProviderScope, whitechainConfig } from '@bagseven/onchain';
@@ -105,7 +105,8 @@ export function registerBillingRoutes(
       const provider = providerScope(req);
       if (!planInProviderScope(plan, provider)) throw new ApiError(404, 'PLAN_NOT_FOUND', 'plan not found');
       await ready(plan!.provider_id);
-      const worker = (body.worker_id ?? process.env.BAGSEVEN_MCP_WORKER?.trim()) || undefined;
+      // Human checkout is independent of the deployment's optional MCP agent.
+      const worker = body.worker_id || undefined;
       if (worker && deps.validateWorker) await deps.validateWorker(worker);
       const session = await store.createCheckout({ ...body, worker_id: worker });
       return { session, checkout_session: session };
@@ -212,7 +213,9 @@ export function registerBillingRoutes(
       const paymentKey = `whitechain:payment:${session.chain_id}:${body.payment_tx.toLowerCase()}`;
       if (deps.redis) {
         const fresh = await deps.redis.set(paymentKey, id, 'NX');
-        if (!fresh) throw new ApiError(409, 'PAYMENT_REUSED', 'This payment is already redeemed or awaiting reconciliation; check its existing entitlement');
+        if (!fresh && (await deps.redis.get(paymentKey) !== id || await deps.redis.getdel(`${paymentKey}:preflight-retry`) !== id)) {
+          throw new ApiError(409, 'PAYMENT_REUSED', 'This payment is already redeemed or awaiting reconciliation; check its existing entitlement');
+        }
       } else if (process.env.NODE_ENV === 'production') {
         throw new ApiError(503, 'PAYMENT_LEDGER_UNAVAILABLE', 'Payment replay protection is not configured');
       }
@@ -232,8 +235,13 @@ export function registerBillingRoutes(
         settlement_network: 'whitechain',
         human_id: prior?.human_id,
         world_proof_id: prior?.world_proof_id ?? `world:checkout:${session.id}`,
-        worker_id: session.worker_id || prior?.worker_id || process.env.BAGSEVEN_MCP_WORKER?.trim(),
+        worker_id: session.worker_id || prior?.worker_id,
         renewal_enabled: plan.interval === 'month',
+      }).catch(async error => {
+        // SDK value validation happens before signing/broadcast. Unknown write
+        // failures retain the receipt hold and require reconciliation.
+        if (error instanceof ArkivInvalidValueError && deps.redis) await deps.redis.set(`${paymentKey}:preflight-retry`, id);
+        throw error;
       });
 
       const paid = await store.markPaid(id, {

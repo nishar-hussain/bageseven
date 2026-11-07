@@ -10,9 +10,10 @@ Access truth for Mumbai: if an entity is not returned by a live query, the agent
 | --- | --- | --- | --- |
 | `grant_id` | str | yes | Bagseven UUID (stable app id) |
 | `feature` | str | yes | SKU key (`ocr`, `research_fetch`, …) |
-| `holder` | str | yes | Subscriber wallet / holder id |
-| `human_id` | str | yes | World continuity / nullifier-ish id (optional empty) |
-| `merchant` | str | no | Merchant wallet |
+| `holder` | str | yes | Subscriber identity; values over 128 UTF-8 bytes use `sha256:<hex>` |
+| `human_id` | str | yes | World continuity identity; same long-value indexing rule |
+| `merchant` | str | no | Issuing provider identity; same long-value indexing rule |
+| `identity_data` | bytes, optional | no | JSON preserving full long holder, human, merchant and proof identities; older short-value records omit it |
 | `enabled` | str | yes | `"true"` / `"false"` |
 | `remaining` | dec | yes | Metered credits left |
 | `renewal_enabled` | str | yes | `"true"` / `"false"` (renewal clock) |
@@ -25,7 +26,7 @@ Access truth for Mumbai: if an entity is not returned by a live query, the agent
 
 ## Ownership / expiry
 
-- Owner: Arkiv wallet that mints (`ARKIV_PRIVATE_KEY`).
+- Owner: the authorized dedicated provider signer in provider-funded mode. Platform-owned legacy entities require explicit migration/reissue.
 - Expiry: `ExpirationTime.fromSeconds(ttl_seconds)` at create — **medium-enforced evaporation**.
 - Only the owner wallet may `patchEntity` (consume / cancel renewal).
 
@@ -40,3 +41,5 @@ await publicClient
 ```
 
 After TTL, the same query returns no row for that grant.
+
+For direct equality queries on long identities, use `identityIndex(value)` from `@bagseven/entitlements`. The store restores complete values from `identity_data` and validates them against their index before holder/provider authorization. No identities are truncated; existing short-identity records remain readable.

@@ -1,3 +1,4 @@
+import { errorMessage } from './error-message';
 /** Browser client for mandate/policy BFF (gateway → policy). */
 
 async function api<T>(path: string, body?: unknown): Promise<T> {
@@ -7,7 +8,7 @@ async function api<T>(path: string, body?: unknown): Promise<T> {
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
     const err = (json as { error?: { message?: string; code?: string } })?.error;
-    throw new Error(err?.message || err?.code || `Request failed (${res.status})`);
+    throw new Error(errorMessage(err, `Request failed (${res.status})`));
   }
   return json as T;
 }

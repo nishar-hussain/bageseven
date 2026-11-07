@@ -17,6 +17,14 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 describe('buyer wallet checkout', () => {
+  it('keeps the submitted receipt available even if the later purchase signature is declined', async () => {
+    const original = request.getMockImplementation()!;
+    request.mockImplementation(async args => { if (args.method === 'personal_sign') throw new Error('Signature declined'); return original(args); });
+    const onTransactionSubmitted = vi.fn();
+    await expect(payUsdtOnWhitechain({ merchantWallet: address, amount: '0.05', context: 'checkout:retry', onTransactionSubmitted })).rejects.toThrow('Signature declined');
+    expect(onTransactionSubmitted).toHaveBeenCalledExactlyOnceWith(hash);
+    expect(request.mock.calls.filter(([args]) => args.method === 'eth_sendTransaction')).toHaveLength(1);
+  });
   it('sends exact six-decimal USDT and authorizes a confirmed purchase', async () => {
     const paid = await payUsdtOnWhitechain({ merchantWallet: address, amount: '1.25', context: 'checkout:cs_one' });
     expect(paid).toMatchObject({ payment_tx: hash, customer_wallet: address, payment_signature: `0x${'01'.repeat(65)}` });

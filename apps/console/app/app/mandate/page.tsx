@@ -1,5 +1,6 @@
 'use client';
 
+import { errorMessage } from '../../../lib/error-message';
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { SpendingControls } from '../../../components/app/SpendingControls';
@@ -33,7 +34,7 @@ export default function MandatePage() {
         return rows[0]?.id ?? null;
       });
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      setErr(errorMessage(e));
     } finally {
       setLoading(false);
     }
@@ -55,7 +56,7 @@ export default function MandatePage() {
         if (!cancelled) setOverview(o);
       })
       .catch((e) => {
-        if (!cancelled) setErr(e instanceof Error ? e.message : String(e));
+        if (!cancelled) setErr(errorMessage(e));
       });
     return () => {
       cancelled = true;

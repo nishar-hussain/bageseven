@@ -1,4 +1,4 @@
-import { dec, defineSchema, str } from '@arkiv-network/sdk/schema';
+import { bytes, dec, defineSchema, str, type Column } from '@arkiv-network/sdk/schema';
 
 /**
  * Public Arkiv schema for Bagseven grants.
@@ -10,6 +10,7 @@ export const BagsevenGrants = defineSchema('bagseven_grants', {
   holder: str().indexed(),
   human_id: str().indexed(),
   merchant: str(),
+  identity_data: bytes().optional() as Column<'bytes', false, true, false>,
   enabled: str().indexed(),
   remaining: dec().indexed(),
   renewal_enabled: str().indexed(),

@@ -1,5 +1,6 @@
 'use client';
 
+import { errorMessage } from '../../../lib/error-message';
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -127,7 +128,7 @@ function MintForm() {
               `\nOpen Entitlements to spend it, or Connect agent so MCP can call paid_run.`,
       );
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : String(e));
+      setMsg(errorMessage(e));
     } finally {
       setBusy(false);
     }
@@ -151,7 +152,7 @@ function MintForm() {
       });
       setIdkitOpen(true);
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : String(e));
+      setMsg(errorMessage(e));
     } finally {
       setBusy(false);
     }
@@ -173,7 +174,7 @@ function MintForm() {
       }
       window.location.assign(auth.authorize_url);
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : String(e));
+      setMsg(errorMessage(e));
       setBusy(false);
     }
   }, [op.holder]);
@@ -199,7 +200,7 @@ function MintForm() {
         await createEntitlement({ id_token: cb.id_token, world_proof_id: cb.world_proof_id });
         window.history.replaceState({}, '', '/app/mint');
       } catch (e) {
-        setMsg(e instanceof Error ? e.message : String(e));
+        setMsg(errorMessage(e));
         window.history.replaceState({}, '', '/app/mint');
         setBusy(false);
       }

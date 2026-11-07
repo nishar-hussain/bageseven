@@ -1,3 +1,4 @@
+import { errorMessage } from './error-message';
 /** Browser client — talks to Next BFF only (never daemon directly). */
 
 async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -10,7 +11,7 @@ async function api<T>(method: string, path: string, body?: unknown): Promise<T> 
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
     const err = json?.error;
-    throw new Error(err?.message || err?.code || `Request failed (${res.status})`);
+    throw new Error(errorMessage(err, `Request failed (${res.status})`));
   }
   return json as T;
 }
