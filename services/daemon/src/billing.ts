@@ -8,8 +8,6 @@ import { whitechainConfig } from '@bagseven/onchain';
 import { verifyPaymentAuthorization, verifyWhitechainPayment } from './whitechain-payment.js';
 import { whitechainDemoAllowed } from './whitechain-settle.js';
 import {
-  assertCanRead,
-  assertCanWrite,
   authenticateRequest,
   type ApiPrincipal,
 } from './api-keys.js';
@@ -27,12 +25,6 @@ const confirmBody = z.object({
 
 function principalFrom(auth: string | string[] | undefined): ApiPrincipal {
   return authenticateRequest(auth, process.env);
-}
-
-function holderFor(principal: ApiPrincipal, requested?: string): string {
-  if (principal.kind === 'embed') return principal.holder;
-  if (!requested) throw new ApiError(400, 'HOLDER_REQUIRED', 'holder is required');
-  return requested;
 }
 
 /** Provider scope is accepted only from the authenticated console BFF. */
@@ -245,6 +237,3 @@ export function registerBillingRoutes(
     try { return await result; } finally { confirmations.delete(id); }
   });
 }
-
-/** Keep unused helpers referenced for typed principal paths in future list filters. */
-export const _billingHelpers = { holderFor, assertCanRead, assertCanWrite };

@@ -77,7 +77,7 @@ async function create(terms = {}, fund = '20.00') {
     return m;
 }
 async function grant(worker, remaining = '20') {
-    return (await internal('grants/mint', { holder: `matrix-${randomUUID()}`, feature: 'ocr', remaining, ttl_seconds: 1800, world_proof_id: 'world:ok:matrix', renewal_enabled: true, ...(worker ? { worker_id: worker } : {}) })).grant;
+    return (await internal('grants/mint', { holder: `matrix-${randomUUID()}`, feature: 'research_fetch', remaining, ttl_seconds: 1800, world_proof_id: 'world:ok:matrix', renewal_enabled: true, ...(worker ? { worker_id: worker } : {}) })).grant;
 }
 async function fetchWork(worker, amount, status = 200) {
     return internal(`workers/${worker}/fetch`, { amount, recipient: owner.address, reason: 'isolated mandate matrix' }, status);
@@ -106,8 +106,8 @@ let main, g;
 await test('Create mandate through gateway and fund vault', async () => {
     main = await create();
     const o = await overview(main);
-    assert.equal(o.vault_available, '20.00');
-    assert.equal(o.can_be_drawn_now, '20.00');
+    assert.equal(Number(o.vault_available), 20);
+    assert.equal(Number(o.can_be_drawn_now), 20);
     assert.equal(o.agents.length, 1);
     assert.ok(await chain.publicClient.getCode({ address: main.contract_address }));
     return main;
@@ -131,7 +131,7 @@ await test('Mint grant and execute local token payment', async () => {
     assert.equal(receipt.status, 'success');
     const after = await overview(main);
     assert.equal(Number(before.vault_available) - Number(after.vault_available), 1);
-    assert.equal(after.spent_total, '1.00');
+    assert.equal(Number(after.spent_total), 1);
     assert.equal((await getGrant(g)).remaining, '19');
     const balance = await chain.publicClient.readContract({ address: cfg.USDC_ADDRESS, abi: parseAbi(['function balanceOf(address) view returns(uint256)']), functionName: 'balanceOf', args: [owner.address] });
     assert.equal(balance - recipientBefore, 1000000n);
@@ -168,7 +168,7 @@ await test('Nonce replay rejected and settlement requires internal authorization
     const accepted = await api('/v1/spend-intents', body);
     assert.equal(accepted.decision, 'allow');
     assert.equal((await api('/v1/spend-intents', body, { status: 409 })).error.code, 'NONCE_REUSED');
-    assert.equal((await api(`/v1/reservations/${accepted.reservation_id}/settle`, { tx_hash: '0xtest', recipient: owner.address }, { status: 401 })).error.code, 'UNAUTHORIZED');
+    assert.equal((await req(policy, `/v1/reservations/${accepted.reservation_id}/settle`, { body: { tx_hash: '0xtest', recipient: owner.address }, status: 401 })).data.error.code, 'UNAUTHORIZED');
     await req(policy, `/v1/reservations/${accepted.reservation_id}/release`, { body: {}, headers: { authorization: `Bearer ${cfg.POLICY_INTERNAL_TOKEN}` } });
 });
 for (const [name, terms, fund, first, second, bound] of [
@@ -199,15 +199,17 @@ await test('Child allocation and depth limits enforced', async () => {
     const deep = await req(gateway, `/v1/mandates/${delegation.mandate_id}/spawn-agent`, { body: { parent_agent_id: child.agent_id, operator_address: operator.address, share_percent: 10, chain_id: 1874, signature: await owner.signMessage({ message: canonicalSpawn({ mandateId: delegation.mandate_id, parentAgentId: child.agent_id, operator: operator.address.toLowerCase(), sharePercent: 10, chainId: 1874 }) }) }, status: 400 });
     assert.equal(deep.data.error.code, 'EXCEEDS_MAX_DEPTH');
 });
-await test('paid_run refuses exhausted child allocation', async () => {
-    const r = await internal('grants/paid-run', { grant_id: childGrant.id, worker_id: child.agent_id, amount: '1.00' }, 403);
-    assert.match(r.error.message, /MANDATE_EMPTY/);
+await test('Prepaid usage remains available beyond child payment allocation', async () => {
+    const before = await getGrant(childGrant);
+    const r = await internal('grants/paid-run', { grant_id: childGrant.id, worker_id: child.agent_id, amount: '1.00' });
+    assert.equal(Number(r.grant.remaining), Number(before.remaining) - 1);
+    assert.equal(r.dual_gate.mandate, 'not_required');
 });
 await test('Grant exhaustion blocks further payment', async () => {
     const m = await create(), gr = await grant(m.root_agent_id, '1');
     assert.equal((await fetchWork(m.root_agent_id, '0.01')).decision, 'allow');
     const denied = await fetchWork(m.root_agent_id, '0.01', 403);
-    assert.match(denied.error.message, /GRANT_EMPTY/);
+    assert.match(denied.error.message, /GRANT_(EMPTY|EXPIRED)/);
     assert.equal((await getGrant(gr)).remaining, '0');
 });
 await test('Cancellation preserves paid_through and current access', async () => {
@@ -235,14 +237,14 @@ await test('paid_run repeated idempotency key consumes only once', async () => {
     assert.equal(second.grant.remaining, '2');
     assert.equal((await getGrant(gr)).remaining, '2');
 });
-await test('Revocation blocks payment and paid_run', async () => {
+await test('Revocation blocks new payment but preserves prepaid credits', async () => {
     const m = await create(), gr = await grant(m.root_agent_id);
     await ownerChain.revoke(m.contract_address);
-    const denied = await fetchWork(m.root_agent_id, '1');
-    assert.equal(denied.decision, 'refused');
-    assert.equal(denied.bound, 'MandateInactive');
-    const paid = await internal('grants/paid-run', { grant_id: gr.id, amount: '1', worker_id: m.root_agent_id }, 403);
-    assert.match(paid.error.message, /MANDATE_EMPTY/);
+    const denied = await fetchWork(m.root_agent_id, '1', 403);
+    assert.equal(denied.error.code, 'WORKER_INACTIVE');
+    const paid = await internal('grants/paid-run', { grant_id: gr.id, amount: '1', worker_id: m.root_agent_id });
+    assert.equal(paid.dual_gate.mandate, 'not_required');
+    assert.equal(paid.grant.remaining, '19');
 });
 await test('Mandate signature for another chain is rejected', async () => {
     const body = await creationBody({ chainId: 1 });

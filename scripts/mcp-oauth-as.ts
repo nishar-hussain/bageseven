@@ -6,7 +6,7 @@
  * → Bagseven issues access_token → ChatGPT calls /mcp with Bearer.
  */
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import type { Express, NextFunction, Request, Response } from 'express';
+import type { Express, Request, Response } from 'express';
 import QRCode from 'qrcode';
 import { verifyWorldAgentPass } from '@bagseven/world';
 import { readWorldContinuity, signWorldContinuity, WORLD_CONTINUITY_AGE } from '../apps/console/lib/world-continuity.ts';
@@ -494,23 +494,4 @@ export function mountMcpOAuth(app: Express): void {
 
 export function oauthChallenge(base: string): string {
   return `Bearer realm="bagseven", resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`;
-}
-
-export function requireMcpOAuth(
-  req: Request,
-  res: Response,
-  next: NextFunction,
-  publicUrl: string,
-): void {
-  const tok = verifyMcpAccessToken(req.headers.authorization);
-  if (tok) {
-    (req as Request & { bagsevenAuth?: AccessToken }).bagsevenAuth = tok;
-    next();
-    return;
-  }
-  res.setHeader('WWW-Authenticate', oauthChallenge(publicUrl.replace(/\/$/, '')));
-  res.status(401).json({
-    error: 'unauthorized',
-    message: 'Bearer access token required. Complete ChatGPT OAuth (World gate) first.',
-  });
 }

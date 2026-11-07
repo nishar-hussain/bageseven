@@ -37,6 +37,8 @@ describe('MCP prepaid access through the daemon', () => {
       await store.cancelRenewal(grant.id);
       expect((await call('credit-use-2')).isError).not.toBe(true);
       expect((await store.get(grant.id))?.remaining).toBe('0');
+      expect((await call('credit-use-2')).isError).not.toBe(true);
+      expect((await store.get(grant.id))?.remaining).toBe('0');
       expect((await call('credit-use-3')).isError).toBe(true);
       expect(capacity).not.toHaveBeenCalled();
     } finally { await client.close(); await server.close(); await app.close(); }

@@ -73,7 +73,15 @@ async function main() {
     }
     if (await client.vaultBalance(mandate.contractAddress) < 100_000_000n) await client.fund(mandate.contractAddress, token, 100_000_000n);
     let env = readFileSync(envPath, 'utf8');
-    for (const [key, value] of Object.entries({ USDC_ADDRESS: token, LOCAL_MANDATE_ID: mandate.id, BAGSEVEN_MCP_WORKER: worker.id })) {
+    for (const [key, value] of Object.entries({
+      USDC_ADDRESS: token,
+      WHITECHAIN_USDT: token,
+      NEXT_PUBLIC_WHITECHAIN_USDT: token,
+      WHITECHAIN_RPC_URL: cfg.RPC_URL,
+      NEXT_PUBLIC_WHITECHAIN_RPC_URL: cfg.RPC_URL,
+      LOCAL_MANDATE_ID: mandate.id,
+      BAGSEVEN_MCP_WORKER: worker.id,
+    })) {
       const re = new RegExp(`^${key}=.*$`, 'm');
       env = re.test(env) ? env.replace(re, () => `${key}=${value}`) : `${env.trimEnd()}\n${key}=${value}\n`;
     }

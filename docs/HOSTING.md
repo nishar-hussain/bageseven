@@ -14,7 +14,7 @@ Railway services → Railway Postgres + Redis
 Daemon → World, Whitechain and Arkiv
 ```
 
-Vercel runs the console's Next API routes; all long-lived backend services run on Railway. No additional frontend or inspector is needed. Production uses external Whitechain RPC, not Anvil. Redpanda is not used by the current service path and need not be deployed.
+Vercel runs the console's Next API routes; all long-lived backend services run on Railway. No additional frontend or inspector is needed. Production uses external Whitechain RPC, not Anvil.
 
 ## 1. Create Railway services
 
@@ -128,6 +128,8 @@ Per your hosting preference, any tenant's HTTPS Vercel/Railway deployment can ma
 Keep World callback validation and MCP OAuth callback validation independent of CORS. For ChatGPT, use `https://<mcp-domain>/mcp` as the connector URL; Railway provides HTTPS directly, so no tunnel is needed.
 
 ## 6. Verify after deploying
+
+Before deployment, run `pnpm integrations:check --env-file .env.prod` for read-only checks of the production configuration and live Whitechain RPC/token. It reports unresolved variable names without printing credentials and exits nonzero until required settings are supplied. This does not replace human World consent, a verified checkout, Arkiv access checks or hosted acceptance testing.
 
 1. Confirm daemon, gateway and MCP `https://<domain>/healthz` return `ok: true`; check policy `/healthz` from inside Railway.
 2. Confirm an OPTIONS request with `Origin: https://<console>.vercel.app` returns `access-control-allow-origin` matching that origin. Repeat with the custom console domain if used.

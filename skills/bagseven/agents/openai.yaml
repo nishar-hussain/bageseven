@@ -1,0 +1,4 @@
+interface:
+  display_name: "Bagseven"
+  short_description: "Use Bagseven entitlements, checkout and MCP tools"
+  default_prompt: "Use $bagseven to check access and choose the appropriate prepaid or payment workflow."

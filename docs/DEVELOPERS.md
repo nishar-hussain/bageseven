@@ -16,7 +16,7 @@ Three clocks, all independent:
 
 **Access vs payment:** `paid_run` and SDK consume use prepaid grants without a USDT mandate. New payments (`bagseven_fetch`) need mandate remaining **and** a living grant. Fail closed on payment checks.
 
-The daemon uses `BAGSEVEN_MCP_WORKER` as the default worker for dashboard mint and credit purchases, storing the binding on the grant. Paid runs use an explicit `worker_id`, then the grant's saved worker, then this server default for older unbound grants. Every paid run still checks mandate capacity; missing or unavailable workers cannot bypass the gate. Set this variable on the daemon as well as the MCP process.
+The daemon uses `BAGSEVEN_MCP_WORKER` as the default worker for dashboard mint and credit purchases, storing the binding on the grant. Paid runs use an explicit `worker_id`, then the grant's saved worker, then this server default for older unbound grants. Prepaid runs check grant scope and available credits without mandate capacity; new payments through bagseven_fetch still require a registered worker and mandate. Set this variable on the daemon as well as the MCP process.
 
 The LLM never authorizes money. Policy issues a spend token; daemon executes. See [DECISIONS.md](./DECISIONS.md).
 
@@ -43,7 +43,7 @@ pnpm run setup
 pnpm start:local   # same as pnpm dev
 ```
 
-Requires Node 24+, pnpm 10.33.0, and a running Docker engine. Setup installs locked dependencies, creates local secrets, starts isolated Postgres (`55432`), Redis (`56379`), and Anvil (`58545`), builds the workspace, and applies migrations. It preserves an existing `.env`; use `--force` only to replace it. Redpanda is optional (`pnpm run setup --with-redpanda`).
+Requires Node 24+, pnpm 10.33.0, and a running Docker engine. Setup installs locked dependencies, creates local secrets, starts isolated Postgres (`55432`), Redis (`56379`), and Anvil (`58545`), builds the workspace, and applies migrations. It preserves an existing `.env`; use `--force` only to replace it.
 
 Anvil uses chain ID `1874` to exercise the Whitechain mandate contract path with local tokens. Setup deploys a local USDC faucet, funds a mandate, and writes its worker UUID to `BAGSEVEN_MCP_WORKER`. Reruns reuse the worker; chain state persists in a Docker volume. This is a local chain impersonating Whitechain Testnet, not the public Whitechain RPC. An existing environment needs `RPC_URL=http://localhost:58545` and `CHAIN_ID=1874` to opt into local seeding; custom RPC configurations are preserved. Recreate the Anvil volume if it was previously chain `43113`.
 
@@ -171,7 +171,7 @@ pnpm --filter @bagseven/daemon typecheck
 
 SDK loop against a running daemon: `pnpm sdk:demo`.
 
-For full HTTP and MCP checks, run `NOTIFY_MODE=log pnpm start:local`, then `NOTIFY_MODE=log pnpm smoke:e2e` in another terminal. This checks authentication, dashboard routes, World mint/deny, Whitechain demo credits, funded worker resolution, paid work under both gates, a local token payment, renewal cancellation, and expiry. `NOTIFY_MODE=log` preserves Resend configuration while suppressing delivery. Restart normally to resume email delivery. Browser automation is separate from these HTTP checks.
+For full HTTP and MCP checks, use a disposable local development checkout/environment with memory grants, mocked World, no live signing/storage credentials, and local Anvil. Run `NOTIFY_MODE=log pnpm start:local`, then `NOTIFY_MODE=log pnpm smoke:e2e` in another terminal. The check refuses public endpoints and live credentials. It checks landing/docs, World-primary login and recovery, dashboard routes/BFF scope, SDK checks and idempotent prepaid consumption, MCP checkout confirmation, entitlement-only agents, renewal cancellation, expiry, and a bounded local token payment. Prepaid access does not require a mandate; new payments do. `NOTIFY_MODE=log` suppresses email delivery. Browser interaction/visual QA is separate from these HTTP checks. Do not overwrite an existing live `.env` to run this fixture.
 
 ### MCP mandate and agent tools
 
@@ -180,3 +180,37 @@ The MCP catalog includes owner-scoped `list_mandates`, `get_mandate`, `list_agen
 `bagseven_spawn` defaults to the bound root and mandate. A configured signer must match the actual owner/operator, or an owner signature must be supplied. Direct payments accept `idempotency_key`; reuse the same inputs and key for retries. Uncertain attempted payments remain held for reconciliation.
 
 See [the real MCP verification](testing/mcp-agents-mandates-live-2026-11-07.md) for scope, evidence and operational limits.
+
+## Agent skills
+
+`skills/bagseven/` teaches connected agents the live MCP workflows: entitlement discovery, prepaid usage, provider checkout, new payments, owner-signed mandates and denials. `skills/bagseven-development/` teaches developers the SDK, service boundaries, verification and Railway/Vercel deployment. Both use standard `SKILL.md` frontmatter, self-contained references and optional Codex UI metadata. A skill does not connect MCP, issue credentials or publish the private SDK package.
+
+Install from a checkout:
+
+```bash
+npx skills add . --list
+npx skills add . --skill bagseven bagseven-development --agent codex --global
+```
+
+Choose another supported agent or omit `--agent` for the installer's selection. For a project-local installation, omit `--global`. Invoke `$bagseven` or `$bagseven-development` in Codex after its skill catalog refreshes; other agents use their own skill invocation UI. To refresh a local-source install after changing the skill, rerun the local install command.
+
+### Distribute through GitHub and skills.sh
+
+Keep each skill in its own `skills/<name>/SKILL.md` folder. Supporting files must stay inside that skill folder so installation works outside this monorepo. Do not include `.env`, `.env.prod`, tokens, test receipts with personal data or local filesystem paths. The supplied skills contain public instructions only.
+
+Commit and push the reviewed skill folders and their documentation to the intended GitHub branch. There is no separate npm package release for these instruction files. Once the skills are on the remote repository, users can inspect and install them with:
+
+```bash
+npx skills add nishar-hussain/bageseven --list
+npx skills add nishar-hussain/bageseven --skill bagseven bagseven-development
+# Optional global Codex install:
+npx skills add nishar-hussain/bageseven --skill bagseven bagseven-development --agent codex --global
+```
+
+Public discovery requires an accessible public source; a private repository installation requires the installer's GitHub access. Do not change repository visibility merely to list a skill. If only the skills should be public, copy the two self-contained skill folders into a separate public repository and substitute that owner/repository in the command.
+
+According to the [skills.sh FAQ](https://skills.sh/docs/faq), skills are tracked and appear on the leaderboard through CLI installation telemetry; there is no separate leaderboard submission command. A local install or discovery check does not prove that a remote listing is published. The [CLI documentation](https://skills.sh/docs/cli) describes telemetry; `DISABLE_TELEMETRY=1` opts out. Do not generate artificial installs to influence rankings.
+
+For later GitHub-sourced updates, users can run `npx skills update`. Skill distribution is separate from deploying Bagseven, connecting its MCP server or publishing `@bagseven/sdk`.
+
+When editing skills, validate their frontmatter and links, check examples against current MCP schemas/SDK exports, and rerun local discovery. Read-only checks, prepaid consumption, new payments, worker mismatch, cancelled renewal, pending checkout and restart recovery should remain distinct workflows.

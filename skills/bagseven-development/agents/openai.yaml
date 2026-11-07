@@ -1,0 +1,4 @@
+interface:
+  display_name: "Bagseven Development"
+  short_description: "Integrate the SDK and maintain Bagseven services"
+  default_prompt: "Use $bagseven-development to integrate or update Bagseven while preserving access and payment boundaries."

@@ -2,7 +2,7 @@
   "name": "bagseven",
   "version": "0.1.0",
   "private": true,
-  "description": "Bagseven — mandates, living entitlements, Whitechain settlement, World mint, SDK + MCP",
+  "description": "Bagseven \u2014 mandates, living entitlements, Whitechain settlement, World mint, SDK + MCP",
   "packageManager": "pnpm@10.33.0",
   "engines": {
     "node": ">=24"
@@ -43,7 +43,6 @@
   "devDependencies": {
     "@bagseven/db": "workspace:*",
     "@bagseven/entitlements": "workspace:*",
-    "@bagseven/money": "workspace:*",
     "@bagseven/onchain": "workspace:*",
     "@bagseven/server": "workspace:*",
     "@bagseven/world": "workspace:*",

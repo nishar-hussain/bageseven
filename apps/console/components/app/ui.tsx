@@ -153,30 +153,3 @@ export function EmptyState({ title, body, action }: { title: string; body: strin
     </div>
   );
 }
-
-export function SetupBanner({
-  items,
-}: {
-  items: Array<{ id: string; label: string; href: string }>;
-}) {
-  if (items.length === 0) return null;
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[var(--line)] bg-white px-4 py-3 shadow-[var(--sh)]">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[13px] font-semibold text-[var(--ink)]">Finish setup</span>
-        {items.map((item) => (
-          <Link
-            key={item.id}
-            href={item.href}
-            className="rounded-full bg-[var(--warn-t)] px-2.5 py-1 text-[11px] font-semibold text-[var(--warn)] hover:brightness-95"
-          >
-            {item.label}
-          </Link>
-        ))}
-      </div>
-      <Link href="/app/account" className="text-[12px] font-semibold text-[var(--blue)]">
-        Account →
-      </Link>
-    </div>
-  );
-}

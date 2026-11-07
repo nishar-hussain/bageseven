@@ -24,11 +24,13 @@ pnpm start:local    # landing + dashboard + gateway + policy + daemon
 
 If `pnpm` itself errors with a missing global path, your shell shim is broken — use `corepack pnpm` or reinstall: `corepack prepare pnpm@10.33.0 --activate`.
 
-Then: landing → **Start free** → email → Overview → Mint / Credits / Grants.
+Then: landing → **Start free** → **Continue with World** (mock locally) → Overview → Mint / Credits / Grants.
 
 Setup creates a funded mandate and saves `BAGSEVEN_MCP_WORKER` in `.env`. World proofs and Whitechain settlement use local mock modes; Arkiv uses memory. The isolated Anvil chain runs on `58545` as Whitechain chain ID `1874`, without real funds.
 
 Verify the full local flow without sending email:
+
+Use a disposable local development `.env` without live signing/storage credentials. The smoke check refuses public RPCs and live credentials; do not replace your live `.env` to run it.
 
 ```bash
 NOTIFY_MODE=log pnpm start:local
@@ -68,7 +70,11 @@ BAGSEVEN_MCP_WORKER=<uuid> pnpm mcp:local
 
 Tools: `bagseven_status`, `grant_status`, `check_entitlement`, `consume_entitlement`, `mint_with_world`, `buy_credits`, `paid_run`, `cancel_renewal`, `explain_denial`, `bagseven_fetch`.
 
-## Production
+## Agent skills
+
+The reusable skills are [bagseven](./skills/bagseven/SKILL.md) for connected MCP agents and [bagseven-development](./skills/bagseven-development/SKILL.md) for SDK integration and platform maintenance. Install from this checkout with `npx skills add . --skill bagseven bagseven-development`. Remote installation and skills.sh distribution steps are in [the developer guide](./docs/DEVELOPERS.md#agent-skills).
+
+## Production deployment
 
 Deploy landing and console on **Vercel**, and daemon, gateway, policy, MCP, Postgres and Redis on **Railway**. Service configs and variable templates are in `deploy/railway/` and `deploy/vercel/`; follow [docs/HOSTING.md](./docs/HOSTING.md) for setup, shared secrets and the live World / Whitechain / Arkiv tracks. World is the primary login; `AUTH_ALLOWLIST` controls email recovery access.
 

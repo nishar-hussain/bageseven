@@ -227,7 +227,7 @@ export function buildServer(worker = WORKER, callDaemon = daemon): McpServer {
     'consume_entitlement',
     {
       title: 'Consume entitlement',
-      description: 'Dual-gate burn: mandate remaining AND living grant. Same verb as BagsevenClient.consumeEntitlement.',
+      description: 'Consume already-paid credits from a living grant with holder and worker authorization. Does not create a payment or require a spending mandate.',
       inputSchema: {
         feature: z.string().min(1).default('ocr'),
         holder: z.string().optional(),

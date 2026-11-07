@@ -5,7 +5,7 @@
  *
  * - creates .env (local development keys)
  * - ensures deps installed
- * - docker compose up (postgres + redis + local mandate chain; optional --with-redpanda)
+ * - docker compose up (postgres + redis + local mandate chain)
  * - turbo build
  * - db migrate
  */
@@ -23,7 +23,6 @@ const examplePath = resolve(root, '.env.example');
 const FORCE = process.argv.includes('--force');
 const SKIP_DOCKER = process.argv.includes('--skip-docker');
 const SKIP_BUILD = process.argv.includes('--skip-build');
-const WITH_REDPANDA = process.argv.includes('--with-redpanda');
 let privateKeyToAccount;
 
 function log(msg) {
@@ -160,12 +159,8 @@ async function main() {
   writeFileSync(resolve(root, 'apps/console/.env.local'), readFileSync(envPath));
 
   if (!SKIP_DOCKER) {
-    log(WITH_REDPANDA ? 'Starting postgres + redis + anvil + redpanda' : 'Starting postgres + redis + anvil');
-    if (WITH_REDPANDA) {
-      run('pnpm db:up');
-    } else {
-      run('docker compose -f deploy/docker-compose.yml up -d postgres redis anvil');
-    }
+    log('Starting postgres + redis + anvil');
+    run('docker compose -f deploy/docker-compose.yml up -d postgres redis anvil');
     log('Waiting for postgres/redis/anvil healthy…');
     const healthy = await Promise.all(['postgres', 'redis', 'anvil'].map((service) => waitHealthy(service, 90)));
     if (healthy.some((ok) => !ok)) {
@@ -213,7 +208,7 @@ MCP (optional):
   Local setup saves BAGSEVEN_MCP_WORKER in .env
   pnpm mcp:local
 
-Options: --force  --with-redpanda  --skip-docker  --skip-build
+Options: --force  --skip-docker  --skip-build
 `);
 }
 

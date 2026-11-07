@@ -30,26 +30,6 @@ services:
       timeout: 5s
       retries: 10
 
-  redpanda:
-    image: docker.redpanda.com/redpandadata/redpanda:v24.3.7
-    command:
-      - redpanda
-      - start
-      - --overprovisioned
-      - --smp=1
-      - --memory=1G
-      - --reserve-memory=0M
-      - --node-id=0
-      - --check=false
-      - --kafka-addr PLAIN://0.0.0.0:9092
-      - --advertise-kafka-addr PLAIN://localhost:9092
-      - --rpc-addr 0.0.0.0:33145
-      - --advertise-rpc-addr redpanda:33145
-      - --mode dev-container
-    ports:
-      - "9092:9092"
-      - "9644:9644"
-
   anvil:
     image: ghcr.io/foundry-rs/foundry:stable
     entrypoint: ["anvil"]

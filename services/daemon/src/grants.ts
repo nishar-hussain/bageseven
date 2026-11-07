@@ -767,10 +767,6 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
         throw new ApiError(403, 'DUAL_GATE', 'GRANT_EXPIRED: access left the query surface');
       }
       const valueType = getFeatureValueType(grant.feature);
-      if (valueType === 'numeric' && !gte(grant.remaining, body.amount)) {
-        throw new ApiError(403, 'DUAL_GATE', 'GRANT_EMPTY: remaining credits insufficient');
-      }
-
       if (grant.worker_id && body.worker_id && grant.worker_id !== body.worker_id) throw new ApiError(403, 'GRANT_WORKER_MISMATCH', 'This entitlement is bound to another agent');
 
       // This endpoint consumes already-paid service credits. Credit units are
@@ -786,6 +782,8 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
       }
 
       const key = body.idempotency_key ?? randomUUID();
+      // The store resolves an existing operation before checking remaining
+      // credits, so retrying the final successful burn still returns its result.
       const next = await store.consume(grantId, body.amount, key);
 
       void notifyOperator(
