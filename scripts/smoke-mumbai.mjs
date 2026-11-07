@@ -1,95 +1,30 @@
 #!/usr/bin/env node
-/**
- * Smoke against daemon (memory + demo settle).
- * Usage: pnpm smoke
- * Requires daemon on DAEMON_URL (default http://127.0.0.1:4001).
- */
+/** Read-only checks for a running stack. Use smoke:e2e for the isolated write flow. */
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-
 const envPath = fileURLToPath(new URL('../.env', import.meta.url));
 if (existsSync(envPath)) process.loadEnvFile(envPath);
-
-const base = (process.env.DAEMON_URL ?? 'http://127.0.0.1:4001').replace(/\/$/, '');
-const auth = process.env.DAEMON_AUTH_TOKEN
-  ? { authorization: `Bearer ${process.env.DAEMON_AUTH_TOKEN}` }
-  : {};
-
-async function j(method, path, body) {
-  const res = await fetch(`${base}${path}`, {
-    method,
-    headers: { ...auth, ...(body ? { 'content-type': 'application/json' } : {}) },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const text = await res.text();
-  let json;
-  try {
-    json = text ? JSON.parse(text) : {};
-  } catch {
-    json = { raw: text };
-  }
-  if (!res.ok) throw new Error(`${method} ${path} → ${res.status} ${JSON.stringify(json)}`);
-  return json;
+const daemon = (process.env.DAEMON_URL || 'http://localhost:4001').replace(/\/$/, '');
+const targets = [
+  ['gateway', process.env.GATEWAY_URL || process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000'],
+  ['policy', process.env.POLICY_URL || 'http://localhost:4003'],
+  ['daemon', daemon],
+];
+async function get(base, path, headers = {}) {
+  let response;
+  try { response = await fetch(`${base.replace(/\/$/, '')}${path}`, { headers, signal: AbortSignal.timeout(15_000) }); }
+  catch { throw new Error('Service unreachable. Start the platform with pnpm start:local and check its logs.'); }
+  if (!response.ok) throw new Error(`${path} returned HTTP ${response.status}; verify the service configuration and credentials.`);
+  return response.json();
 }
-
-async function main() {
-  console.log(`smoke → ${base}`);
-  const worker = process.env.BAGSEVEN_MCP_WORKER;
-  if (!worker) throw new Error('BAGSEVEN_MCP_WORKER is required; run pnpm run setup to create the local worker');
-  const status = await j('GET', '/internal/mumbai/status');
-  console.log('status', JSON.stringify(status.tracks));
-
-  const mint = await j('POST', '/internal/grants/mint', {
-    feature: 'ocr',
-    holder: 'smoke-human',
-    remaining: '3',
-    ttl_seconds: 90,
-    settlement_network: 'whitechain',
-    world_proof_id: 'world:ok:smoke-human',
-    renewal_enabled: true,
-    worker_id: worker,
-  });
-  console.log('mint', mint.grant?.id, mint.world?.mode);
-
-  try {
-    await j('POST', '/internal/grants/mint', {
-      feature: 'ocr',
-      holder: 'smoke-deny',
-      remaining: '1',
-      ttl_seconds: 60,
-      world_proof_id: 'world:cancel:smoke',
-    });
-    throw new Error('deny path should have failed');
-  } catch (e) {
-    if (String(e.message).includes('should have failed')) throw e;
-    console.log('deny ok');
+try {
+  for (const [name, base] of targets) {
+    if (!(await get(base, '/healthz')).ok) throw new Error(`${name} health check failed`);
+    console.log(`PASS ${name} health`);
   }
-
-  const buy = await j('POST', '/internal/grants/buy-credits', {
-    feature: 'ocr',
-    holder: 'smoke-buyer',
-    amount: '1.00',
-    remaining: '5',
-    ttl_seconds: 90,
-    world_proof_id: 'world:ok:smoke-buyer',
-  });
-  console.log('buy', buy.settlement?.mode, buy.settlement?.payment_tx);
-
-  const live = await j('GET', '/internal/grants/live?feature=ocr');
-  console.log('live grants', (live.grants ?? []).length);
-
-  const run = await j('POST', '/internal/grants/paid-run', {
-    grant_id: mint.grant.id,
-    amount: '1',
-    work: 'smoke',
-    worker_id: worker,
-  });
-  console.log('paid_run remaining', run.grant?.remaining);
-
-  console.log('SMOKE_OK');
-}
-
-main().catch((err) => {
-  console.error('SMOKE_FAIL', err.message || err);
-  process.exit(1);
-});
+  const auth = process.env.DAEMON_AUTH_TOKEN ? { authorization: `Bearer ${process.env.DAEMON_AUTH_TOKEN}` } : {};
+  const status = await get(daemon, '/internal/mumbai/status', auth);
+  if (!status.tracks) throw new Error('Daemon track status was missing');
+  console.log('PASS authenticated daemon track status');
+  console.log('SMOKE_OK (read-only; no grants, emails or payments created)');
+} catch (error) { console.error(`SMOKE_FAIL ${error.message}`); process.exitCode = 1; }

@@ -14,7 +14,7 @@ export function PageHeader({
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div className="min-w-0 max-w-2xl">
         <h1 className="text-[1.75rem] font-semibold tracking-tight text-[var(--ink)] md:text-[2rem]">{title}</h1>
-        {description ? <p className="mt-1.5 text-[13.5px] leading-relaxed text-[var(--muted)]">{description}</p> : null}
+        {description ? <p className="mt-1.5 break-words text-[13.5px] leading-relaxed text-[var(--muted)]">{description}</p> : null}
       </div>
       {action ? <div className="flex shrink-0 flex-wrap items-center gap-2">{action}</div> : null}
     </div>

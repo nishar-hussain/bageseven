@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * One-shot local platform setup:
- *   pnpm setup
+ *   pnpm run setup
  *
  * - creates .env (local development keys)
  * - ensures deps installed
@@ -93,6 +93,7 @@ function buildEnvContents() {
     POLICY_INTERNAL_TOKEN: createHash('sha256').update(randomBytes(16)).digest('hex').slice(0, 32),
     PROVIDER_ADMIN_TOKEN: createHash('sha256').update(randomBytes(16)).digest('hex').slice(0, 32),
     AUTH_SECRET: randomBytes(32).toString('hex'),
+    PROVIDER_GAS_ENCRYPTION_KEY: randomBytes(32).toString('hex'),
     DAEMON_AUTH_TOKEN: randomBytes(24).toString('hex'),
     BAGSEVEN_SECRET_KEY: `sk_test_${randomBytes(16).toString('hex')}`,
     BAGSEVEN_PUBLISHABLE_KEY: `pk_test_${randomBytes(12).toString('hex')}`,

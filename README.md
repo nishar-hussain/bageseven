@@ -22,6 +22,8 @@ pnpm start:local    # landing + dashboard + gateway + policy + daemon
 # pnpm dev is the same command
 ```
 
+Use `pnpm run setup` explicitly: `pnpm setup` invokes pnpm's built-in shell configuration command instead of this repository's setup script. `pnpm setup:platform` is also available as an unambiguous alias.
+
 If `pnpm` itself errors with a missing global path, your shell shim is broken — use `corepack pnpm` or reinstall: `corepack prepare pnpm@10.33.0 --activate`.
 
 Then: landing → **Start free** → **Continue with World** (mock locally) → Overview → Mint / Credits / Grants.
@@ -37,6 +39,8 @@ NOTIFY_MODE=log pnpm start:local
 # In another terminal:
 NOTIFY_MODE=log pnpm smoke:e2e
 ```
+
+For normal development, `pnpm start` / `pnpm start:local` starts or restarts this checkout's five services, `pnpm status:local` shows their ports, and `pnpm stop:local` stops them while keeping Postgres/Redis/Anvil running. `pnpm smoke` performs read-only health checks. Run `pnpm test`, `pnpm lint`, `pnpm typecheck` and `pnpm build` for code checks; unit tests do not require a running stack or a frontend production build.
 
 **What ships + demo + World vs MCP auth:** [docs/PRODUCT.md](./docs/PRODUCT.md)
 

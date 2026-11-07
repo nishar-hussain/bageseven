@@ -2,6 +2,7 @@
 **/node_modules
 **/dist
 **/.next
+**/.next-dev
 **/.turbo
 **/.env
 **/.env.*

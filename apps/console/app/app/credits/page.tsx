@@ -7,6 +7,7 @@ import { PageHeader, SoftCard } from '../../../components/app/ui';
 import { entitlementsApi } from '../../../lib/entitlements-client';
 import { TTL_PRESETS, shortId, useOperator } from '../../../lib/use-operator';
 import { featureLabel, useFeatures } from '../../../lib/use-features';
+import { identityLabel } from '../../../lib/identity-label';
 
 export default function CreditsPage() {
   const op = useOperator();
@@ -68,7 +69,7 @@ export default function CreditsPage() {
       });
       setPaymentTx('');
       setMsg(
-        `Topped up ${featureLabel(feature, features)} for ${op.holder}. ` +
+        `Topped up ${featureLabel(feature, features)} for ${identityLabel(op.holder)}. ` +
           `${r.settlement?.mode ?? 'settle'} · grant ${shortId(r.grant.id)} · ${r.grant.remaining} credits left` +
           (r.settlement?.explorer_url ? `\n${r.settlement.explorer_url}` : ''),
       );
@@ -91,7 +92,7 @@ export default function CreditsPage() {
 
       <SoftCard className="space-y-4 p-5">
         <p className="text-sm text-[var(--muted)]">
-          Buyer: <strong className="text-[var(--ink)]">{op.holder || '…'}</strong>
+          Buyer: <strong className="break-words text-[var(--ink)]" title={op.holder}>{identityLabel(op.holder)}</strong>
         </p>
         <div className="fi-field">
           <label htmlFor="feature">Feature SKU to top up</label>
@@ -140,7 +141,7 @@ export default function CreditsPage() {
             <input id="paymentTx" className="fi-mono text-sm" value={paymentTx} onChange={(e) => setPaymentTx(e.target.value)} placeholder="Optional — leave blank to settle now" />
           </div>
         )}
-        {msg && <pre className="whitespace-pre-wrap text-sm text-[var(--muted)]">{msg}</pre>}
+        {msg && <pre className="break-words whitespace-pre-wrap text-sm text-[var(--muted)]">{msg}</pre>}
       </SoftCard>
     </div>
   );

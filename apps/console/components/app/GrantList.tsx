@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { entitlementsApi, type Grant } from '../../lib/entitlements-client';
 import { featureLabel, shortId } from '../../lib/use-operator';
 import { useFeatures } from '../../lib/use-features';
+import { identityLabel } from '../../lib/identity-label';
 
 function useTtl(paidThrough: string) {
   const [label, setLabel] = useState('…');
@@ -60,15 +61,15 @@ function GrantRow({
     >
       <button type="button" onClick={onSelect} className="w-full text-left">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <div>
+          <div className="min-w-0">
             <div className="font-medium">
               {featureLabel(grant.feature)} entitlement
               <span className="ml-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">
                 {isBoolean ? 'boolean · Arkiv' : 'numeric · Arkiv'}
               </span>
             </div>
-            <div className="text-xs text-[var(--muted)]">
-              {grant.holder}
+            <div className="break-words text-xs text-[var(--muted)]">
+              <span title={grant.holder}>{identityLabel(grant.holder)}</span>
               <span className="fi-mono ml-2 opacity-60" title={grant.id}>
                 {shortId(grant.id)}
               </span>

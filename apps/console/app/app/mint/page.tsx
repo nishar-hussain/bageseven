@@ -10,6 +10,7 @@ import { ConnectWallet } from '../../../components/wallet/ConnectWallet';
 import { entitlementsApi } from '../../../lib/entitlements-client';
 import { TTL_PRESETS, shortId, useOperator } from '../../../lib/use-operator';
 import { featureLabel, useFeatures } from '../../../lib/use-features';
+import { identityLabel } from '../../../lib/identity-label';
 
 function MintForm() {
   const op = useOperator();
@@ -216,7 +217,7 @@ function MintForm() {
           op.loading
             ? 'Loading…'
             : op.holder
-              ? `Issue subscription access for ${op.holder}. Boolean = feature flag · Numeric = usage credits.`
+              ? `Issue subscription access for ${identityLabel(op.holder)}. Boolean = feature flag · Numeric = usage credits.`
               : 'Sign in first'
         }
       />

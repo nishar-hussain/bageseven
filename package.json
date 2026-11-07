@@ -2,7 +2,7 @@
   "name": "bagseven",
   "version": "0.1.0",
   "private": true,
-  "description": "Bagseven \u2014 mandates, living entitlements, Whitechain settlement, World mint, SDK + MCP",
+  "description": "Bagseven — mandates, living entitlements, Whitechain settlement, World mint, SDK + MCP",
   "packageManager": "pnpm@10.33.0",
   "engines": {
     "node": ">=24"
@@ -11,6 +11,7 @@
     "setup": "node scripts/setup-platform.mjs",
     "setup:platform": "node scripts/setup-platform.mjs",
     "setup:prod": "node scripts/setup-prod.mjs",
+    "check:prod": "node scripts/check-production.mjs",
     "dev": "node scripts/start-local.mjs",
     "start:local": "node scripts/start-local.mjs",
     "mcp:local": "node scripts/mcp-local.mjs",
@@ -27,7 +28,7 @@
     "build": "turbo run build",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
-    "test": "turbo run test",
+    "test": "node scripts/test-platform.mjs",
     "db:up": "docker compose -f deploy/docker-compose.yml up -d",
     "db:down": "docker compose -f deploy/docker-compose.yml down",
     "db:migrate": "pnpm --filter @bagseven/db run migrate",
@@ -38,7 +39,10 @@
     "pm2:logs": "pnpm exec pm2 logs",
     "pm2:restart": "pnpm exec pm2 restart deploy/ecosystem.config.cjs",
     "integrations:check": "node scripts/check-live-integrations.mjs",
-    "test:checkout": "node scripts/test-whitechain-checkout.mjs"
+    "test:checkout": "node scripts/test-whitechain-checkout.mjs",
+    "start": "node scripts/start-local.mjs",
+    "stop:local": "node scripts/start-local.mjs --stop",
+    "status:local": "node scripts/start-local.mjs --status"
   },
   "devDependencies": {
     "@bagseven/db": "workspace:*",
@@ -52,6 +56,7 @@
     "@types/node": "^26.6.1",
     "@types/qrcode": "^1.5.6",
     "eslint": "^10.10.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "express": "^5.1.0",
     "pm2": "^7.0.4",
     "qrcode": "1.5.4",

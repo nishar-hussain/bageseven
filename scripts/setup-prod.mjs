@@ -64,6 +64,15 @@ if (!existsSync(master)) {
 }
 
 const values = parseEnv(readFileSync(master, 'utf8'));
+// Upgrade existing deployment sources without rotating deposited-account keys.
+if (!values.PROVIDER_GAS_ENCRYPTION_KEY || values.PROVIDER_GAS_ENCRYPTION_KEY.startsWith('REPLACE_')) {
+  values.PROVIDER_GAS_ENCRYPTION_KEY = randomBytes(32).toString('hex');
+  save(master, readFileSync(master, 'utf8').replace(/^PROVIDER_GAS_ENCRYPTION_KEY=.*\n?/m, '') +
+    `\nPROVIDER_GAS_ENCRYPTION_KEY=${JSON.stringify(values.PROVIDER_GAS_ENCRYPTION_KEY)}\n`);
+}
+if (!/^[a-f0-9]{64}$/i.test(values.PROVIDER_GAS_ENCRYPTION_KEY)) {
+  throw new Error('PROVIDER_GAS_ENCRYPTION_KEY must be 32 bytes encoded as 64 hexadecimal characters; existing value was preserved.');
+}
 const consoleUrl = values.NEXT_PUBLIC_CONSOLE_URL?.replace(/\/$/, '');
 const derived = {
   GATEWAY_AUTH_TOKEN: values.POLICY_INTERNAL_TOKEN,

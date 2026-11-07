@@ -1,5 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { randomUUID } from 'node:crypto';
 
 function parseResult(value: unknown): unknown {
   const text = (value as { content?: Array<{ type?: string; text?: string }> }).content?.find((item) => item.type === 'text')?.text;
@@ -19,15 +20,14 @@ async function main(): Promise<void> {
   const client = new Client({ name: 'bagseven-local-smoke', version: '0.1.0' }, { capabilities: {} });
   try {
     await client.connect(transport);
+    const tools = new Set((await client.listTools()).tools.map(tool => tool.name));
     const status = await call(client, 'bagseven_status');
-    console.log(JSON.stringify({ test: 'bagseven_status', result: status }, null, 2));
+    console.log(JSON.stringify({ test: 'bagseven_status', ok: Boolean(status) }));
     const grants = await call(client, 'grant_status', { feature: process.env.BAGSEVEN_GRANT_FEATURE ?? 'ocr' });
-    console.log(JSON.stringify({ test: 'grant_status', result: grants }, null, 2));
-    try {
+    console.log(JSON.stringify({ test: 'grant_status', ok: Boolean(grants) }));
+    if (tools.has('bagseven_search')) {
       const search = await call(client, 'bagseven_search', { query: process.env.MCP_SMOKE_QUERY ?? 'research' });
       console.log(JSON.stringify({ test: 'bagseven_search', result: search }, null, 2));
-    } catch (error) {
-      console.log(JSON.stringify({ test: 'bagseven_search', skipped: true, error: (error as Error).message }, null, 2));
     }
 
     const paidUrl = process.env.MCP_SMOKE_PAID_URL;
@@ -35,11 +35,12 @@ async function main(): Promise<void> {
       console.log('No MCP_SMOKE_PAID_URL supplied; no payment was attempted.');
       return;
     }
-    const payment = await call(client, 'bagseven_fetch', { url: paidUrl, reason: 'local MCP smoke test' });
+    const request = { url: paidUrl, reason: 'local MCP smoke test', idempotency_key: randomUUID() };
+    const payment = await call(client, 'bagseven_fetch', request);
     console.log(JSON.stringify({ test: 'bagseven_fetch', result: payment }, null, 2));
 
     if (process.env.MCP_SMOKE_REPEAT === 'true') {
-      const repeated = await call(client, 'bagseven_fetch', { url: paidUrl, reason: 'local MCP duplicate-request test' });
+      const repeated = await call(client, 'bagseven_fetch', request);
       console.log(JSON.stringify({ test: 'bagseven_fetch_repeat', result: repeated }, null, 2));
     }
     const blockedUrl = process.env.MCP_SMOKE_BLOCKED_URL;

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { PageHeader, PrimaryButton, SecondaryButton, SoftCard, StatusPill } from '../../../components/app/ui';
 import { WalletStatusCard } from '../../../components/wallet/WalletStatus';
 import { useOperator } from '../../../lib/use-operator';
+import { IdentityValue } from '../../../components/app/IdentityValue';
 
 export default function AccountPage() {
   const op = useOperator();
@@ -83,21 +84,16 @@ export default function AccountPage() {
           {!op.emailVerified ? <StatusPill tone="warn">Email pending</StatusPill> : <StatusPill tone="good">Email verified</StatusPill>}
           {!op.walletAddress && !wallet ? <StatusPill tone="warn">Wallet pending</StatusPill> : <StatusPill tone="good">Wallet set</StatusPill>}
         </div>
-        <div>
-          Holder <code className="fi-mono ml-1 text-xs">{op.holder || '—'}</code>
-        </div>
-        <div>
-          World <code className="fi-mono ml-1 text-xs">{op.worldHumanId || '—'}</code>
-        </div>
-        <div>Email {op.email ?? 'not set'}</div>
-        <div>
-          Wallet{' '}
-          {op.walletAddress || wallet ? (
-            <code className="fi-mono text-xs">{op.walletAddress || wallet}</code>
-          ) : (
-            'not set'
-          )}
-        </div>
+        <dl className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-3">
+          <dt className="text-[var(--muted)]">Holder</dt>
+          <dd className="min-w-0"><IdentityValue value={op.holder} label="holder" /></dd>
+          <dt className="text-[var(--muted)]">World ID</dt>
+          <dd className="min-w-0"><IdentityValue value={op.worldHumanId} label="World ID" /></dd>
+          <dt className="text-[var(--muted)]">Email</dt>
+          <dd className="min-w-0 break-all">{op.email ?? 'Not set'}</dd>
+          <dt className="text-[var(--muted)]">Wallet</dt>
+          <dd className="min-w-0"><IdentityValue value={op.walletAddress || wallet} label="wallet address" /></dd>
+        </dl>
       </SoftCard>
 
       <SoftCard id="email" className="scroll-mt-20 space-y-3 p-5">
@@ -113,7 +109,7 @@ export default function AccountPage() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@company.com"
-            className="flex-1 rounded-xl border border-[var(--line)] px-3 py-2 text-sm"
+            className="min-w-0 flex-1 rounded-xl border border-[var(--line)] px-3 py-2 text-sm"
           />
           <SecondaryButton type="submit">Send code</SecondaryButton>
         </form>
@@ -123,7 +119,7 @@ export default function AccountPage() {
               value={code}
               onChange={(e) => setCode(e.target.value)}
               placeholder="6-digit code"
-              className="flex-1 rounded-xl border border-[var(--line)] px-3 py-2 text-sm"
+              className="min-w-0 flex-1 rounded-xl border border-[var(--line)] px-3 py-2 text-sm"
               required
             />
             <PrimaryButton type="submit">Verify</PrimaryButton>
@@ -146,14 +142,14 @@ export default function AccountPage() {
               value={wallet}
               onChange={(e) => setWallet(e.target.value)}
               placeholder="0x…"
-              className="flex-1 rounded-xl border border-[var(--line)] px-3 py-2 font-mono text-sm"
+              className="min-w-0 flex-1 rounded-xl border border-[var(--line)] px-3 py-2 font-mono text-sm"
             />
             <PrimaryButton type="submit">Save</PrimaryButton>
           </form>
         </SoftCard>
       </div>
 
-      {msg ? <p className="whitespace-pre-wrap text-sm text-[var(--muted)]">{msg}</p> : null}
+      {msg ? <p className="break-words whitespace-pre-wrap text-sm text-[var(--muted)]">{msg}</p> : null}
     </div>
   );
 }

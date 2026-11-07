@@ -53,11 +53,11 @@ export function ConnectWallet({ compact = false, persistToAccount = false, class
   }, [address, chainId, isConnected, switchChain]);
 
   return (
-    <div className={className}>
+    <div className={`min-w-0 max-w-full ${className ?? ''}`}>
       <ConnectButton
-        accountStatus={compact ? 'avatar' : 'full'}
-        chainStatus={compact ? 'icon' : 'full'}
-        showBalance={!compact}
+        accountStatus={compact ? 'avatar' : { smallScreen: 'address', largeScreen: 'full' }}
+        chainStatus={compact ? 'icon' : { smallScreen: 'icon', largeScreen: 'full' }}
+        showBalance={compact ? false : { smallScreen: false, largeScreen: true }}
         label="Connect wallet"
       />
     </div>

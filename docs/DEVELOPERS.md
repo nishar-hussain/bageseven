@@ -41,6 +41,8 @@ Do not add a third UI.
 ```bash
 pnpm run setup
 pnpm start:local   # same as pnpm dev
+pnpm status:local  # show the five service ports
+pnpm stop:local    # stop this checkout's services; keep data containers
 ```
 
 Requires Node 24+, pnpm 10.33.0, and a running Docker engine. Setup installs locked dependencies, creates local secrets, starts isolated Postgres (`55432`), Redis (`56379`), and Anvil (`58545`), builds the workspace, and applies migrations. It preserves an existing `.env`; use `--force` only to replace it.
@@ -59,7 +61,9 @@ Anvil uses chain ID `1874` to exercise the Whitechain mandate contract path with
 
 Sign in with **any email**. Resend sends the link from `bags@cesthq.com`. Without `RESEND_API_KEY`, the login page prints the link.
 
-`start:local` frees 3000/3001/4000–4003 if a previous stack is still bound.
+`pnpm start` also starts the local stack. Starting again shuts down the previous launcher and its process tree, waits for the ports to close, builds shared libraries, then launches the five services. macOS/Linux ownership checks leave processes from another checkout running and report the conflicting port. Ctrl+C and `pnpm stop:local` shut down owned children. Remove a stale local stack lock only after verifying its recorded process is no longer running; ordinary restarts handle stale locks automatically.
+
+Local startup uses `GATEWAY_PORT`, `DAEMON_PORT` and `POLICY_PORT` separately; a generic inherited `PORT` is ignored for the multi-service launcher. Railway's individual services still honor `PORT`. The local launcher uses the installed pnpm executable through the normal PATH, without generating a Corepack shim.
 
 ## Auth
 
@@ -165,11 +169,17 @@ BAGSEVEN_MCP_WORKER=<uuid> BAGSEVEN_MCP_PORT=4009 pnpm mcp:local
 
 ```bash
 pnpm smoke
+pnpm test
+pnpm lint
+pnpm typecheck
+pnpm build
 pnpm --filter @bagseven/console typecheck
 pnpm --filter @bagseven/daemon typecheck
 ```
 
 SDK loop against a running daemon: `pnpm sdk:demo`.
+
+`pnpm smoke` is read-only: service health and authenticated daemon track status. It creates no grants, consumes no credits, sends no mail and makes no payments. `pnpm test` builds the workspace libraries and runs the complete unit/integration test collection without starting services or building the Next.js sites. `pnpm lint` checks source directly; production builds remain a separate `pnpm build` step. `pnpm mcp:local` parses quoted `.env` values and starts MCP directly through Node; the local launcher checks its dedicated port and stops only an older instance from the same checkout.
 
 For full HTTP and MCP checks, use a disposable local development checkout/environment with memory grants, mocked World, no live signing/storage credentials, and local Anvil. Run `NOTIFY_MODE=log pnpm start:local`, then `NOTIFY_MODE=log pnpm smoke:e2e` in another terminal. The check refuses public endpoints and live credentials. It checks landing/docs, World-primary login and recovery, dashboard routes/BFF scope, SDK checks and idempotent prepaid consumption, MCP checkout confirmation, entitlement-only agents, renewal cancellation, expiry, and a bounded local token payment. Prepaid access does not require a mandate; new payments do. `NOTIFY_MODE=log` suppresses email delivery. Browser interaction/visual QA is separate from these HTTP checks. Do not overwrite an existing live `.env` to run this fixture.
 

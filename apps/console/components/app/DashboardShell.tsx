@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { identityLabel } from '../../lib/identity-label';
 import {
   AlertTriangle,
   BookOpen,
@@ -128,7 +129,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         setLive(Boolean(me?.holder));
         const label =
           me?.email?.trim() ||
-          (me?.holder?.startsWith('world:') ? `World · ${me.holder.slice(6, 14)}…` : me?.holder) ||
+          (me?.holder ? identityLabel(me.holder) : '') ||
           'Workspace';
         setWorkspaceLabel(label);
       } catch {

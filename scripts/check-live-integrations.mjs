@@ -16,9 +16,10 @@ function check(name, ok, detail) { console.log(`${ok ? 'PASS' : 'NEEDS_SETUP'} $
 if (env.NODE_ENV === 'production') {
   const missing = Object.keys(env).filter(key => env[key]?.includes('REPLACE_'));
   check('Production values supplied', missing.length === 0, missing.length ? `Replace: ${missing.join(', ')}` : 'no placeholders');
-  for (const key of ['AUTH_SECRET', 'DAEMON_AUTH_TOKEN', 'RESEND_API_KEY', 'ARKIV_ACCESS_KEY', 'ARKIV_PRIVATE_KEY']) {
+  for (const key of ['AUTH_SECRET', 'DAEMON_AUTH_TOKEN', 'RESEND_API_KEY', 'ARKIV_ACCESS_KEY', 'PROVIDER_GAS_ENCRYPTION_KEY']) {
     check(key, Boolean(env[key]?.trim() && !env[key].includes('REPLACE_')), 'required server credential (value hidden)');
   }
+  check('Provider-funded gas', env.PROVIDER_FUNDED_GAS !== 'false' && /^[a-f0-9]{64}$/i.test(env.PROVIDER_GAS_ENCRYPTION_KEY ?? ''), 'provider mode requires a shared 32-byte encryption key; each provider authorizes and funds its own signer');
   for (const key of ['DAEMON_URL', 'GATEWAY_URL', 'BAGSEVEN_MCP_PUBLIC_URL', 'NEXT_PUBLIC_CONSOLE_URL', 'NEXT_PUBLIC_LANDING_URL']) {
     let hosted = false;
     try { const url = new URL(env[key]); hosted = url.protocol === 'https:' && !url.username && !url.password && !/localhost|127\.0\.0\.1|REPLACE_/i.test(url.hostname); } catch { /* Report only the field name. */ }
