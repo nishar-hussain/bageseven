@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
   AlertTriangle,
+  BookOpen,
   Coins,
   CreditCard,
   Fingerprint,
@@ -41,6 +42,7 @@ const accessNav: NavItem[] = [
   { href: '/app/mandate', label: 'Agent spending', icon: Shield },
   { href: '/app/mcp', label: 'Connect agent', icon: Terminal },
   { href: '/app/sdk', label: 'SDK', icon: Puzzle },
+  { href: `${process.env.NEXT_PUBLIC_LANDING_URL ?? 'http://localhost:3001'}/docs/introduction`, label: 'Documentation', icon: BookOpen },
 ];
 
 const settingsNav: NavItem[] = [
