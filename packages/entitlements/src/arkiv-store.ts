@@ -14,6 +14,7 @@ import type { Hex } from 'viem';
 import { BagsevenGrants } from './schema.js';
 import type { Grant, GrantStore, MintGrantInput } from './types.js';
 import { MintGrantInputSchema } from './types.js';
+import { providerGrantSigner } from './provider-signers.js';
 
 interface HoldRecord {
   holdId: string;
@@ -23,7 +24,8 @@ interface HoldRecord {
 
 export interface ArkivStoreConfig {
   accessKey: string;
-  privateKey: Hex;
+  privateKey?: Hex;
+  providerFunded?: boolean;
   rpcUrl?: string;
 }
 
@@ -87,6 +89,7 @@ export class ArkivGrantStore implements GrantStore {
   private readonly rpcUrl: string;
   private readonly cache = new Map<string, Grant>();
   private readonly entityKeys = new Map<string, Hex>();
+  private readonly entityOwners = new Map<string, string>();
   private readonly holds = new Map<string, HoldRecord>();
   private readonly consumedKeys = new Set<string>();
   private readonly consumeSnapshots = new Map<string, Grant>();
@@ -96,7 +99,7 @@ export class ArkivGrantStore implements GrantStore {
 
   constructor(rpcUrlOrConfig?: string | ArkivStoreConfig, maybeConfig?: ArkivStoreConfig) {
     const config = typeof rpcUrlOrConfig === 'object' ? rpcUrlOrConfig : maybeConfig;
-    if (!config?.accessKey || !config.privateKey || !/^0x[0-9a-fA-F]{64}$/.test(config.privateKey)) {
+    if (!config?.accessKey || (!config.providerFunded && (!config.privateKey || !/^0x[0-9a-fA-F]{64}$/.test(config.privateKey)))) {
       throw new Error('ARKIV_NOT_CONFIGURED: set ARKIV_ACCESS_KEY and ARKIV_PRIVATE_KEY; live storage never falls back to memory');
     }
     this.config = config;
@@ -105,9 +108,11 @@ export class ArkivGrantStore implements GrantStore {
   }
 
   static fromEnv(env: NodeJS.ProcessEnv = process.env): ArkivGrantStore {
+    if (env.NODE_ENV === 'production' && env.PROVIDER_FUNDED_GAS === 'false') throw new Error('PROVIDER_GAS_REQUIRED: platform-funded storage is forbidden in production');
     return new ArkivGrantStore({
       accessKey: env.ARKIV_ACCESS_KEY ?? '',
       privateKey: (env.ARKIV_PRIVATE_KEY ?? env.PRIVATE_KEY ?? '') as Hex,
+      providerFunded: env.PROVIDER_FUNDED_GAS !== 'false',
       rpcUrl: env.ARKIV_RPC_URL,
     });
   }
@@ -116,12 +121,10 @@ export class ArkivGrantStore implements GrantStore {
     if (!this.live || !this.config) {
       throw new Error('ARKIV_NOT_CONFIGURED: set ARKIV_ACCESS_KEY and ARKIV_PRIVATE_KEY');
     }
-    if (this.wallet && this.public) return;
+    if (this.public) return;
     const chain = rabdi({ accessKey: this.config.accessKey });
-    const account = privateKeyToAccount(this.config.privateKey);
-    this.wallet = createWalletClient({
-      account,
-      chain,
+    if (!this.config.providerFunded) this.wallet = createWalletClient({
+      account: privateKeyToAccount(this.config.privateKey!), chain,
       transport: http(arkivTransportUrl(this.rpcUrl, this.config.accessKey), { timeout: 15_000, retryCount: 1 }),
     });
     this.public = createPublicClient({
@@ -130,7 +133,25 @@ export class ArkivGrantStore implements GrantStore {
     });
   }
 
+  private async walletFor(provider?: string, entityKey?: Hex) {
+    this.ensureClients();
+    if (!this.config!.providerFunded) return this.wallet!;
+    const account = await providerGrantSigner(provider);
+    if (entityKey) {
+      let owner = this.entityOwners.get(entityKey);
+      if (!owner) {
+        const entity = await this.public!.getEntity(entityKey, BagsevenGrants);
+        owner = entity.$owner;
+        if (owner) this.entityOwners.set(entityKey, owner);
+      }
+      if (!owner || owner.toLowerCase() !== account.address.toLowerCase()) throw new Error('PROVIDER_GAS_ENTITY_OWNER_MISMATCH: this legacy grant must be migrated or reissued by its provider; platform signing fallback is disabled');
+    }
+    return createWalletClient({ account, chain: rabdi({ accessKey: this.config!.accessKey }),
+      transport: http(arkivTransportUrl(this.rpcUrl, this.config!.accessKey), { timeout: 15_000, retryCount: 1 }) });
+  }
+
   private rowToGrant(row: Record<string, unknown>): Grant {
+    if (typeof row.$key === 'string' && typeof row.$owner === 'string') this.entityOwners.set(row.$key, row.$owner);
     const id = bareStr(row.grant_id as { value: string });
     const grant: Grant = {
       id,
@@ -189,7 +210,8 @@ export class ArkivGrantStore implements GrantStore {
     const paidThrough = new Date(Date.now() + input.ttl_seconds * 1000).toISOString();
     const settlement = input.settlement_network;
 
-    const { entityKey } = await this.wallet!.createEntity(
+    const wallet = await this.walletFor(input.merchant);
+    const { entityKey } = await wallet.createEntity(
       BagsevenGrants,
       {
         grant_id: id,
@@ -233,6 +255,7 @@ export class ArkivGrantStore implements GrantStore {
       arkiv_entity_key: entityKey,
     };
     this.entityKeys.set(id, entityKey);
+    if (wallet.account) this.entityOwners.set(entityKey, wallet.account.address);
     this.cache.set(id, grant);
     return grant;
   }
@@ -309,7 +332,8 @@ export class ArkivGrantStore implements GrantStore {
     const entityKey = await this.resolveEntityKey(id);
     const nextRemaining = sub(grant.remaining, amount);
     const updated = nowIso();
-    await this.wallet!.patchEntity(BagsevenGrants, entityKey, {
+    const wallet = await this.walletFor(grant.merchant, entityKey);
+    await wallet.patchEntity(BagsevenGrants, entityKey, {
       set: { remaining: dec(nextRemaining), updated_at: updated },
     });
 
@@ -327,7 +351,8 @@ export class ArkivGrantStore implements GrantStore {
     this.ensureClients();
     const entityKey = await this.resolveEntityKey(id);
     const updated = nowIso();
-    await this.wallet!.patchEntity(BagsevenGrants, entityKey, {
+    const wallet = await this.walletFor(grant.merchant, entityKey);
+    await wallet.patchEntity(BagsevenGrants, entityKey, {
       set: { renewal_enabled: flag(false), updated_at: updated },
     });
     const next: Grant = { ...grant, renewal_enabled: false, updated_at: updated };
@@ -347,7 +372,8 @@ export class ArkivGrantStore implements GrantStore {
     const entityKey = await this.resolveEntityKey(id);
     const nextRemaining = sub(grant.remaining, amount);
     const updated = nowIso();
-    await this.wallet!.patchEntity(BagsevenGrants, entityKey, {
+    const wallet = await this.walletFor(grant.merchant, entityKey);
+    await wallet.patchEntity(BagsevenGrants, entityKey, {
       set: { remaining: dec(nextRemaining), updated_at: updated },
     });
     const next: Grant = { ...grant, remaining: nextRemaining, updated_at: updated };
@@ -376,7 +402,8 @@ export class ArkivGrantStore implements GrantStore {
     const entityKey = await this.resolveEntityKey(hold.grantId);
     const nextRemaining = add(grant.remaining, hold.amount);
     const updated = nowIso();
-    await this.wallet!.patchEntity(BagsevenGrants, entityKey, {
+    const wallet = await this.walletFor(grant.merchant, entityKey);
+    await wallet.patchEntity(BagsevenGrants, entityKey, {
       set: { remaining: dec(nextRemaining), updated_at: updated },
     });
     const next: Grant = { ...grant, remaining: nextRemaining, updated_at: updated };

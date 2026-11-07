@@ -66,10 +66,15 @@ const connectors = connectorsForWallets(
 
 export const wagmiConfig = createConfig({
   connectors,
-  chains: [whitechainTestnet, whitechainMainnet],
+  chains: [whitechainTestnet, whitechainMainnet, {
+    id: 7794095, name: 'Arkiv Rabdi', nativeCurrency: { name: 'Golem', symbol: 'tGLM', decimals: 18 },
+    rpcUrls: { default: { http: ['https://rpc.rabdi.db-chain.testnet.arkiv.network'] } },
+    blockExplorers: { default: { name: 'Arkiv Explorer', url: 'https://explorer.rabdi.db-chain.testnet.arkiv.network' } },
+  }],
   transports: {
     [whitechainTestnet.id]: http(whitechainTestnet.rpcUrls.default.http[0]),
     [whitechainMainnet.id]: http(whitechainMainnet.rpcUrls.default.http[0]),
+    7794095: http('https://rpc.rabdi.db-chain.testnet.arkiv.network'),
   },
   ssr: true,
 });

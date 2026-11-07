@@ -15,7 +15,9 @@ import { x402PayerFromEnv, type X402Payer } from './x402-payer.js';
 import { beginWorkerRequest } from './worker-request-ledger.js';
 import { registerWorkerManagement } from './worker-management.js';
 import { registerGrantRoutes } from './grants.js';
-import { WHITECHAIN_CHAIN_ID, whitechainConfig } from '@bagseven/onchain';
+import { WHITECHAIN_CHAIN_ID, whitechainConfig, ProviderGasManager, providerGasEnabled } from '@bagseven/onchain';
+import { configureProviderGrantSigners } from '@bagseven/entitlements';
+import { registerProviderGasRoutes } from './provider-gas.js';
 import { isPublicEntitlementPath, registerPublicEntitlementRoutes } from './public-entitlements.js';
 import { registerBillingRoutes } from './billing.js';
 
@@ -69,7 +71,7 @@ interface WorkerRecord {
 
 interface ResolvedWorker {
   agent: WorkerRecord;
-  mandate: { id: string; owner_address: string; operator_address: string; contract_address: string; status: string; per_purchase_cap: string };
+  mandate: { id: string; provider_id?: string; owner_address: string; operator_address: string; contract_address: string; status: string; per_purchase_cap: string };
   remaining: { vault_available: string; remaining_window: string; remaining_lifetime: string; can_draw: string };
 }
 
@@ -160,7 +162,7 @@ async function verifyChallenge(config: NodeJS.ProcessEnv, url: URL, challenge: z
   if (signer.toLowerCase() !== providerAddress) throw new ApiError(502, 'PAYMENT_CHALLENGE_SIGNATURE_INVALID', 'provider payment challenge signature is invalid');
 }
 
-async function executeSpend(config: NodeJS.ProcessEnv, resolved: ResolvedWorker, amount: string, recipient: string, reason?: string, executionRecipient = recipient): Promise<SpendResult> {
+async function executeSpend(config: NodeJS.ProcessEnv, resolved: ResolvedWorker, amount: string, recipient: string, reason?: string, executionRecipient = recipient, providerGas?: ProviderGasManager): Promise<SpendResult> {
   const signer = accountFromEnv(config, resolved.agent.operator_address);
   if (signer.address.toLowerCase() !== resolved.agent.operator_address.toLowerCase()) {
     throw new ApiError(403, 'DAEMON_OPERATOR_MISMATCH', 'daemon signer is not the worker operator');
@@ -185,10 +187,13 @@ async function executeSpend(config: NodeJS.ProcessEnv, resolved: ResolvedWorker,
     reason,
     request_id: randomUUID(),
   }) as SpendResult & { authorization?: { contract_address: string; worker_id: `0x${string}`; amount: string; recipient: `0x${string}` } };
-  if (result.decision !== 'allow' || !config.DAEMON_EXECUTOR_KEY || !result.reservation_id || !result.authorization) return result;
-  const executor = new MandateClient(config.DAEMON_EXECUTOR_KEY as `0x${string}`, { rpcUrl: config.RPC_URL ?? 'http://localhost:8545', chainId });
+  if (result.decision !== 'allow' || !result.reservation_id || !result.authorization) return result;
+  const executorKey = providerGasEnabled(config)
+    ? await providerGas!.account(resolved.mandate.provider_id ?? '', 'whitechain')
+    : config.DAEMON_EXECUTOR_KEY as `0x${string}`;
+  const executor = new MandateClient(executorKey, { rpcUrl: config.RPC_URL ?? 'http://localhost:8545', chainId });
   try {
-    if (executor.address.toLowerCase() !== (config.DAEMON_EXECUTOR_ADDRESS ?? executor.address).toLowerCase()) throw new ApiError(403, 'DAEMON_EXECUTOR_MISMATCH', 'daemon executor does not match the configured contract enforcer');
+    if (!providerGasEnabled(config) && executor.address.toLowerCase() !== (config.DAEMON_EXECUTOR_ADDRESS ?? executor.address).toLowerCase()) throw new ApiError(403, 'DAEMON_EXECUTOR_MISMATCH', 'daemon executor does not match the configured contract enforcer');
     const txHash = await executor.execute(result.authorization.contract_address as `0x${string}`, parseUnits(amount, 6), executionRecipient as `0x${string}`, result.authorization.worker_id);
     await daemonApi(config, 'POST', `/v1/reservations/${result.reservation_id}/settle`, { tx_hash: txHash, recipient });
     return { ...result, tx_hash: txHash };
@@ -199,6 +204,8 @@ async function executeSpend(config: NodeJS.ProcessEnv, resolved: ResolvedWorker,
 }
 
 export function buildRoutes(app: FastifyInstance, { config, redis, db }: ServiceDeps): void {
+  const providerGas = new ProviderGasManager(db, config);
+  configureProviderGrantSigners(provider => providerGas.account(provider, 'arkiv'));
   app.addHook('preHandler', async (req, reply) => {
     if (req.routeOptions.url === '/healthz' && (req.method === 'GET' || req.method === 'HEAD')) return;
     if (isPublicEntitlementPath(req.url)) return;
@@ -291,6 +298,7 @@ export function buildRoutes(app: FastifyInstance, { config, redis, db }: Service
         });
         let payer: X402Payer;
         try {
+          if (providerGasEnabled(config)) throw new ApiError(409, 'PROVIDER_X402_NOT_CONFIGURED', 'Provider-funded x402 requires its own separate payer authorization; platform payer fallback is disabled');
           payer = x402PayerFromEnv(config, resolved.agent.operator_address, config.DAEMON_EXECUTOR_ADDRESS ?? '');
         } catch (error) {
           throw new ApiError(503, 'X402_PAYER_UNCONFIGURED', (error as Error).message);
@@ -327,7 +335,7 @@ export function buildRoutes(app: FastifyInstance, { config, redis, db }: Service
     if (!amount || !recipient) throw new ApiError(400, 'PAYMENT_INPUT_REQUIRED', 'amount and recipient are required');
     const payerAddress = x402Payment?.payer.account.address;
     await operation.checkpoint();
-    const result = await executeSpend(config, resolved, amount, recipient, body.reason, payerAddress ?? recipient);
+    const result = await executeSpend(config, resolved, amount, recipient, body.reason, payerAddress ?? recipient, providerGas);
     if (body.url && result.decision === 'allow') {
       const providerUrl = validateProviderUrl(config, body.url);
       if (x402Payment && x402Requirement) {
@@ -428,6 +436,7 @@ export function buildRoutes(app: FastifyInstance, { config, redis, db }: Service
     },
   };
   registerWorkerManagement(app, { config, resolve: worker => resolveWorker(config, worker), policy: (method, path, body) => daemonApi(config, method, path, body) });
+  registerProviderGasRoutes(app, db, config);
   registerGrantRoutes(app, grantDeps);
   registerPublicEntitlementRoutes(app, grantDeps);
   registerBillingRoutes(app, { redis, db, validateWorker: async worker => {

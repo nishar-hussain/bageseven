@@ -16,6 +16,7 @@ export const mandates = pgTable(
   'mandates',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    providerId: text('provider_id'),
     ownerAddress: text('owner_address').notNull(),
     operatorAddress: text('operator_address').notNull(),
     contractAddress: text('contract_address'),
@@ -39,6 +40,23 @@ export const mandates = pgTable(
     index('idx_mandates_status').on(t.status),
   ],
 );
+
+/** Encrypted, provider-funded signing accounts. Limits reserve worst-case gas. */
+export const providerGasAccounts = pgTable('provider_gas_accounts', {
+  providerId: text('provider_id').primaryKey(),
+  ownerAddress: text('owner_address').notNull(),
+  address: text('address').notNull(),
+  encryptedKey: text('encrypted_key').notNull(),
+  status: text('status').notNull().default('pending'),
+  challenge: jsonb('challenge').notNull(),
+  authorization: jsonb('authorization'),
+  authorizationSignature: text('authorization_signature'),
+  recoveryChallenge: jsonb('recovery_challenge'),
+  expiresAt: timestamp('expires_at', { withTimezone: true }),
+  whitechainReserved: numeric('whitechain_reserved', { precision: 78, scale: 0 }).notNull().default('0'),
+  arkivReserved: numeric('arkiv_reserved', { precision: 78, scale: 0 }).notNull().default('0'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
 
 export const providers = pgTable(
   'providers',

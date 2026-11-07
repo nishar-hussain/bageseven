@@ -4,7 +4,8 @@ import { ApiError } from '@bagseven/server';
 import { getGrantStore } from '@bagseven/entitlements';
 import type { Redis } from 'ioredis';
 import type { Database } from '@bagseven/db';
-import { whitechainConfig } from '@bagseven/onchain';
+import { ProviderGasManager, providerGasEnabled, verifyProviderScope, whitechainConfig } from '@bagseven/onchain';
+import { assertProviderReady } from './provider-gas.js';
 import { verifyPaymentAuthorization, verifyWhitechainPayment } from './whitechain-payment.js';
 import { whitechainDemoAllowed } from './whitechain-settle.js';
 import {
@@ -34,6 +35,7 @@ function providerScope(req: { headers: { authorization?: string; [key: string]: 
   if (typeof provider !== 'string' || !provider.trim() || req.headers.authorization !== `Bearer ${process.env.DAEMON_AUTH_TOKEN}`) {
     throw new ApiError(403, 'FORBIDDEN', 'Provider scope requires console authentication');
   }
+  if (providerGasEnabled(process.env) && !verifyProviderScope(req.headers['x-bagseven-provider-scope'], provider, process.env)) throw new ApiError(403, 'PROVIDER_SCOPE_REQUIRED', 'Provider-funded plans require a signed provider session scope');
   return provider;
 }
 
@@ -50,6 +52,12 @@ export function registerBillingRoutes(
 ): void {
   const store = getBillingStore(deps.db);
   const grants = getGrantStore(process.env);
+  const gas = deps.db ? new ProviderGasManager(deps.db, process.env) : undefined;
+  async function ready(provider: string) {
+    if (!providerGasEnabled(process.env) || !deps.db) return;
+    if (provider === 'legacy') throw new ApiError(409, 'PROVIDER_GAS_REQUIRED', 'Legacy plans need a provider binding; create a provider plan after configuring its gas account');
+    await assertProviderReady(gas!, provider, process.env);
+  }
   const confirmations = new Map<string, Promise<unknown>>();
 
   app.post('/v1/plans', async (req) => {
@@ -96,6 +104,7 @@ export function registerBillingRoutes(
       const plan = await store.getPlan(body.plan_id);
       const provider = providerScope(req);
       if (!planInProviderScope(plan, provider)) throw new ApiError(404, 'PLAN_NOT_FOUND', 'plan not found');
+      await ready(plan!.provider_id);
       const worker = (body.worker_id ?? process.env.BAGSEVEN_MCP_WORKER?.trim()) || undefined;
       if (worker && deps.validateWorker) await deps.validateWorker(worker);
       const session = await store.createCheckout({ ...body, worker_id: worker });
@@ -137,6 +146,11 @@ export function registerBillingRoutes(
     const { id } = req.params as { id: string };
     const session = await store.getCheckout(id);
     if (!session) throw new ApiError(404, 'CHECKOUT_NOT_FOUND', 'checkout session not found');
+    if (session.status === 'PENDING') {
+      const plan = session.plan ?? await store.getPlan(session.plan_id);
+      if (!plan) throw new ApiError(404, 'PLAN_NOT_FOUND', 'plan missing');
+      await ready(plan.provider_id);
+    }
     return {
       session: {
         id: session.id,
@@ -176,6 +190,7 @@ export function registerBillingRoutes(
     if (session.status !== 'PENDING') throw new ApiError(409, `CHECKOUT_${session.status}`, `session is ${session.status}`);
     const plan = session.plan ?? await store.getPlan(session.plan_id);
     if (!plan) throw new ApiError(404, 'PLAN_NOT_FOUND', 'plan missing');
+    await ready(plan.provider_id);
     if (session.chain_id !== whitechainConfig().chainId) throw new ApiError(409, 'CHECKOUT_NETWORK_CHANGED', 'Create a new checkout for the configured network');
 
     const pending = confirmations.get(id);
@@ -208,6 +223,7 @@ export function registerBillingRoutes(
       const live = await grants.findLive({ holder: session.holder, feature: plan.feature });
       const prior = live[0];
       const grant = await grants.mint({
+        merchant: plan.provider_id,
         feature: plan.feature,
         holder: session.holder,
         remaining: plan.credits,

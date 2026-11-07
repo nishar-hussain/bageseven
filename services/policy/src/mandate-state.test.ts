@@ -44,7 +44,7 @@ async function app(config: NodeJS.ProcessEnv = {}) {
     return reply.code(result.status).send(result.body);
   });
   buildPolicyRoutes(server, {
-    config: { DAEMON_EXECUTOR_KEY: 'configured', WHITECHAIN_USDT: owner, ...config }, redis: {},
+    config: { PROVIDER_FUNDED_GAS: 'false', DAEMON_EXECUTOR_KEY: 'configured', WHITECHAIN_USDT: owner, ...config }, redis: {},
     db: { transaction: async (run: (tx: unknown) => Promise<void>) => run({ insert: () => ({ values: () => ({ returning: async () => [agent] }) }) }), query: {
       mandates: { findMany: async () => [record, { ...record, id: 'healthy', contractAddress: deployed }], findFirst: async () => record },
       agents: { findMany: async () => [agent], findFirst: async () => agent },

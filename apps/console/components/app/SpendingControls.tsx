@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useAccount } from 'wagmi';
 import { useConnectModal } from '@rainbow-me/rainbowkit';
 import { mandateApi, type MandateOverview, type SpendingConfig } from '../../lib/mandate-client';
@@ -118,6 +119,7 @@ export function SpendingControls({ selectedId, overview, onChange, onCreated }: 
   return <section className="space-y-4 rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
     <h2 className="text-base font-semibold">Manage agent spending</h2>
     <p className="text-sm text-[var(--muted)]">These permissions apply to new USDT payments. Using prepaid service credits does not require a funded permission. Your owner wallet approves each change.</p>
+    <p className="text-sm text-[var(--muted)]">Provider gas must be funded and authorized before creating a permission. <Link href="/app/settings" className="text-[var(--blue)] underline">Configure provider-funded gas</Link>.</p>
     <div className="flex flex-wrap items-center gap-3 text-sm">
       <span className="break-all text-[var(--muted)]">{isConnected && address ? `Connected: ${address}` : 'Connect a wallet to manage your spending permissions.'}</span>
       <button type="button" disabled={busy || !config} className={buttonClass} onClick={() => {

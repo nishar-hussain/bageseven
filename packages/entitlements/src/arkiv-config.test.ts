@@ -10,6 +10,9 @@ describe('live Arkiv configuration', () => {
   it('refuses missing credentials instead of creating placeholder grants', () => {
     expect(() => ArkivGrantStore.fromEnv({ ENTITLEMENT_STORE: 'arkiv' })).toThrow('ARKIV_NOT_CONFIGURED');
     expect(() => new ArkivGrantStore('https://rpc.example.com')).toThrow('ARKIV_NOT_CONFIGURED');
-    expect(() => ArkivGrantStore.fromEnv({ ARKIV_ACCESS_KEY: 'configured', ARKIV_PRIVATE_KEY: '0xinvalid' })).toThrow('ARKIV_NOT_CONFIGURED');
+    expect(() => ArkivGrantStore.fromEnv({ ARKIV_ACCESS_KEY: 'configured', ARKIV_PRIVATE_KEY: '0xinvalid', PROVIDER_FUNDED_GAS: 'false' })).toThrow('ARKIV_NOT_CONFIGURED');
+  });
+  it('does not require or use a platform private key for provider-funded live storage', () => {
+    expect(() => ArkivGrantStore.fromEnv({ ARKIV_ACCESS_KEY: 'configured', ARKIV_PRIVATE_KEY: 'unused-invalid-platform-key' })).not.toThrow();
   });
 });

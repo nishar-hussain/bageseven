@@ -18,6 +18,8 @@ import { BagMandateAbi } from './abi.js';
 import { BagMandateBytecode } from './bytecode.js';
 
 export { BagMandateAbi } from './abi.js';
+export { ProviderGasManager, providerGasEnabled, gasAuthorizationMessage, verifyProviderScope, ARKIV_ENGINE } from './provider-gas.js';
+export type { GasAuthorization } from './provider-gas.js';
 
 /** Whitechain Testnet (Sepolia) — product money rail. */
 export const WHITECHAIN_CHAIN_ID = 1874;
@@ -125,7 +127,7 @@ export class MandateClient {
   readonly address: Address;
   private chainVerified?: Promise<void>;
 
-  constructor(privateKey: Hex, opts: MandateClientOpts) {
+  constructor(privateKey: Hex | ReturnType<typeof privateKeyToAccount>, opts: MandateClientOpts) {
     const chain = opts.chainId === 31337 ? localChain : chainForId(opts.chainId ?? WHITECHAIN_CHAIN_ID);
     const transport = opts.rpcFallbackUrl && opts.rpcFallbackUrl !== opts.rpcUrl
       ? fallback([
@@ -134,7 +136,7 @@ export class MandateClient {
       ])
       : http(opts.rpcUrl, { retryCount: 2, retryDelay: 500 });
     this.publicClient = createPublicClient({ chain, transport });
-    const account = privateKeyToAccount(privateKey);
+    const account = typeof privateKey === 'string' ? privateKeyToAccount(privateKey) : privateKey;
     this.address = account.address;
     this.wallet = createWalletClient({ account, chain, transport });
   }

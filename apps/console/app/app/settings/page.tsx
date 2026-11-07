@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { StatusBadges } from '../../../components/app/StatusBadges';
 import { WalletStatusCard } from '../../../components/wallet/WalletStatus';
+import { ProviderGas } from '../../../components/app/ProviderGas';
 import { entitlementsApi, type MumbaiStatus } from '../../../lib/entitlements-client';
 
 type Check = { id: string; ok: boolean; title: string; need: string; action?: string };
@@ -34,14 +35,16 @@ export default function SettingsPage() {
         },
         {
           id: 'whitechain',
-          ok: Boolean(status.tracks.whitechain.pay_to && status.tracks.whitechain.usdt),
+          ok: Boolean(status.tracks.whitechain.usdt && (status.dual_gate.provider_funded_gas || status.tracks.whitechain.pay_to)),
           title: 'Whitechain USDT (money clock)',
-          need: !status.tracks.whitechain.pay_to
+          need: status.dual_gate.provider_funded_gas
+            ? 'Provider checkout pays each plan’s merchant wallet. Fund and authorize your dedicated gas account below; platform keys are not fee payers.'
+            : !status.tracks.whitechain.pay_to
             ? 'Set WHITECHAIN_PAY_TO (payout wallet) or WHITECHAIN_PRIVATE_KEY — Mint / Buy credits need a recipient. Restart daemon after changing .env.'
             : status.tracks.whitechain.demo_settle
               ? `Recipient ${status.tracks.whitechain.pay_to.slice(0, 10)}… · demo settle on. Set WHITECHAIN_DEMO_SETTLE=false for live verify.`
               : `Live · recipient ${status.tracks.whitechain.pay_to.slice(0, 10)}… · USDT configured.`,
-          action: '/app/mint',
+          action: '/app/plans',
         },
         {
           id: 'arkiv',
@@ -49,7 +52,7 @@ export default function SettingsPage() {
           title: 'Arkiv living grants',
           need: status.tracks.arkiv.live
             ? 'Live store — grants are queryable entities.'
-            : 'Set ARKIV_ACCESS_KEY + ARKIV_PRIVATE_KEY and ENTITLEMENT_STORE=arkiv.',
+            : status.dual_gate.provider_funded_gas ? 'Set ARKIV_ACCESS_KEY and ENTITLEMENT_STORE=arkiv, then authorize and fund the provider gas account.' : 'Set ARKIV_ACCESS_KEY + ARKIV_PRIVATE_KEY and ENTITLEMENT_STORE=arkiv.',
           action: '/app/grants',
         },
       ]
@@ -70,6 +73,7 @@ export default function SettingsPage() {
       {error && <p className="text-sm text-[var(--deny)]">{error}</p>}
 
       <WalletStatusCard title="Browser wallet" persistToAccount />
+      <ProviderGas />
 
       <section className="rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
         <h2 className="font-semibold">Go-live checklist</h2>

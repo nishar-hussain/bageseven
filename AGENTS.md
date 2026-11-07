@@ -30,6 +30,10 @@ Do **not** add another web app, revive `bag-dashboard`, or put an inspector on `
 
 New payments through `bagseven_fetch` still require an active agent, mandate capacity, and a living grant (`BAGSEVEN_REQUIRE_GRANT=true`). `entitlements_only` MCP connections can use prepaid credits without a deployed mandate. Dashboard `/app/mandate` manages agent spending permissions: owner-signed create/delegate, owner-wallet funding/withdrawal/revoke. Never expose private keys or auto-send wallet transaction drafts.
 
+## Provider-funded gas
+
+Provider-funded mode is the default. Never spend a platform private-key wallet for provider operations or silently fall back to one. Provider accounts require signed, expiring authorization and native funding on Whitechain (WBT) and Arkiv (tGLM). Keys are AES-GCM encrypted with PROVIDER_GAS_ENCRYPTION_KEY; console/daemon/policy share this deployment secret. Limits are server-enforced EOA restrictions; do not describe them as on-chain smart-account limits. Fee budgets atomically reserve worst-case fees before signing. Legacy platform-owned grants/mandates need explicit migration/reissue; no hidden platform-fee subsidy. x402 without provider payer integration fails closed. See docs/PRODUCT.md.
+
 ## Auth + email
 
 - Dashboard: **World-primary** login (`/api/auth/world`); session in `apps/console/lib/auth.ts` carries `world_human_id` + optional verified email. Email OTP verify-later via `/api/auth/email/*`. Magic link is recovery only.

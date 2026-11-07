@@ -1,5 +1,6 @@
+import { providerScopeHeaders } from '../../../../lib/provider-gas-scope';
 import { NextRequest, NextResponse } from 'next/server';
-import { getSession, sessionIsValid } from '../../../../lib/auth';
+import { getSession, sessionIsValid, sessionHolder } from '../../../../lib/auth';
 import { verifiedSpendingOwner } from '../../../../lib/spending-wallet';
 import {
   assertOwnerAllowed,
@@ -98,6 +99,8 @@ async function proxy(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
         ...(req.headers.get('idempotency-key') ? { 'idempotency-key': req.headers.get('idempotency-key')! } : {}),
         ...gatewayAuthHeaders(),
         ...sessionActorHeaders(session),
+        ...providerScopeHeaders(session.world_human_id ? `world:${session.world_human_id}` : sessionHolder(session)),
+        'x-bagseven-provider': session.world_human_id ? `world:${session.world_human_id}` : sessionHolder(session),
       },
       body,
       cache: 'no-store',

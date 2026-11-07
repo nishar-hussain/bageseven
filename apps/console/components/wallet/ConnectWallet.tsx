@@ -23,6 +23,7 @@ export function ConnectWallet({ compact = false, persistToAccount = false, class
   const chainId = useChainId();
   const { switchChain } = useSwitchChain();
   const last = useRef<string | null>(null);
+  const initialChain = useRef<string | null>(null);
 
   useEffect(() => {
     if (!isConnected || !address) return;
@@ -40,14 +41,16 @@ export function ConnectWallet({ compact = false, persistToAccount = false, class
   }, [address, isConnected, onConnected, persistToAccount]);
 
   useEffect(() => {
-    if (!isConnected) return;
+    if (!isConnected || !address) { initialChain.current = null; return; }
+    if (initialChain.current === address) return;
+    initialChain.current = address;
     if (chainId === whitechainTestnet.id) return;
     try {
       switchChain?.({ chainId: whitechainTestnet.id });
     } catch {
       /* user may reject */
     }
-  }, [chainId, isConnected, switchChain]);
+  }, [address, chainId, isConnected, switchChain]);
 
   return (
     <div className={className}>

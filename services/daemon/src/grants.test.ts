@@ -6,6 +6,7 @@ import { registerGrantRoutes, type GrantRouteDeps } from './grants.js';
 import { registerPublicEntitlementRoutes } from './public-entitlements.js';
 
 beforeEach(() => {
+  vi.stubEnv('PROVIDER_FUNDED_GAS', 'false');
   vi.stubEnv('ENTITLEMENT_STORE', 'memory');
   vi.stubEnv('ARKIV_ACCESS_KEY', '');
   vi.stubEnv('RESEND_API_KEY', '');

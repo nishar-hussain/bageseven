@@ -41,6 +41,7 @@ export type MumbaiStatus = {
     arkiv: { live: boolean; store: string };
   };
   dual_gate: {
+    provider_funded_gas?: boolean;
     require_grant: boolean;
     feature: string;
     features?: Array<{ id: string; label: string; actions: string[] }>;

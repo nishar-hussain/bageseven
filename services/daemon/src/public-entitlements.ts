@@ -236,6 +236,7 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
     await claimSettlement(settlement, deps);
     const grant = await store.mint({
       feature: body.feature,
+      merchant: prior.merchant,
       holder,
       remaining: body.remaining,
       ttl_seconds: body.ttl_seconds,

@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { createPublicClient, createWalletClient, http, isAddress, type Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { whitechainConfig } from '@bagseven/onchain';
+import { providerGasEnabled, whitechainConfig } from '@bagseven/onchain';
 import { usdtAbi, usdtUnits, verifyPaymentAuthorization, verifyWhitechainPayment } from './whitechain-payment.js';
 
 export type WhitechainSettleInput = {
@@ -42,6 +42,7 @@ export async function settleWhitechainUsdt(input: WhitechainSettleInput, env: No
     payment_tx: hash, settlement_network: 'whitechain', network, explorer_url: whitechainExplorerUrl(hash, network), mode,
   });
   if (whitechainDemoAllowed(env)) return result(input.payment_tx || `0x${randomBytes(32).toString('hex')}`, 'demo');
+  if (providerGasEnabled(env)) throw new Error('PROVIDER_CHECKOUT_REQUIRED: use a provider plan checkout; platform-funded or global-recipient entitlement purchases are disabled');
 
   const payTo = resolveWhitechainPayTo(env);
   if (!payTo) throw new Error('WHITECHAIN_UNCONFIGURED: set WHITECHAIN_PAY_TO (or WHITECHAIN_PRIVATE_KEY) as the payment recipient');
@@ -51,6 +52,7 @@ export async function settleWhitechainUsdt(input: WhitechainSettleInput, env: No
     return result(input.payment_tx, 'provided');
   }
   // An operator settlement must opt into a dedicated key; never borrow the mandate owner key.
+  if (providerGasEnabled(env)) throw new Error('PROVIDER_PAYMENT_REQUIRED: use a wallet-approved checkout; platform-funded USDT purchases are disabled');
   const rawKey = env.WHITECHAIN_PRIVATE_KEY?.trim();
   if (!rawKey) throw new Error('WHITECHAIN_UNCONFIGURED: pay through checkout or configure WHITECHAIN_PRIVATE_KEY for operator-funded USDT payments');
   const config = whitechainConfig(env);

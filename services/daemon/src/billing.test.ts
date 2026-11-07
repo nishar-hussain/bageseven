@@ -6,6 +6,7 @@ import { registerBillingRoutes } from './billing.js';
 import { resetBillingStoreForTests } from './billing-store.js';
 
 beforeEach(() => {
+  vi.stubEnv('PROVIDER_FUNDED_GAS', 'false');
   vi.stubEnv('ENTITLEMENT_STORE', 'memory');
   vi.stubEnv('ARKIV_ACCESS_KEY', '');
   vi.stubEnv('WHITECHAIN_DEMO_SETTLE', 'true');

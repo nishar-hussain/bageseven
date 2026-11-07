@@ -51,6 +51,9 @@ async function proxy(req: FastifyRequest, reply: FastifyReply, cfg: NodeJS.Proce
   if (typeof req.headers['x-bagseven-world-human'] === 'string') {
     headers['x-bagseven-world-human'] = req.headers['x-bagseven-world-human'];
   }
+  for (const name of ['x-bagseven-provider', 'x-bagseven-provider-scope']) {
+    if (typeof req.headers[name] === 'string') headers[name] = req.headers[name];
+  }
 
   let res: Response;
   try {

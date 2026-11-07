@@ -16,3 +16,5 @@ Agents: /docs/guides/mcp · /docs/guides/agent-spending
 Troubleshooting: /docs/troubleshooting
 
 Architecture: /docs/concepts/architecture
+
+Provider operating gas: /docs/guides/provider-gas — provider-funded delegated accounts; no platform-wallet fallback.

@@ -22,6 +22,10 @@ export function toApiError(err: unknown): ApiError {
     return new ApiError(400, 'INVALID_AMOUNT', (err as Error).message);
   }
   const message = err instanceof Error ? err.message : 'internal error';
+  if (/^PROVIDER_GAS_[A-Z_]+/.test(message)) {
+    const providerCode = message.split(':')[0]!;
+    return new ApiError(providerCode.includes('SIGNATURE') || providerCode.includes('FORBIDDEN') ? 403 : providerCode.includes('UNCONFIGURED') ? 503 : 409, providerCode, message);
+  }
   return new ApiError(500, 'INTERNAL_ERROR', message);
 }
 

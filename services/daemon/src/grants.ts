@@ -27,7 +27,8 @@ import type { FastifyInstance } from 'fastify';
 import { resolveWhitechainPayTo, settleWhitechainUsdt, whitechainDemoAllowed } from './whitechain-settle.js';
 import { notifyConfigured, notifyOperator } from '@bagseven/notify';
 import { claimSettlement, type PaymentLedger } from './payment-ledger.js';
-import { whitechainConfig } from '@bagseven/onchain';
+import { providerGasEnabled, whitechainConfig } from '@bagseven/onchain';
+import { providerFromRequest } from './provider-gas.js';
 
 function actorEmail(req: { headers: { [key: string]: string | string[] | undefined } }): string | undefined {
   const raw = req.headers['x-bagseven-actor'];
@@ -136,7 +137,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
   }
 
   app.get('/internal/mumbai/status', async () => {
-    const hasArkiv = Boolean(process.env.ARKIV_ACCESS_KEY && (process.env.ARKIV_PRIVATE_KEY || process.env.PRIVATE_KEY));
+    const hasArkiv = Boolean(process.env.ARKIV_ACCESS_KEY && (process.env.PROVIDER_FUNDED_GAS !== 'false' || process.env.ARKIV_PRIVATE_KEY || process.env.PRIVATE_KEY));
     const whitechainNetwork = process.env.WHITECHAIN_NETWORK === 'mainnet' ? 'mainnet' : 'testnet';
     const worldConfig = worldIdKitConfig();
     const idkit = worldConfig.idkit;
@@ -177,6 +178,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
         },
       },
       dual_gate: {
+        provider_funded_gas: providerGasEnabled(process.env),
         prepaid_access_requires_mandate: false,
         payment_requires_mandate: true,
         require_grant: (process.env.BAGSEVEN_REQUIRE_GRANT ?? 'true').toLowerCase() !== 'false',
@@ -551,6 +553,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
       const rawBody = (req.body ?? {}) as Record<string, unknown>;
       const idkitResponse = rawBody.idkit_response;
       const body = MintGrantInputSchema.parse(req.body);
+      const merchant = providerGasEnabled(process.env) ? providerFromRequest(req, process.env) : undefined;
       if (body.settlement_network === 'local' && !worldMocksAllowed()) throw new ApiError(403, 'LIVE_PAYMENT_REQUIRED', 'Live entitlements require a verified Whitechain payment');
       try {
         assertKnownFeature(body.feature);
@@ -590,6 +593,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
 
       const grant = await store.mint({
         ...body,
+        merchant,
         remaining,
         worker_id: resolveWorkerId(body.worker_id),
         human_id: world.human_id,
@@ -640,6 +644,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
       const rawBody = (req.body ?? {}) as Record<string, unknown>;
       const idkitResponse = rawBody.idkit_response;
       const body = buyCreditsSchema.parse(req.body);
+      const merchant = providerGasEnabled(process.env) ? providerFromRequest(req, process.env) : undefined;
       try {
         assertKnownFeature(body.feature);
       } catch (e) {
@@ -674,6 +679,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
 
       const grant = await store.mint({
         feature: body.feature,
+        merchant,
         holder: body.holder,
         remaining: body.remaining,
         ttl_seconds: body.ttl_seconds,

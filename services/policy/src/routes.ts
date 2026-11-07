@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { agents, mandates, providers, refusals, reservations, transactions, vaults } from '@bagseven/db';
 import { validateMoney, sub, min, max } from '@bagseven/money';
 import { ApiError, idempotencyOnSend, idempotencyPreHandler, type ServiceDeps } from '@bagseven/server';
-import { canonicalMandate, canonicalSpawn, canonicalWithdraw, MandateClient, whitechainConfig, recoverEip191, recoverSpendIntentSigner, workerKey } from '@bagseven/onchain';
+import { canonicalMandate, canonicalSpawn, canonicalWithdraw, MandateClient, ProviderGasManager, providerGasEnabled, verifyProviderScope, whitechainConfig, recoverEip191, recoverSpendIntentSigner, workerKey } from '@bagseven/onchain';
 import { encodeFunctionData, parseAbi, recoverMessageAddress, type Address } from 'viem';
 
 const BOUNDS: Record<number, string> = {
@@ -116,6 +116,13 @@ function ownerClient(config: NodeJS.ProcessEnv): MandateClient {
 }
 
 export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: ServiceDeps): void {
+  const gas = new ProviderGasManager(db, config);
+  async function paidClient(provider?: string | null) {
+    if (!providerGasEnabled(config)) return mandateClient(config);
+    if (!provider) throw new ApiError(409, 'PROVIDER_GAS_REQUIRED', 'This legacy permission has no provider gas account. Configure provider gas and create a provider-bound permission.');
+    try { return new MandateClient(await gas.account(provider, 'whitechain'), { rpcUrl: config.RPC_URL ?? whitechainConfig(config).rpcUrl, rpcFallbackUrl: config.RPC_FALLBACK_URL, chainId: Number(config.CHAIN_ID ?? 1874) }); }
+    catch (error) { throw new ApiError(409, 'PROVIDER_GAS_REQUIRED', (error as Error).message); }
+  }
   app.addHook('preHandler', idempotencyPreHandler(redis));
   app.addHook('onSend', idempotencyOnSend(redis));
 
@@ -237,12 +244,15 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
 
     const rootAgentId = randomUUID();
     const executor = mandateClient(config);
-    const client = deploymentClient(config);
+    const provider = typeof req.headers['x-bagseven-provider'] === 'string' ? req.headers['x-bagseven-provider'] : undefined;
+    if (providerGasEnabled(config) && (!provider || !config.POLICY_INTERNAL_TOKEN || req.headers.authorization !== `Bearer ${config.POLICY_INTERNAL_TOKEN}`)) throw new ApiError(403, 'PROVIDER_SCOPE_REQUIRED', 'Provider-funded deployment requires the authenticated console provider scope');
+    if (providerGasEnabled(config) && !verifyProviderScope(req.headers['x-bagseven-provider-scope'], provider!, config)) throw new ApiError(403, 'PROVIDER_SCOPE_REQUIRED', 'A signed provider session scope is required');
+    const client = providerGasEnabled(config) ? await paidClient(provider) : deploymentClient(config);
     let contractAddress: Address;
     try { contractAddress = await client.deploy({
       owner: body.owner_address.toLowerCase() as Address,
       operator: body.operator_address.toLowerCase() as Address,
-      enforcer: (config.DAEMON_EXECUTOR_ADDRESS ?? executor.address) as Address,
+      enforcer: (providerGasEnabled(config) ? client.address : config.DAEMON_EXECUTOR_ADDRESS ?? executor.address) as Address,
       usdc: whitechainConfig(config).usdt as Address,
       budgetPerWindow: toUnits(body.budget_per_window),
       windowSeconds: body.window_seconds,
@@ -254,8 +264,9 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
       rootAllocation: toUnits(body.lifetime_cap),
     }); } catch (error) {
       const message = error instanceof Error ? error.message.toLowerCase() : '';
+      if (message.includes('provider_gas_')) throw new ApiError(409, 'PROVIDER_GAS_DENIED', (error as Error).message);
       if (/insufficient funds|exceeds the balance|insufficient balance/.test(message)) {
-        throw new ApiError(503, 'DEPLOYER_GAS_INSUFFICIENT', `The deployment wallet ${client.address} needs more WBT for network gas. Fund the deployment wallet or configure MANDATE_DEPLOYER_KEY with a funded account. USDT is not used for deployment gas.`);
+        throw new ApiError(503, 'DEPLOYER_GAS_INSUFFICIENT', providerGasEnabled(config) ? `The provider gas account ${client.address} needs more WBT on Whitechain. Platform funding fallback is disabled; USDT cannot pay gas.` : `The deployment wallet ${client.address} needs more WBT for network gas. Fund the deployment wallet or configure MANDATE_DEPLOYER_KEY with a funded account. USDT is not used for deployment gas.`);
       }
       throw new ApiError(502, 'MANDATE_DEPLOYMENT_FAILED', 'Whitechain could not confirm the permission deployment. Check the deployment wallet activity before retrying to avoid creating a duplicate permission.');
     }
@@ -264,9 +275,10 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
     await db.transaction(async (tx) => {
       await tx.insert(mandates).values({
         id: mandateId,
+        providerId: providerGasEnabled(config) ? provider : null,
         ownerAddress: body.owner_address.toLowerCase(),
         operatorAddress: body.operator_address.toLowerCase(),
-        contractAddress,
+        contractAddress: contractAddress.toLowerCase(),
         budgetPerWindow: body.budget_per_window,
         windowSeconds: body.window_seconds,
         lifetimeCap: body.lifetime_cap,
@@ -427,7 +439,7 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
     const [agent] = await db.insert(agents).values({ mandateId: id, parentAgentId: body.parent_agent_id, operatorAddress: body.operator_address.toLowerCase(), sharePercent: String(body.share_percent), allocation, depth, status: 'active' }).returning();
     if (!agent) throw new ApiError(500, 'SPAWN_FAILED', 'agent insert returned no row');
     try {
-      const client = mandateClient(config);
+      const client = await paidClient(mandate.providerId);
       await client.registerWorker(mandate.contractAddress as Address, workerKey(agent.id), workerKey(parent.id), agent.operatorAddress as Address, toUnits(allocation), depth);
     } catch (error) {
       await db.update(agents).set({ status: 'suspended' }).where(eq(agents.id, agent.id));
@@ -505,7 +517,7 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
       .returning();
     if (!reservation) throw new ApiError(500, 'RESERVE_FAILED', 'reservation insert returned no row');
 
-    if (config.DAEMON_EXECUTOR_ADDRESS) {
+    if (providerGasEnabled(config) || config.DAEMON_EXECUTOR_ADDRESS) {
       const [w, l] = await Promise.all([client.spendState(contract), client.lifetimeSpent(contract)]);
       return {
         decision: 'allow',
@@ -601,7 +613,7 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
     const allocationLeft = state ? fromUnits(state[2] > state[3] ? state[2] - state[3] : 0n) : '0';
     return {
       agent: { id: agent.id, operator_address: agent.operatorAddress, allocation: agent.allocation, remaining_allocation: allocationLeft, onchain_active: state?.[5] ?? false, depth: agent.depth, share_percent: agent.sharePercent, status: agent.status, name: agent.name, mcp_endpoint: agent.mcpEndpoint },
-      mandate: { id: mandate.id, owner_address: mandate.ownerAddress, operator_address: mandate.operatorAddress, contract_address: mandate.contractAddress, status: chainState.status === 'unavailable' ? 'unavailable' : revoked ? 'revoked' : mandate.status, record_status: mandate.status, onchain_state: chainState, onchain_revoked: revoked, budget_per_window: mandate.budgetPerWindow, lifetime_cap: mandate.lifetimeCap, per_purchase_cap: mandate.perPurchaseCap, per_seller_pct: mandate.perSellerPct, max_depth: mandate.maxDepth },
+      mandate: { id: mandate.id, provider_id: mandate.providerId, owner_address: mandate.ownerAddress, operator_address: mandate.operatorAddress, contract_address: mandate.contractAddress, status: chainState.status === 'unavailable' ? 'unavailable' : revoked ? 'revoked' : mandate.status, record_status: mandate.status, onchain_state: chainState, onchain_revoked: revoked, budget_per_window: mandate.budgetPerWindow, lifetime_cap: mandate.lifetimeCap, per_purchase_cap: mandate.perPurchaseCap, per_seller_pct: mandate.perSellerPct, max_depth: mandate.maxDepth },
       remaining: {
         vault_available: fromUnits(vault),
         remaining_window: sub(mandate.budgetPerWindow, fromUnits(w)),
@@ -623,6 +635,7 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
   });
 
   app.post('/v1/vaults/:mandateId/fund', async (req) => {
+    if (providerGasEnabled(config)) throw new ApiError(403, 'WALLET_APPROVAL_REQUIRED', 'Fund the vault from the owner wallet; platform-funded transfers are disabled');
     const { mandateId } = req.params as { mandateId: string };
     const body = fundSchema.parse(req.body);
     validateMoney(body.amount);
@@ -637,6 +650,7 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
   });
 
   app.post('/v1/vaults/:mandateId/withdraw', async (req) => {
+    if (providerGasEnabled(config)) throw new ApiError(403, 'WALLET_APPROVAL_REQUIRED', 'Use the owner-wallet withdrawal draft; platform-funded withdrawal gas is disabled');
     const { mandateId } = req.params as { mandateId: string };
     const body = withdrawSchema.parse(req.body);
     if (body.chain_id !== Number(config.CHAIN_ID ?? 1874)) throw new ApiError(400, 'CHAIN_MISMATCH', 'Signed chain_id must match the configured Whitechain network');

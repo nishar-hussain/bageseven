@@ -1,3 +1,4 @@
+import { providerScopeHeaders } from '../../../../lib/provider-gas-scope';
 import { NextRequest, NextResponse } from 'next/server';
 import { daemonFetch } from '../../../../lib/daemon-bff';
 import { getSession, sessionHolder, sessionIsValid } from '../../../../lib/auth';
@@ -52,9 +53,11 @@ async function proxy(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
 
   const headers = new Headers();
   headers.set('x-bagseven-actor', holder);
+  headers.set('x-bagseven-provider', session.world_human_id ? `world:${session.world_human_id}` : holder);
   if (!session.mock && session.world_human_id && !session.world_human_id.startsWith('email:')) {
     headers.set('x-bagseven-world-human', session.world_human_id);
   }
+  for (const [name, value] of Object.entries(providerScopeHeaders(headers.get('x-bagseven-provider')!))) headers.set(name, value);
   const init: RequestInit = { method: req.method, headers };
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     init.body = await req.text();
