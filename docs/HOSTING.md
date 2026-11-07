@@ -18,6 +18,25 @@ Vercel runs the console's Next API routes; all long-lived backend services run o
 
 ## 1. Create Railway services
 
+### Recommended: configure the entire project together
+
+The repository includes `.railway/railway.ts`, using Railway's project-wide Infrastructure as Code API. It declares daemon, gateway, policy, MCP, managed Postgres and Redis, and a persistent daemon volume in **one project/environment in one account**. Workspace packages are installed and built inside each backend image; they are not separate hosted services. Whitechain, Arkiv, World and Resend remain external integrations configured through credentials/RPC URLs.
+
+Selecting a GitHub repository alone does not create the other services or databases. To prepare the full graph:
+
+1. Run `pnpm install --frozen-lockfile`, then `pnpm setup:prod`. Fill the root `.env.prod` and run `pnpm setup:prod` again.
+2. Install the current Railway CLI, run `railway login`, and `railway link` to **your existing project and environment**. All resources must live in that same environment for private references to resolve.
+3. In Railway's environment **Shared Variables**, import the ignored `.railway/.env.prod` generated above. It contains the matching secrets/configuration referenced by the services. Do not commit or publish it. Service variables receive only their declared subset.
+4. Run `pnpm check:railway`, then `railway config plan`. Review the plan against your existing resources. If Railway reports legacy config ownership, follow its migration instructions and clear the service's legacy config file path before planning again. For an existing deployment with different database names or volumes, preserve those resources by importing with `railway config pull` and adapting the graph; do not apply a plan that replaces your data services.
+5. Run `railway config apply` to apply the reviewed plan. The GitHub source is `nishar-hussain/bageseven`, branch `main`, root `/`. Grant Railway access to that repository. Generate public domains for daemon (4001), gateway (4000), and MCP (4009). Keep policy private.
+6. Fill the resulting public URLs in root `.env.prod`, rerun `pnpm setup:prod`, reimport `.railway/.env.prod` into Shared Variables and import the generated app files into Vercel. Run `pnpm check:prod`, then redeploy affected services and frontends. Daemon's pre-deploy command applies migrations; verify it succeeds before using the other services.
+
+The CLI evaluates this file and applies project configuration; a GitHub push by itself does not apply infrastructure changes. Subsequent application deployments use each configured GitHub source. Public domains and external integration credentials still need to be configured before login, billing and MCP can work end to end. New projects may initially show failed deployments until these variables are supplied.
+
+Railway's current documentation recommends IaC for new services and deprecates `railway.json`/`railway.toml`; see [Infrastructure as Code](https://docs.railway.com/infrastructure-as-code) and its [API reference](https://docs.railway.com/infrastructure-as-code/reference). The service-specific JSON files below are retained for existing legacy deployments, not the new-project provisioning path.
+
+### Existing legacy config-as-code deployments
+
 Create one Railway project/environment with Postgres and Redis, then four services from this repository. Name them exactly `daemon`, `gateway`, `policy`, `mcp` so the supplied variable references work. The database service names in the templates are `Postgres` and `Redis`; adjust references if you use different names.
 
 For **each application service**, set Root Directory to `/` (the repository root, not `services/daemon`). The root `railway.json` automatically configures the daemon when you first import this repository. Railway deploys one process per service: selecting the root does not create all four services automatically. Add the other three services from the same repository, also rooted at `/`, and select their matching config file in Settings → Config-as-code:
@@ -40,6 +59,16 @@ The daemon config runs `pnpm db:migrate` as a pre-deploy command, using Railway 
 Railway private addresses never go into Vercel: Vercel cannot resolve `*.railway.internal`. Only internal Railway calls use those addresses. Vercel uses the daemon and gateway public HTTPS URLs, with server-held service tokens.
 
 Configuration reference: [Railway config-as-code](https://docs.railway.com/config-as-code/reference), [private networking](https://docs.railway.com/networking/private-networking).
+
+### Verify the repository image locally
+
+```bash
+pnpm check:railway
+docker build -f deploy/Dockerfile.backend -t bagseven-backend:railway-check .
+pnpm test:railway-image
+```
+
+The image smoke test creates disposable Postgres 17 and Valkey 8 containers on an isolated Docker network, migrates a clean database and starts all four production processes. It checks gateway-to-policy database access, health endpoints, daemon authentication and MCP OAuth discovery/gating, then removes its containers/network. It uses no production credentials or host ports and cannot make external blockchain calls. Hosted World consent, provider gas funding, customer checkout and actual Railway resource health require separate live verification.
 
 ### Prepare the production environment files
 

@@ -2,7 +2,7 @@ FROM node:24-bookworm-slim
 WORKDIR /app
 RUN npm install --global pnpm@10.33.0
 COPY . .
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --prod=false
 RUN pnpm exec turbo run build --filter=@bagseven/daemon... --filter=@bagseven/gateway... --filter=@bagseven/policy...
 ENV NODE_ENV=production
 ENV HOST=::

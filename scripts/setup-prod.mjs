@@ -100,6 +100,17 @@ for (const target of targets) {
   save(resolve(root, target.output), `# Import into ${target.output.startsWith('apps/') ? 'Vercel Production variables' : 'the matching Railway service variables'}.\n# Generated from root .env.prod by pnpm setup:prod; do not edit this copy.\n` + serialize(output));
   console.log(`Prepared ${target.output}`);
 }
+// IaC services read only their own subset of these environment-level references.
+// Internal URLs, ports and managed database references are supplied by the graph.
+const internal = new Set(['PORT', 'HOST', 'DATABASE_URL', 'REDIS_URL', 'POLICY_URL', 'DAEMON_URL', 'BAGSEVEN_DATA_DIR']);
+const shared = {};
+for (const target of targets.filter(target => !target.output.startsWith('apps/'))) {
+  for (const [key, fallback] of Object.entries(target.values)) {
+    if (!internal.has(key)) shared[key] = derived[key] ?? values[key] ?? fallback;
+  }
+}
+save(resolve(root, '.railway/.env.prod'), '# Import into Railway environment Shared Variables before config apply.\n' + serialize(shared));
+console.log('Prepared .railway/.env.prod (Railway shared variables for project-wide deployment)');
 const unresolved = Object.entries(values).filter(([, value]) => value.includes('REPLACE_')).map(([key]) => key);
 console.log(`Source: .env.prod (preserved). ${unresolved.length} values still need your hosted URLs or provider credentials.`);
 if (unresolved.length) console.log(`Update: ${unresolved.join(', ')}`);
