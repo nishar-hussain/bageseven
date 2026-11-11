@@ -1,7 +1,7 @@
 import { createPublicClient, createWalletClient, decodeEventLog, encodeAbiParameters, encodeDeployData, encodeFunctionData,
   getContractAddress, http, keccak256, parseAbi, parseTransaction, stringToHex, type Hex, type Chain } from 'viem';
-import { ProviderGasManager, SubscriptionAbi, SubscriptionBytecode, SubscriptionRuntime, whitechainConfig } from '@bagseven/onchain';
-import { usdtUnits, verifyWhitechainPayment } from './whitechain-payment.js';
+import { ProviderGasManager, SubscriptionAbi, SubscriptionBytecode, SubscriptionRuntime, avalancheConfig } from '@bagseven/onchain';
+import { usdtUnits, verifyAvalanchePayment } from './avalanche-payment.js';
 import type { Plan } from './billing-store.js';
 import type { Subscription, SubscriptionPlan } from './subscription-types.js';
 
@@ -23,21 +23,21 @@ export const subscriptionKey = (payer: string, checkout: string) => keccak256(en
   [{ type: 'address' }, { type: 'bytes32' }], [payer as Hex, checkoutKey(checkout)]));
 export const subscriptionId = (checkout: string) => `sub_${checkout}`;
 
-export class WhitechainSubscriptionChain implements SubscriptionChain {
-  private config: Omit<ReturnType<typeof whitechainConfig>, 'chain' | 'usdt'> & { chain: Chain; usdt: Hex };
+export class AvalancheSubscriptionChain implements SubscriptionChain {
+  private config: Omit<ReturnType<typeof avalancheConfig>, 'chain' | 'usdt'> & { chain: Chain; usdt: Hex };
   private client;
   constructor(private gas: ProviderGasManager, private env: NodeJS.ProcessEnv) {
-    const config = whitechainConfig(env);
+    const config = avalancheConfig(env);
     this.config = { ...config, usdt: config.usdt as Hex };
     this.client = createPublicClient({ chain: this.config.chain, transport: http(this.config.rpcUrl, { timeout: 15000, retryCount: 1 }) });
   }
   private async network() {
-    if (await this.client.getChainId() !== this.config.chainId) throw Error('WHITECHAIN_RPC_CHAIN_MISMATCH');
+    if (await this.client.getChainId() !== this.config.chainId) throw Error('AVALANCHE_RPC_CHAIN_MISMATCH');
   }
   private async signer(provider: string) {
     const status = await this.gas.status(provider);
     if (!status.authorization?.subscriptions) throw Error('SUBSCRIPTION_GAS_AUTHORIZATION_REQUIRED: renew provider gas authorization in Tracks before enabling recurring plans');
-    return this.gas.account(provider, 'whitechain');
+    return this.gas.account(provider, 'avalanche');
   }
   async checkoutReady(provider: string) {
     const active = await this.gas.assertActive(provider);
@@ -130,7 +130,7 @@ export class WhitechainSubscriptionChain implements SubscriptionChain {
       try { event = decodeEventLog({ abi: SubscriptionAbi, eventName: 'Paid', topics: log.topics, data: log.data }); }
       catch { continue; }
       if (event.args.subscriptionId !== key || event.args.payer.toLowerCase() !== payer.toLowerCase() || event.args.amount !== usdtUnits(plan.amount)) continue;
-      await verifyWhitechainPayment({ payment_tx: hash, merchant_wallet: plan.merchant_wallet, customer_wallet: payer, amount: plan.amount }, this.env);
+      await verifyAvalanchePayment({ payment_tx: hash, merchant_wallet: plan.merchant_wallet, customer_wallet: payer, amount: plan.amount }, this.env);
       return { paidAt: Number((await this.client.getBlock({ blockNumber: receipt.blockNumber })).timestamp), paidThrough: Number(event.args.paidThrough), period: Number(event.args.period), hash, payer };
     }
     throw Error('SUBSCRIPTION_PAYMENT_UNVERIFIED');

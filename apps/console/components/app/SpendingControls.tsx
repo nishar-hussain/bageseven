@@ -51,10 +51,10 @@ export function SpendingControls({ selectedId, overview, onChange, onCreated }: 
     try { await wallet.request({ method: 'wallet_switchEthereumChain', params: [{ chainId }] }); }
     catch (e) {
       if ((e as { code?: number }).code !== 4902) throw e;
-      await wallet.request({ method: 'wallet_addEthereumChain', params: [{ chainId, chainName: config.chain_id === 1874 ? 'Whitechain Testnet' : 'Whitechain', rpcUrls: [config.rpc_url], nativeCurrency: { name: 'WhiteBIT Coin', symbol: 'WBT', decimals: 18 } }] });
+      await wallet.request({ method: 'wallet_addEthereumChain', params: [{ chainId, chainName: config.chain_id === 43113 ? 'Avalanche Testnet' : 'Avalanche', rpcUrls: [config.rpc_url], nativeCurrency: { name: 'Avalanche', symbol: 'AVAX', decimals: 18 } }] });
     }
     const actual = await wallet.request({ method: 'eth_chainId' });
-    if (Number(actual) !== config.chain_id) throw new Error('Select the configured Whitechain network in your wallet.');
+    if (Number(actual) !== config.chain_id) throw new Error('Select the configured Avalanche network in your wallet.');
     if (!config.owner_addresses.some(a => a.toLowerCase() === owner.toLowerCase()) || (!expected && config.owner_addresses[0]?.toLowerCase() !== owner.toLowerCase())) {
       setMessage('Verify wallet ownership with a signature. This does not transfer funds.');
       const challenge = await fetch(`/api/auth/wallet/verify?owner=${encodeURIComponent(owner)}`, { cache: 'no-store' });
@@ -80,7 +80,7 @@ export function SpendingControls({ selectedId, overview, onChange, onCreated }: 
       budget_per_window: budget, lifetime_cap: lifetime, per_purchase_cap: purchase,
       window_seconds: Math.round(Number(windowHours) * 3600), per_seller_pct: Math.round(Number(sellerPct) * 100), max_depth: Number(depth), chain_id: config!.chain_id });
     const signature = await sign(wallet, owner, prepared.message);
-    setMessage('Deploying your signed permission to Whitechain…');
+    setMessage('Deploying your signed permission to Avalanche…');
     const result = await mandateApi.create({ ...prepared.payload, signature });
     onCreated(result.mandate_id);
     setMessage(`Spending permission created. Root agent: ${result.root_agent_id}. Fund it before authorizing payments.`);
@@ -115,7 +115,7 @@ export function SpendingControls({ selectedId, overview, onChange, onCreated }: 
   }
   return <section className="space-y-4 rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
     <h2 className="text-base font-semibold">Manage agent spending</h2>
-    <p className="text-sm text-[var(--muted)]">These permissions apply to new USDT payments. Using prepaid service credits does not require a funded permission. Your owner wallet approves each change.</p>
+    <p className="text-sm text-[var(--muted)]">These permissions apply to new stablecoin payments. Using prepaid service credits does not require a funded permission. Your owner wallet approves each change.</p>
     <p className="text-sm text-[var(--muted)]">Provider gas must be funded and authorized before creating a permission. <Link href="/app/settings" className="text-[var(--blue)] underline">Configure provider-funded gas</Link>.</p>
     <div className="flex flex-wrap items-center gap-3 text-sm">
       <span className="break-all text-[var(--muted)]">{isConnected && address ? `Connected: ${address}` : 'Connect a wallet to manage your spending permissions.'}</span>
@@ -132,20 +132,20 @@ export function SpendingControls({ selectedId, overview, onChange, onCreated }: 
         <form onSubmit={e => { e.preventDefault(); void run(create); }} className="mt-3 space-y-3">
           <label className="block text-sm">Agent operator wallet<input required value={operator} onChange={e => setOperator(e.target.value)} className={inputClass} pattern="0x[0-9a-fA-F]{40}" /></label>
           <div className="grid gap-3 sm:grid-cols-3">
-            <label className="text-sm">Budget per window (USDT)<input required value={budget} onChange={e => setBudget(e.target.value)} className={inputClass} inputMode="decimal" /></label>
-            <label className="text-sm">Lifetime limit (USDT)<input required value={lifetime} onChange={e => setLifetime(e.target.value)} className={inputClass} inputMode="decimal" /></label>
-            <label className="text-sm">Maximum per payment (USDT)<input required value={purchase} onChange={e => setPurchase(e.target.value)} className={inputClass} inputMode="decimal" /></label>
+            <label className="text-sm">Budget per window (stablecoin)<input required value={budget} onChange={e => setBudget(e.target.value)} className={inputClass} inputMode="decimal" /></label>
+            <label className="text-sm">Lifetime limit (stablecoin)<input required value={lifetime} onChange={e => setLifetime(e.target.value)} className={inputClass} inputMode="decimal" /></label>
+            <label className="text-sm">Maximum per payment (stablecoin)<input required value={purchase} onChange={e => setPurchase(e.target.value)} className={inputClass} inputMode="decimal" /></label>
             <label className="text-sm">Window (hours)<input required type="number" min="1" value={windowHours} onChange={e => setWindowHours(e.target.value)} className={inputClass} /></label>
             <label className="text-sm">Limit per provider (% of lifetime)<input required type="number" min="1" max="100" value={sellerPct} onChange={e => setSellerPct(e.target.value)} className={inputClass} /></label>
             <label className="text-sm">Maximum delegation depth<input required type="number" min="0" max="10" value={depth} onChange={e => setDepth(e.target.value)} className={inputClass} /></label>
           </div>
-          <p className="text-xs text-[var(--muted)]">Limits are fixed at creation. Creating a permission does not transfer USDT or change the agent bound to your MCP connection.</p>
+          <p className="text-xs text-[var(--muted)]">Limits are fixed at creation. Creating a permission does not transfer stablecoin or change the agent bound to your MCP connection.</p>
           <button className={buttonClass} type="submit">Sign and create permission</button>
         </form>
       </details>
       {current && <div className="space-y-4 border-t border-[var(--line)] pt-4">
         <p className="text-sm font-semibold">Selected permission</p>
-        <label className="block text-sm">Amount (USDT)<input value={amount} onChange={e => setAmount(e.target.value)} className={inputClass} inputMode="decimal" placeholder="0.10" /></label>
+        <label className="block text-sm">Amount (stablecoin)<input value={amount} onChange={e => setAmount(e.target.value)} className={inputClass} inputMode="decimal" placeholder="0.10" /></label>
         <div className="flex flex-wrap gap-2">
           <button type="button" disabled={!available || current.onchain_revoked || !amount} onClick={() => void run(() => transact('fund'))} className={buttonClass}>Fund from wallet</button>
           <button type="button" disabled={!available || !amount} onClick={() => void run(() => transact('withdraw'))} className={buttonClass}>Withdraw to owner</button>

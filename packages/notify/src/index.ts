@@ -4,7 +4,6 @@ export type NotifyEvent =
   | 'magic_link'
   | 'grant_minted'
   | 'credits_bought'
-  | 'world_denied'
   | 'paid_run'
   | 'renewal_cancelled';
 

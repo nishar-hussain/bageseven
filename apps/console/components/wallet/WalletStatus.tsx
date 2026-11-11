@@ -21,7 +21,7 @@ export function WalletStatusCard({
         <div>
           <h2 className="font-semibold">{title}</h2>
           <p className="mt-1 text-sm text-[var(--muted)]">
-            RainbowKit on Whitechain Testnet — used for customer checkout and optional payout link.
+            Avalanche Fuji wallet — used for customer checkout, payouts, and signed account authority.
           </p>
         </div>
         <StatusPill tone={isConnected ? 'good' : 'warn'}>

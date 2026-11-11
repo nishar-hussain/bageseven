@@ -47,9 +47,8 @@ export default function OverviewPage() {
 
   const refresh = useCallback(async () => {
     try {
-      const [s, live, me] = await Promise.all([
+      const [s, me] = await Promise.all([
         entitlementsApi.status().catch(() => null),
-        entitlementsApi.live(),
         fetch('/api/me', { signal: AbortSignal.timeout(8_000) })
           .then(async (r) =>
             r.ok
@@ -59,7 +58,6 @@ export default function OverviewPage() {
           .catch(() => null),
       ]);
       setStatus(s);
-      setGrants(live.grants ?? []);
       setSetup({
         email: !me?.email_verified,
         wallet: !me?.wallet_address,
@@ -85,8 +83,8 @@ export default function OverviewPage() {
 
   const attentionBits: string[] = [];
   if (grants.length === 0) attentionBits.push('no live entitlements yet');
-  if (status && !status.tracks.arkiv.live) attentionBits.push('Arkiv on local store');
-  if (status?.tracks.whitechain.demo_settle) attentionBits.push('Whitechain settle offline');
+  if (status && !status.tracks.registry.live) attentionBits.push('Registry on local store');
+  if (status?.tracks.avalanche.demo_settle) attentionBits.push('Avalanche settle offline');
   if (setup.email) attentionBits.push('email unverified');
   if (setup.wallet) attentionBits.push('wallet not set');
 
@@ -155,12 +153,12 @@ export default function OverviewPage() {
               <dd className="mt-1 text-2xl font-semibold tabular-nums">{remaining.toFixed(0)}</dd>
             </div>
             <div>
-              <dt className="text-xs uppercase tracking-wide text-[var(--muted)]">World</dt>
-              <dd className="mt-1 text-lg font-medium capitalize">{status?.tracks.world.mode ?? '…'}</dd>
+              <dt className="text-xs uppercase tracking-wide text-[var(--muted)]">Account</dt>
+              <dd className="mt-1 text-lg font-medium capitalize">Email + wallet</dd>
             </div>
             <div>
-              <dt className="text-xs uppercase tracking-wide text-[var(--muted)]">Arkiv</dt>
-              <dd className="mt-1 text-lg font-medium">{status?.tracks.arkiv.live ? 'Live' : 'Local'}</dd>
+              <dt className="text-xs uppercase tracking-wide text-[var(--muted)]">Registry</dt>
+              <dd className="mt-1 text-lg font-medium">{status?.tracks.registry.live ? 'Live' : 'Local'}</dd>
             </div>
           </dl>
           <div className="mt-5 flex flex-wrap gap-2">
@@ -187,7 +185,7 @@ export default function OverviewPage() {
         </SoftCard>
       </div>
 
-      <GrantList />
+      <GrantList onGrantsChange={setGrants} />
 
       {msg ? <p className="fi-mono text-xs text-[var(--deny)]">{msg}</p> : null}
     </div>

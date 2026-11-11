@@ -1,20 +1,17 @@
 # Bagseven
 
-Operators sign in with World. Plans + checkout sessions settle USDT on Whitechain (WhiteWallet-ready) and mint living Arkiv entitlements. Humans and agents check/consume through `@bagseven/sdk`. Prepaid credit consumption does not require a mandate. New agent payments require a mandate and living entitlement.
+Avalanche C-Chain paid access and agent spending. Fuji chain 43113; mainnet 43114. Payment token is explicitly configured with AVALANCHE_USDC and must have six decimals.
 
-Dashboard: /app (World login). Plans / checkouts / account. SDK: /app/sdk. Embed: /embed?token=. Checkout: /checkout?session=.
+Email proves inbox control. Wallet ownership uses a signed, expiring account-bound message. Neither proves unique humanity. Browser uses console BFF APIs; service keys remain server-side.
 
-SDK: react (Provider, FeatureFlagGuard, BagsevenEmbed checkout) · node (createPlan, createCheckoutSession, checkEntitlement) · wallet (Whitechain)
+GrantStore: mint/get/findLive/consume/cancelRenewal/hold/commit/release. AvalancheGrantStore uses private PostgreSQL metadata for discovery and reads balances from BagEntitlementRegistry. Expired records remain stored but are excluded from live access. Subjects are HMAC hashes on-chain; preserve ENTITLEMENT_SUBJECT_SECRET across restarts.
 
-MCP: bagseven_status, grant_status, check_entitlement, consume_entitlement, mint_with_world, buy_credits, create_checkout_session, paid_run, cancel_renewal, explain_denial, bagseven_fetch.
+Prepaid usage needs a living authorized grant and enough credits. New agent payments require an active agent, remaining mandate capacity, and a living grant. Credit units and stablecoin amounts differ.
 
-Documentation: /docs/introduction
-Quickstart: /docs/quickstart
-SDK: /docs/sdk/node · /docs/sdk/react · /docs/sdk/agent
-API: /docs/api/overview · /docs/api/entitlements · /docs/api/checkout
-Agents: /docs/guides/mcp · /docs/guides/agent-spending
-Troubleshooting: /docs/troubleshooting
+Recurring billing uses fixed-price BagSubscriptionPlan, explicit payer allowance/subscribe/cancel, and durable collection/fulfillment journals. Cancellation preserves paid time. Unknown transaction outcomes require reconciliation of the same signed bytes.
 
-Architecture: /docs/concepts/architecture
+Provider-funded gas is mandatory in production. Authorized encrypted delegated keys pay AVAX under server-enforced fee budgets. Do not call these EOA restrictions on-chain smart-account limits. No platform-wallet fallback.
 
-Provider operating gas: /docs/guides/provider-gas — provider-funded delegated accounts; no platform-wallet fallback.
+SDK: @bagseven/sdk; browser wallet helpers connectAvalancheWallet/payStablecoinOnAvalanche/subscribeOnAvalanche/cancelAvalancheSubscription. MCP: HTTPS /mcp with email-code plus wallet consent, OAuth PKCE, scoped access and rotating refresh tokens. Transport sessions and OAuth tokens are process-local; reconnect after restart.
+
+Code: services/daemon/src/grants.ts, billing.ts, subscriptions.ts, avalanche-payment.ts; packages/entitlements/src/avalanche-store.ts; packages/contracts/src/BagEntitlementRegistry.sol; scripts/bagseven-mcp.ts and mcp-account-auth.ts.

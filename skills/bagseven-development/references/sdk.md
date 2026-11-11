@@ -7,7 +7,7 @@
 | `@bagseven/sdk` or `@bagseven/sdk/node` | `BagsevenClient`, `BagsevenApiError`, entitlement types |
 | `@bagseven/sdk/react` | Provider, guards, read/consume hooks and embedded checkout/portal |
 | `@bagseven/sdk/agent` | Programmatic `BagsevenAgent` wrapper for an already-authorized server process |
-| `@bagseven/sdk/wallet` | Existing Whitechain wallet/payment helpers |
+| `@bagseven/sdk/wallet` | Existing Avalanche wallet/payment helpers |
 | `@bagseven/sdk/components` | Supported embed component IDs/views |
 
 Read `packages/sdk/package.json` and source for exact exports. The repository package is currently `private: true`; local workspaces can use it directly. An external consumer needs a separately published package or an agreed distribution artifact; skill publication does not publish the SDK to npm.
@@ -37,7 +37,7 @@ await client.consumeEntitlement({
 
 The consume endpoint remains authoritative if state changes between the read and write. Derive `holder` from authenticated application identity, not arbitrary client input. Keep `operationId` stable for a retry. This uses prepaid credits and does not request a new payment.
 
-Useful result fields: `enabled`, `remaining`, `allocation`, `paid_through`, `grant_id`, optional `arkiv_entity_key`, `payment_tx`, `renewal_enabled`, `value_type`. Numeric and boolean features use the same access concept; do not treat strings such as `'0'` as truthy permission.
+Useful result fields: `enabled`, `remaining`, `allocation`, `paid_through`, `grant_id`, optional `avalanche_entity_key`, `payment_tx`, `renewal_enabled`, `value_type`. Numeric and boolean features use the same access concept; do not treat strings such as `'0'` as truthy permission.
 
 ## React and embedded flows
 
@@ -57,4 +57,4 @@ A publishable key does not authorize consume or mint. UI visibility does not aut
 
 Create a plan using the provider's actual merchant wallet and separate payment `amount` from feature `credits`. Then call `createCheckoutSession({ plan_id, holder })`. Render the existing hosted `/checkout?session=...` or `BagsevenEmbed` checkout. A created session is pending; payment verification must precede grant minting. Do not call demo settlement in production.
 
-Checkout pays the plan merchant wallet; legacy `WHITECHAIN_PAY_TO` does not replace provider routing. Platform fees are recorded separately. World consent and wallet signatures remain human actions.
+Checkout pays the plan merchant wallet; legacy `AVALANCHE_PAY_TO` does not replace provider routing. Platform fees are recorded separately. email and wallet consent and wallet signatures remain human actions.

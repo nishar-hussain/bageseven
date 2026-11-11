@@ -1,9 +1,9 @@
 /** Explicit local demo setup. Reloading the app never refills exhausted credits. */
 import { FEATURES, HOLDER, internal } from "../demo-config.mjs";
 
-if (process.env.WORLD_MOCK_PROOFS !== "true" || !process.env.DEMO_PROVIDER_ID) {
+if (process.env.ENTITLEMENT_STORE !== "memory" || process.env.NODE_ENV === "production" || !process.env.DEMO_PROVIDER_ID) {
   throw new Error(
-    "Demo seed requires local World mock mode and an explicitly configured DEMO_PROVIDER_ID",
+    "Demo seed requires explicit local memory mode and an explicitly configured DEMO_PROVIDER_ID",
   );
 }
 const features = (await internal("GET", "/internal/features")).features;
@@ -36,7 +36,6 @@ for (const feature of FEATURES) {
     remaining: feature.credits,
     ttl_seconds: 86400,
     settlement_network: "local",
-    world_proof_id: `world:ok:${HOLDER}`,
     renewal_enabled: Boolean(feature.boolean),
   });
   console.log(

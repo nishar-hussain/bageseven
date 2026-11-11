@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS provider_gas_accounts (
   authorization_signature text,
   recovery_challenge jsonb,
   expires_at timestamptz,
-  whitechain_reserved numeric(78,0) NOT NULL DEFAULT 0,
-  arkiv_reserved numeric(78,0) NOT NULL DEFAULT 0,
+  avalanche_reserved numeric(78,0) NOT NULL DEFAULT 0,
+  registry_reserved numeric(78,0) NOT NULL DEFAULT 0,
   created_at timestamptz NOT NULL DEFAULT now()
 );

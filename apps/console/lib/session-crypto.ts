@@ -3,10 +3,10 @@
 export type SessionClaims = {
   exp: number;
   k?: 'session' | 'magic' | 'otp';
-  world_human_id?: string;
   email?: string;
   email_verified_at?: number | null;
   wallet_address?: string | null;
+  wallet_rebind_verified_at?: number | null;
   onboarding_done_at?: number | null;
   mock?: boolean;
 };
@@ -35,14 +35,12 @@ export function authSecretFromEnv(env: { AUTH_SECRET?: string; DAEMON_AUTH_TOKEN
 }
 
 function sessionIdentityOk(session: SessionClaims): boolean {
-  return Boolean(session.world_human_id?.trim() || session.email?.trim());
+  return Boolean(session.email?.trim());
 }
 
 export function sessionNeedsOnboarding(session: SessionClaims): boolean {
   if (session.mock) return false;
-  const human = session.world_human_id?.trim() ?? '';
-  if (!human || human.startsWith('email:') || human.startsWith('mock:')) return false;
-  return !session.onboarding_done_at;
+  return !session.email_verified_at || !session.wallet_address || !session.onboarding_done_at;
 }
 
 export async function verifySessionToken(

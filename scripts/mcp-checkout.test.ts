@@ -26,24 +26,24 @@ function fixture(error = 'NOT_FOUND: no agent found') {
 }
 describe('MCP provider checkout without a spending agent', () => {
   it('opens human wallet checkout without requiring a mandate', async () => {
-    for (const name of ['mint_with_world', 'buy_credits', 'create_checkout_session']) {
+    for (const name of ['buy_access', 'buy_credits', 'create_checkout_session']) {
       const daemon = fixture();
-      const result = await call(name, { plan_id: 'plan_provider', holder: 'world:customer' }, daemon);
+      const result = await call(name, { plan_id: 'plan_provider', holder: 'customer@example.com' }, daemon);
       expect(result.error).not.toBe(true);
       expect(result.data.checkout_url).toContain('/checkout?session=cs_real-flow');
-      expect(daemon.mock.calls.find(args => args[1] === '/v1/checkout-sessions')?.[2]).toEqual({ plan_id: 'plan_provider', holder: 'world:customer' });
+      expect(daemon.mock.calls.find(args => args[1] === '/v1/checkout-sessions')?.[2]).toEqual({ plan_id: 'plan_provider', holder: 'customer@example.com' });
       expect(daemon.mock.calls.some(args => /grants\/(mint|buy-credits)/.test(args[1]))).toBe(false);
     }
   });
   it('asks for a customer holder when it cannot infer one from an agent', async () => {
     const daemon = fixture();
-    const result = await call('mint_with_world', { plan_id: 'plan_provider' }, daemon);
+    const result = await call('buy_access', { plan_id: 'plan_provider' }, daemon);
     expect(result.data.requires_holder).toBe(true);
     expect(daemon.mock.calls.some(args => args[1] === '/v1/checkout-sessions')).toBe(false);
   });
   it('does not silently bypass an unavailable policy service', async () => {
     const daemon = fixture('POLICY_UNAVAILABLE');
-    const result = await call('buy_credits', { plan_id: 'plan_provider', holder: 'world:customer' }, daemon);
+    const result = await call('buy_credits', { plan_id: 'plan_provider', holder: 'customer@example.com' }, daemon);
     expect(result.error).toBe(true);
     expect(daemon.mock.calls.some(args => args[1] === '/v1/checkout-sessions')).toBe(false);
   });

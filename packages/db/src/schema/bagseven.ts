@@ -53,12 +53,12 @@ export const providerGasAccounts = pgTable('provider_gas_accounts', {
   authorizationSignature: text('authorization_signature'),
   recoveryChallenge: jsonb('recovery_challenge'),
   expiresAt: timestamp('expires_at', { withTimezone: true }),
-  whitechainReserved: numeric('whitechain_reserved', { precision: 78, scale: 0 }).notNull().default('0'),
-  arkivReserved: numeric('arkiv_reserved', { precision: 78, scale: 0 }).notNull().default('0'),
+  avalancheReserved: numeric('avalanche_reserved', { precision: 78, scale: 0 }).notNull().default('0'),
+  registryReserved: numeric('registry_reserved', { precision: 78, scale: 0 }).notNull().default('0'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
-/** Durable ownership of Whitechain nonces, shared by every provider signing process. */
+/** Durable ownership of Avalanche nonces, shared by every provider signing process. */
 export const providerSignedTransactions = pgTable('provider_signed_transactions', {
   id: text('id').primaryKey(),
   providerId: text('provider_id').notNull().references(() => providerGasAccounts.providerId),
@@ -155,7 +155,7 @@ export const refusals = pgTable(
   (t) => [index('idx_refusals_mandate_created').on(t.mandateId, t.requestedAt)],
 );
 
-/** Thin SaaS plan → living Arkiv entitlement (no payment-link product line). */
+/** Thin SaaS plan → living Registry entitlement (no payment-link product line). */
 export const billingPlans = pgTable(
   'billing_plans',
   {
@@ -184,7 +184,7 @@ export const checkoutSessions = pgTable(
     holder: text('holder').notNull(),
     status: text('status').notNull().default('PENDING'),
     amount: text('amount').notNull(),
-    chainId: integer('chain_id').notNull().default(1874),
+    chainId: integer('chain_id').notNull().default(43113),
     workerId: text('worker_id'),
     platformFeeBps: integer('platform_fee_bps').notNull().default(0),
     platformFeeAmount: text('platform_fee_amount').notNull().default('0'),
@@ -225,6 +225,16 @@ export const subscriptionPeriods = pgTable('subscription_periods', {
 });
 
 /** Every on-chain action for audit. */
+/** Private discovery metadata; Avalanche contract state remains authoritative for access. */
+export const entitlementRecords = pgTable('entitlement_records', {
+  key: text('key').primaryKey(),
+  chainId: integer('chain_id').notNull(),
+  registry: text('registry').notNull(),
+  providerId: text('provider_id').notNull(),
+  kind: text('kind').notNull(),
+  data: jsonb('data').notNull(),
+});
+
 export const transactions = pgTable(
   'transactions',
   {

@@ -10,10 +10,6 @@ const ALLOWED: Array<{ method: string; match: (parts: string[]) => boolean }> = 
   { method: 'GET', match: (p) => p[0] === 'mumbai' && p[1] === 'status' && p.length === 2 },
   { method: 'GET', match: (p) => p[0] === 'features' && p.length === 1 },
   { method: 'POST', match: (p) => p[0] === 'features' && p.length === 1 },
-  { method: 'GET', match: (p) => p[0] === 'world' && p[1] === 'authorize' && p.length === 2 },
-  { method: 'POST', match: (p) => p[0] === 'world' && p[1] === 'callback' && p.length === 2 },
-  { method: 'POST', match: (p) => p[0] === 'world' && p[1] === 'rp-signature' && p.length === 2 },
-  { method: 'POST', match: (p) => p[0] === 'world' && p[1] === 'verify-idkit' && p.length === 2 },
   { method: 'GET', match: (p) => p[0] === 'grants' && p[1] === 'live' && p.length === 2 },
   // Intentionally no GET /grants/:id — cross-tenant grant detail IDOR.
   { method: 'POST', match: (p) => p[0] === 'grants' && p[1] === 'mint' && p.length === 2 },
@@ -53,10 +49,7 @@ async function proxy(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
 
   const headers = new Headers();
   headers.set('x-bagseven-actor', holder);
-  headers.set('x-bagseven-provider', session.world_human_id ? `world:${session.world_human_id}` : holder);
-  if (!session.mock && session.world_human_id && !session.world_human_id.startsWith('email:')) {
-    headers.set('x-bagseven-world-human', session.world_human_id);
-  }
+  headers.set('x-bagseven-provider', holder);
   for (const [name, value] of Object.entries(providerScopeHeaders(headers.get('x-bagseven-provider')!))) headers.set(name, value);
   const init: RequestInit = { method: req.method, headers };
   if (req.method !== 'GET' && req.method !== 'HEAD') {
@@ -71,7 +64,7 @@ async function proxy(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
         init.body = JSON.stringify({
           ...body,
           holder,
-          ...(path[1] === 'mint' || path[1] === 'buy-credits' ? { settlement_network: 'whitechain' } : {}),
+          ...(path[1] === 'mint' || path[1] === 'buy-credits' ? { settlement_network: 'avalanche' } : {}),
         });
       } catch {
         return NextResponse.json({ error: { message: 'Invalid request body' } }, { status: 400 });

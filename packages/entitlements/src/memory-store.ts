@@ -23,7 +23,7 @@ function assertLive(grant: Grant): void {
 }
 
 /**
- * Local stand-in for Arkiv. Same semantics: after paid_through, findLive
+ * Local stand-in for Registry. Same semantics: after paid_through, findLive
  * no longer returns the grant (evaporating access).
  */
 export class MemoryGrantStore implements GrantStore {
@@ -34,9 +34,6 @@ export class MemoryGrantStore implements GrantStore {
 
   async mint(raw: MintGrantInput): Promise<Grant> {
     const input = MintGrantInputSchema.parse(raw);
-    if (input.world_denied) {
-      throw new Error('WORLD_DENIED: World Agent Pass failed, expired, or was cancelled — no grant written');
-    }
     validateMoney(input.remaining);
     if (input.id && this.grants.has(input.id)) {
       const existing = this.grants.get(input.id)!;
@@ -57,7 +54,6 @@ export class MemoryGrantStore implements GrantStore {
       paid_through: paidThrough,
       payment_tx: input.payment_tx,
       settlement_network: input.settlement_network,
-      world_proof_id: input.world_proof_id,
       mandate_id: input.mandate_id,
       worker_id: input.worker_id,
       schema_version: 1,

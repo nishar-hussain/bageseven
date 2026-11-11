@@ -56,7 +56,7 @@ export default function McpPage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-5">
-      <PageHeader title="Connect an agent" description="MCP slot for agents. They never hold World credentials." />
+      <PageHeader title="Connect an agent" description="MCP slot for agents. They never hold account credentials." />
 
       <section className="space-y-4 rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -134,7 +134,7 @@ export default function McpPage() {
               'bagseven_status',
               'grant_status',
               'paid_run',
-              'mint_with_world',
+              'buy_access',
               'buy_credits',
               'cancel_renewal',
               'list_subscriptions',
@@ -164,7 +164,7 @@ export default function McpPage() {
         <h2 className="text-base font-semibold">ChatGPT</h2>
         <p className="text-sm text-[var(--muted)]">
           Tunnel <code className="fi-mono text-xs">:4009/mcp</code> over HTTPS, enable OAuth (
-          <code className="fi-mono text-xs">MCP_OAUTH_REQUIRED</code>), add the custom MCP plugin. You complete World on
+          <code className="fi-mono text-xs">MCP_OAUTH_REQUIRED</code>), add the custom MCP plugin. You complete email and wallet approval on
           Bagseven&apos;s authorize page; ChatGPT only stores a Bagseven token.
         </p>
         <Link href="/app" className="inline-block text-sm font-semibold text-[var(--blue)] underline">

@@ -47,6 +47,10 @@ export async function POST(req: NextRequest) {
     meta: { next },
   });
 
+  if (process.env.NODE_ENV === 'production' && (!sent.ok || sent.skipped)) {
+    return NextResponse.json({ error: 'Email delivery is unavailable. Please try again later.' }, { status: 503 });
+  }
+
   const payload: Record<string, unknown> = { ok: true };
   if (sent.id) payload.email_id = sent.id;
   if (sent.error) payload.email_error = sent.error;

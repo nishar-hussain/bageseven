@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { agents, mandates, providers, refusals, reservations, transactions, vaults } from '@bagseven/db';
 import { validateMoney, sub, min, max } from '@bagseven/money';
 import { ApiError, idempotencyOnSend, idempotencyPreHandler, type ServiceDeps } from '@bagseven/server';
-import { canonicalMandate, canonicalSpawn, canonicalWithdraw, MandateClient, ProviderGasManager, providerGasEnabled, verifyProviderScope, whitechainConfig, recoverEip191, recoverSpendIntentSigner, workerKey } from '@bagseven/onchain';
+import { canonicalMandate, canonicalSpawn, canonicalWithdraw, MandateClient, ProviderGasManager, providerGasEnabled, verifyProviderScope, avalancheConfig, recoverEip191, recoverSpendIntentSigner, workerKey } from '@bagseven/onchain';
 import { encodeFunctionData, parseAbi, recoverMessageAddress, type Address } from 'viem';
 
 const BOUNDS: Record<number, string> = {
@@ -31,7 +31,7 @@ const createMandateSchema = z.object({
   per_purchase_cap: z.string().min(1),
   per_seller_pct: z.number().int().min(0).max(10000),
   max_depth: z.number().int().min(0),
-  chain_id: z.number().int().default(1874),
+  chain_id: z.number().int().default(43113),
   signature: z.string().min(1),
 });
 
@@ -39,7 +39,7 @@ const spawnSchema = z.object({
   parent_agent_id: z.string().uuid(),
   operator_address: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
   share_percent: z.number().int().min(1).max(100),
-  chain_id: z.number().int().default(1874),
+  chain_id: z.number().int().default(43113),
   signature: z.string().min(1),
 });
 
@@ -49,7 +49,7 @@ const spendIntentSchema = z.object({
   recipient: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
   nonce: z.number().int().nonnegative(),
   timestamp: z.number().int().positive(),
-  chain_id: z.number().int().default(1874),
+  chain_id: z.number().int().default(43113),
   signature: z.string().min(1),
   reason: z.string().max(500).optional(),
   request_id: z.string().uuid().optional(),
@@ -61,7 +61,7 @@ const settlementSchema = z.object({ tx_hash: z.string().min(1), recipient: z.str
 const withdrawSchema = z.object({
   amount: z.string().min(1),
   to_address: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
-  chain_id: z.number().int().default(1874),
+  chain_id: z.number().int().default(43113),
   signature: z.string().min(1),
 });
 
@@ -90,7 +90,7 @@ function mandateClient(config: NodeJS.ProcessEnv): MandateClient {
   return new MandateClient(key as `0x${string}`, {
     rpcUrl: config.RPC_URL ?? 'http://localhost:8545',
     rpcFallbackUrl: config.RPC_FALLBACK_URL,
-    chainId: Number(config.CHAIN_ID ?? 1874),
+    chainId: Number(config.CHAIN_ID ?? 43113),
   });
 }
 
@@ -100,7 +100,7 @@ function deploymentClient(config: NodeJS.ProcessEnv): MandateClient {
   return new MandateClient(config.MANDATE_DEPLOYER_KEY.trim() as `0x${string}`, {
     rpcUrl: config.RPC_URL ?? 'http://localhost:8545',
     rpcFallbackUrl: config.RPC_FALLBACK_URL,
-    chainId: Number(config.CHAIN_ID ?? 1874),
+    chainId: Number(config.CHAIN_ID ?? 43113),
   });
 }
 
@@ -111,7 +111,7 @@ function ownerClient(config: NodeJS.ProcessEnv): MandateClient {
   return new MandateClient(key as `0x${string}`, {
     rpcUrl: config.RPC_URL ?? 'http://localhost:8545',
     rpcFallbackUrl: config.RPC_FALLBACK_URL,
-    chainId: Number(config.CHAIN_ID ?? 1874),
+    chainId: Number(config.CHAIN_ID ?? 43113),
   });
 }
 
@@ -120,7 +120,7 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
   async function paidClient(provider?: string | null) {
     if (!providerGasEnabled(config)) return mandateClient(config);
     if (!provider) throw new ApiError(409, 'PROVIDER_GAS_REQUIRED', 'This legacy permission has no provider gas account. Configure provider gas and create a provider-bound permission.');
-    try { return new MandateClient(await gas.account(provider, 'whitechain'), { rpcUrl: config.RPC_URL ?? whitechainConfig(config).rpcUrl, rpcFallbackUrl: config.RPC_FALLBACK_URL, chainId: Number(config.CHAIN_ID ?? 1874) }); }
+    try { return new MandateClient(await gas.account(provider, 'avalanche'), { rpcUrl: config.RPC_URL ?? avalancheConfig(config).rpcUrl, rpcFallbackUrl: config.RPC_FALLBACK_URL, chainId: Number(config.CHAIN_ID ?? 43113) }); }
     catch (error) { throw new ApiError(409, 'PROVIDER_GAS_REQUIRED', (error as Error).message); }
   }
   app.addHook('preHandler', idempotencyPreHandler(redis));
@@ -161,14 +161,14 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
   };
 
   app.get('/v1/mandate-config', async () => {
-    const rail = whitechainConfig(config);
-    return { chain_id: rail.chainId, token: rail.usdt, rpc_url: rail.chainId === 1874 ? 'https://rpc.testnet.whitechain.io' : 'https://rpc.whitechain.io',
+    const rail = avalancheConfig(config);
+    return { chain_id: rail.chainId, token: rail.usdt, rpc_url: rail.rpcUrl,
       operator_address: mandateClient(config).address, deployer_address: deploymentClient(config).address };
   });
 
   app.post('/v1/mandates/prepare', async req => {
     const body = createMandateSchema.omit({ signature: true }).parse(req.body);
-    if (body.chain_id !== Number(config.CHAIN_ID ?? 1874)) throw new ApiError(400, 'CHAIN_MISMATCH', 'Select the configured Whitechain network');
+    if (body.chain_id !== Number(config.CHAIN_ID ?? 43113)) throw new ApiError(400, 'CHAIN_MISMATCH', 'Select the configured Avalanche network');
     for (const amount of [body.budget_per_window, body.lifetime_cap, body.per_purchase_cap]) {
       validateMoney(amount);
       if (toUnits(amount) <= 0n) throw new ApiError(400, 'INVALID_AMOUNT', 'Spending limits must be positive');
@@ -183,7 +183,7 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
     const { id } = req.params as { id: string };
     await getMandate(id);
     const body = spawnSchema.omit({ signature: true }).parse(req.body);
-    if (body.chain_id !== Number(config.CHAIN_ID ?? 1874)) throw new ApiError(400, 'CHAIN_MISMATCH', 'Select the configured Whitechain network');
+    if (body.chain_id !== Number(config.CHAIN_ID ?? 43113)) throw new ApiError(400, 'CHAIN_MISMATCH', 'Select the configured Avalanche network');
     return { payload: body, message: canonicalSpawn({ mandateId: id, parentAgentId: body.parent_agent_id,
       operator: body.operator_address.toLowerCase() as Address, sharePercent: body.share_percent, chainId: body.chain_id }) };
   });
@@ -205,7 +205,7 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
       if (amount <= 0n) throw new ApiError(400, 'INVALID_AMOUNT', 'Amount must be greater than zero');
       if (body.action === 'fund') {
         if (snapshot.revoked) throw new ApiError(409, 'MANDATE_INACTIVE', 'Do not fund a revoked spending permission');
-        if (snapshot.token?.toLowerCase() !== whitechainConfig(config).usdt.toLowerCase()) throw new ApiError(409, 'MANDATE_TOKEN_MISMATCH', 'This vault uses another token');
+        if (snapshot.token?.toLowerCase() !== avalancheConfig(config).usdt.toLowerCase()) throw new ApiError(409, 'MANDATE_TOKEN_MISMATCH', 'This vault uses another token');
         to = snapshot.token!;
         data = encodeFunctionData({ abi: parseAbi(['function transfer(address,uint256) returns(bool)']), functionName: 'transfer', args: [contract, amount] });
       } else {
@@ -213,7 +213,7 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
         data = encodeFunctionData({ abi: parseAbi(['function withdraw(uint256,address)']), functionName: 'withdraw', args: [amount, mandate.ownerAddress as Address] });
       }
     }
-    return { chain_id: Number(config.CHAIN_ID ?? 1874), from: mandate.ownerAddress, to, data, value: '0x0' };
+    return { chain_id: Number(config.CHAIN_ID ?? 43113), from: mandate.ownerAddress, to, data, value: '0x0' };
   });
 
   // Create + sign a mandate: owner wallet signs the canonical payload (EIP-191),
@@ -221,7 +221,7 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
   // contract on-chain — the caps become the immutable, enforced guarantee.
   app.post('/v1/mandates', async (req) => {
     const body = createMandateSchema.parse(req.body);
-    if (body.chain_id !== Number(config.CHAIN_ID ?? 1874)) throw new ApiError(400, 'CHAIN_MISMATCH', 'Signed chain_id must match the configured Whitechain network');
+    if (body.chain_id !== Number(config.CHAIN_ID ?? 43113)) throw new ApiError(400, 'CHAIN_MISMATCH', 'Signed chain_id must match the configured Avalanche network');
     validateMoney(body.budget_per_window);
     validateMoney(body.lifetime_cap);
     validateMoney(body.per_purchase_cap);
@@ -253,7 +253,7 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
       owner: body.owner_address.toLowerCase() as Address,
       operator: body.operator_address.toLowerCase() as Address,
       enforcer: (providerGasEnabled(config) ? client.address : config.DAEMON_EXECUTOR_ADDRESS ?? executor.address) as Address,
-      usdc: whitechainConfig(config).usdt as Address,
+      usdc: avalancheConfig(config).usdt as Address,
       budgetPerWindow: toUnits(body.budget_per_window),
       windowSeconds: body.window_seconds,
       lifetimeCap: toUnits(body.lifetime_cap),
@@ -266,9 +266,9 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
       const message = error instanceof Error ? error.message.toLowerCase() : '';
       if (message.includes('provider_gas_')) throw new ApiError(409, 'PROVIDER_GAS_DENIED', (error as Error).message);
       if (/insufficient funds|exceeds the balance|insufficient balance/.test(message)) {
-        throw new ApiError(503, 'DEPLOYER_GAS_INSUFFICIENT', providerGasEnabled(config) ? `The provider gas account ${client.address} needs more WBT on Whitechain. Platform funding fallback is disabled; USDT cannot pay gas.` : `The deployment wallet ${client.address} needs more WBT for network gas. Fund the deployment wallet or configure MANDATE_DEPLOYER_KEY with a funded account. USDT is not used for deployment gas.`);
+        throw new ApiError(503, 'DEPLOYER_GAS_INSUFFICIENT', providerGasEnabled(config) ? `The provider gas account ${client.address} needs more AVAX on Avalanche. Platform funding fallback is disabled; USDT cannot pay gas.` : `The deployment wallet ${client.address} needs more AVAX for network gas. Fund the deployment wallet or configure MANDATE_DEPLOYER_KEY with a funded account. USDT is not used for deployment gas.`);
       }
-      throw new ApiError(502, 'MANDATE_DEPLOYMENT_FAILED', 'Whitechain could not confirm the permission deployment. Check the deployment wallet activity before retrying to avoid creating a duplicate permission.');
+      throw new ApiError(502, 'MANDATE_DEPLOYMENT_FAILED', 'Avalanche could not confirm the permission deployment. Check the deployment wallet activity before retrying to avoid creating a duplicate permission.');
     }
 
     const mandateId = randomUUID();
@@ -419,7 +419,7 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
   app.post('/v1/mandates/:id/spawn-agent', async (req) => {
     const { id } = req.params as { id: string };
     const body = spawnSchema.parse(req.body);
-    if (body.chain_id !== Number(config.CHAIN_ID ?? 1874)) throw new ApiError(400, 'CHAIN_MISMATCH', 'Signed chain_id must match the configured Whitechain network');
+    if (body.chain_id !== Number(config.CHAIN_ID ?? 43113)) throw new ApiError(400, 'CHAIN_MISMATCH', 'Signed chain_id must match the configured Avalanche network');
     const mandate = await getMandate(id);
     const parent = await db.query.agents.findFirst({ where: eq(agents.id, body.parent_agent_id) });
     if (!parent || parent.mandateId !== id) throw new ApiError(404, 'NOT_FOUND', 'parent agent not in this mandate');
@@ -480,7 +480,7 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
   // mode the daemon submits the transaction, then settles this reservation.
   app.post('/v1/spend-intents', async (req) => {
     const body = spendIntentSchema.parse(req.body);
-    if (body.chain_id !== Number(config.CHAIN_ID ?? 1874)) throw new ApiError(400, 'CHAIN_MISMATCH', 'Signed chain_id must match the configured Whitechain network');
+    if (body.chain_id !== Number(config.CHAIN_ID ?? 43113)) throw new ApiError(400, 'CHAIN_MISMATCH', 'Signed chain_id must match the configured Avalanche network');
     const now = Math.floor(Date.now() / 1000);
     if (Math.abs(now - body.timestamp) > Number(config.SPEND_INTENT_MAX_AGE_SECONDS ?? 300)) {
       throw new ApiError(400, 'SPEND_INTENT_EXPIRED', 'spend intent timestamp is outside the allowed window');
@@ -644,7 +644,7 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
     const client = mandateClient(config);
     const availability = await readMandateAvailability(client, mandate.contractAddress as Address);
     if (availability.chain.status === 'unavailable') throw new ApiError(409, 'MANDATE_UNAVAILABLE', availability.chain.message);
-    await client.fund(mandate.contractAddress as Address, whitechainConfig(config).usdt as Address, toUnits(body.amount));
+    await client.fund(mandate.contractAddress as Address, avalancheConfig(config).usdt as Address, toUnits(body.amount));
     await db.insert(transactions).values({ mandateId, amount: body.amount, type: 'fund' });
     return { vault_balance: fromUnits(await client.vaultBalance(mandate.contractAddress as Address)) };
   });
@@ -653,7 +653,7 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
     if (providerGasEnabled(config)) throw new ApiError(403, 'WALLET_APPROVAL_REQUIRED', 'Use the owner-wallet withdrawal draft; platform-funded withdrawal gas is disabled');
     const { mandateId } = req.params as { mandateId: string };
     const body = withdrawSchema.parse(req.body);
-    if (body.chain_id !== Number(config.CHAIN_ID ?? 1874)) throw new ApiError(400, 'CHAIN_MISMATCH', 'Signed chain_id must match the configured Whitechain network');
+    if (body.chain_id !== Number(config.CHAIN_ID ?? 43113)) throw new ApiError(400, 'CHAIN_MISMATCH', 'Signed chain_id must match the configured Avalanche network');
     validateMoney(body.amount);
     const mandate = await getMandate(mandateId);
     if (!mandate.contractAddress) throw new ApiError(503, 'NO_CONTRACT', 'no contract');

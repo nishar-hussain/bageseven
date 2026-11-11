@@ -5,7 +5,7 @@ import { providerScope } from './billing.js';
 import { Subscriptions } from './subscriptions.js';
 import type { Subscription } from './subscription-types.js';
 import { encodeFunctionData, type Hex } from 'viem';
-import { SubscriptionAbi, whitechainConfig } from '@bagseven/onchain';
+import { SubscriptionAbi, avalancheConfig } from '@bagseven/onchain';
 
 export const subscriptionView = (sub: Subscription) => ({
   id: sub.id, checkout_id: sub.checkoutId, holder: sub.holder, plan_id: sub.plan.id, feature: sub.plan.feature,
@@ -14,7 +14,7 @@ export const subscriptionView = (sub: Subscription) => ({
   paid_through: new Date(sub.paidThrough * 1000).toISOString(), next_attempt_at: new Date(sub.nextAttemptAt * 1000).toISOString(),
   failures: sub.failures, last_error: sub.lastError ?? null, grant_id: sub.grantId, payment_tx: sub.paymentTx,
   attempts: sub.attempts ?? [],
-  token: whitechainConfig().usdt,
+  token: avalancheConfig().usdt,
   cancel_data: encodeFunctionData({ abi: SubscriptionAbi, functionName: 'cancel', args: [sub.key as Hex] }),
 });
 export const cancellationDraft = (sub: Subscription) => ({

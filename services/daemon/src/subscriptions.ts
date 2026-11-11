@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { ArkivInvalidValueError, type Grant, type GrantStore } from '@bagseven/entitlements';
+import { EntitlementPreflightError, type Grant, type GrantStore } from '@bagseven/entitlements';
 import { encodeFunctionData } from 'viem';
 import { SubscriptionAbi } from '@bagseven/onchain';
 import { platformFee, type CheckoutSession, type Plan } from './billing-store.js';
@@ -7,7 +7,7 @@ import type { SubscriptionStore } from './subscription-store.js';
 import type { SubscriptionChain } from './subscription-chain.js';
 import { checkoutKey, subscriptionId, subscriptionKey } from './subscription-chain.js';
 import { RETRY_OFFSETS, COLLECTION_WINDOW, type Subscription, type SubscriptionPeriod } from './subscription-types.js';
-import { usdtUnits } from './whitechain-payment.js';
+import { usdtUnits } from './avalanche-payment.js';
 
 const uuidFor = (value: string) => {
   const hex = createHash('sha256').update(value).digest('hex');
@@ -16,6 +16,7 @@ const uuidFor = (value: string) => {
 const seconds = () => Math.floor(Date.now() / 1000);
 
 export class Subscriptions {
+  private ticking = false;
   constructor(readonly store: SubscriptionStore, private chain: SubscriptionChain, private grants: GrantStore, private clock = seconds) {}
 
   async prepare(plan: Plan) {
@@ -63,7 +64,7 @@ export class Subscriptions {
           plan: session.plan!, chainId: verified.plan.chainId, contract: verified.plan.contract, key: subscriptionKey(payer, session.id),
           payer, status: 'RECONCILIATION_REQUIRED', paidThrough: verified.payment.paidThrough, failures: 0,
           nextAttemptAt: verified.payment.paidThrough + RETRY_OFFSETS[0]!, grantId: '', paymentTx: hash,
-          humanId: identity?.human_id, worldProofId: identity?.world_proof_id, workerId: session.worker_id || identity?.worker_id };
+          humanId: identity?.human_id, workerId: session.worker_id || identity?.worker_id };
         await this.store.save(sub);
       }
       if (sub.paymentTx.toLowerCase() !== hash.toLowerCase() || sub.payer.toLowerCase() !== payer.toLowerCase()) throw Error('SUBSCRIPTION_CHECKOUT_CONFLICT');
@@ -90,11 +91,11 @@ export class Subscriptions {
       await this.store.savePeriod({ ...period, stage: 'minting', grantId: id });
       try {
         grant = await this.grants.mint({ id, merchant: sub.providerId, holder: sub.holder, feature: sub.plan.feature,
-          remaining: sub.plan.credits, ttl_seconds: ttl, renewal_enabled: sub.status !== 'CANCELLED', settlement_network: 'whitechain',
-          payment_tx: period.hash, worker_id: sub.workerId, human_id: sub.humanId, world_proof_id: sub.worldProofId });
+          remaining: sub.plan.credits, ttl_seconds: ttl, renewal_enabled: sub.status !== 'CANCELLED', settlement_network: 'avalanche',
+          payment_tx: period.hash, worker_id: sub.workerId, human_id: sub.humanId });
       } catch (error) {
         // Only a known pre-broadcast validation failure may retry a fresh write.
-        if (error instanceof ArkivInvalidValueError) await this.store.savePeriod({ ...period, stage: 'confirmed', grantId: id });
+        if (error instanceof EntitlementPreflightError) await this.store.savePeriod({ ...period, stage: 'confirmed', grantId: id });
         throw error;
       }
     }
@@ -151,7 +152,11 @@ export class Subscriptions {
         if (period && period.stage !== 'failed') {
           if (period.stage === 'complete' || period.stage === 'confirmed' || period.stage === 'minting') { await this.fulfill(sub, period); return; }
           const payment = await this.chain.payment(period.hash, sub.contract, sub.key, sub.plan, sub.payer);
-          if (!payment) { await this.chain.broadcast(period.raw); return; }
+          if (!payment) {
+            await this.chain.broadcast(period.raw);
+            await this.store.save({ ...sub, nextAttemptAt: this.clock() + 15 });
+            return;
+          }
           if (payment.paidThrough !== sub.paidThrough + sub.plan.ttl_seconds) throw Error('SUBSCRIPTION_PERIOD_MISMATCH');
           period = { ...period, stage: 'confirmed', paidThrough: payment.paidThrough, grantId: uuidFor(period.id) };
           await this.store.savePeriod(period);
@@ -174,6 +179,7 @@ export class Subscriptions {
         await this.store.savePeriod(period);
         await this.chain.broadcast(period.raw);
         await this.store.savePeriod({ ...period, stage: 'submitted' });
+        await this.store.save({ ...sub, nextAttemptAt: this.clock() + 15 });
         // Receipt verification on the next tick also works after a daemon restart.
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
@@ -196,8 +202,15 @@ export class Subscriptions {
       attempts: [...(sub.attempts ?? []), { at: this.clock(), reason }].slice(-100) });
   }
   async tick() {
-    for (const sub of await this.store.list()) {
-      if (sub.status !== 'ENDED' && (sub.nextAttemptAt <= this.clock() || sub.status === 'RECONCILIATION_REQUIRED')) await this.process(sub.id);
-    }
+    if (this.ticking) return;
+    this.ticking = true;
+    try {
+      // A bounded indexed batch; per-subscription database locks coordinate replicas.
+      // Two simultaneous lock connections leave capacity for durable journal writes.
+      const due = await this.store.due(this.clock(), 100);
+      for (let offset = 0; offset < due.length; offset += 2) {
+        await Promise.all(due.slice(offset, offset + 2).map(sub => this.process(sub.id)));
+      }
+    } finally { this.ticking = false; }
   }
 }

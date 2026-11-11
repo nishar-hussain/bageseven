@@ -345,10 +345,7 @@ export default function BuilderPage() {
     setTimeout(() => setCopied(null), 1600);
   };
 
-  const payConfigured = Boolean(op.status?.tracks.whitechain.pay_to && op.status?.tracks.whitechain.usdt);
-  const payToShort = op.status?.tracks.whitechain.pay_to
-    ? `${op.status.tracks.whitechain.pay_to.slice(0, 8)}…`
-    : null;
+  const payConfigured = Boolean(op.status?.tracks.avalanche.usdt);
   const defaults = saved.filter((s) => s.isDefault);
   const customs = saved.filter((s) => !s.isDefault);
 
@@ -368,8 +365,8 @@ export default function BuilderPage() {
 
       {!op.loading && !payConfigured ? (
         <SoftCard className="border-[var(--warn)]/40 bg-[var(--warn-soft,#fffbeb)] p-4 text-[13px]">
-          <strong>Whitechain recipient missing.</strong> Mint / buy credits need{' '}
-          <code className="fi-mono text-xs">WHITECHAIN_PAY_TO</code>. Check{' '}
+          <strong>Payment token missing.</strong> Configure{' '}
+          <code className="fi-mono text-xs">AVALANCHE_USDC</code>. Check{' '}
           <Link href="/app/settings" className="font-semibold text-[var(--blue)]">
             Tracks
           </Link>
@@ -379,11 +376,10 @@ export default function BuilderPage() {
 
       {!op.loading && payConfigured ? (
         <div className="flex flex-wrap items-center gap-2 text-[12px] text-[var(--muted)]">
-          <StatusPill tone="good">Whitechain ready</StatusPill>
+          <StatusPill tone="good">Avalanche ready</StatusPill>
           <span>
-            Recipient {payToShort}
-            {op.status?.tracks.whitechain.operator ? ' · operator settle on' : ''}
-            {op.status?.tracks.whitechain.demo_settle ? ' · demo settle' : ' · live verify'}
+            Each checkout pays its plan’s merchant wallet.
+            {op.status?.tracks.avalanche.demo_settle ? ' · demo settle' : ' · live verify'}
           </span>
         </div>
       ) : null}

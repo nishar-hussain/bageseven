@@ -2,8 +2,8 @@ import { formatUnits } from 'viem';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { assertKnownFeature } from '@bagseven/entitlements';
-import { WHITECHAIN_CHAIN_ID, whitechainConfig } from '@bagseven/onchain';
-import { usdtUnits } from './whitechain-payment.js';
+import { AVALANCHE_FUJI_CHAIN_ID, avalancheConfig } from '@bagseven/onchain';
+import { usdtUnits } from './avalanche-payment.js';
 import { billingPlans, checkoutSessions, type Database } from '@bagseven/db';
 import { desc, eq } from 'drizzle-orm';
 
@@ -32,7 +32,7 @@ export const CheckoutSessionSchema = z.object({
   amount: z.string().min(1),
   platform_fee_bps: z.number().int().default(0),
   platform_fee_amount: z.string().default('0'),
-  chain_id: z.number().int().default(WHITECHAIN_CHAIN_ID),
+  chain_id: z.number().int().default(AVALANCHE_FUJI_CHAIN_ID),
   customer_wallet: z.string().optional(),
   payment_tx: z.string().optional(),
   grant_id: z.string().optional(),
@@ -128,7 +128,7 @@ export class MemoryBillingStore {
       worker_id: input.worker_id,
       status: 'PENDING',
       amount: plan.amount,
-      chain_id: whitechainConfig().chainId,
+      chain_id: avalancheConfig().chainId,
       platform_fee_bps: 10,
       platform_fee_amount: platformFee(plan.amount),
       success_url: input.success_url,
@@ -211,7 +211,7 @@ export class PostgresBillingStore implements BillingStore {
     const input = CreateCheckoutInput.parse(raw);
     const plan = await this.getPlan(input.plan_id);
     if (!plan?.active) throw new Error('PLAN_NOT_FOUND');
-    const session: CheckoutSession = { id: `cs_${randomUUID().replace(/-/g, '')}`, plan_id: plan.id, holder: input.holder, worker_id: input.worker_id, status: 'PENDING', amount: plan.amount, chain_id: whitechainConfig().chainId, platform_fee_bps: 10, platform_fee_amount: platformFee(plan.amount), success_url: input.success_url, expires_at: new Date(Date.now() + input.expires_in * 1000).toISOString(), created_at: nowIso(), plan };
+    const session: CheckoutSession = { id: `cs_${randomUUID().replace(/-/g, '')}`, plan_id: plan.id, holder: input.holder, worker_id: input.worker_id, status: 'PENDING', amount: plan.amount, chain_id: avalancheConfig().chainId, platform_fee_bps: 10, platform_fee_amount: platformFee(plan.amount), success_url: input.success_url, expires_at: new Date(Date.now() + input.expires_in * 1000).toISOString(), created_at: nowIso(), plan };
     await this.db.insert(checkoutSessions).values({ id: session.id, planId: plan.id, holder: session.holder, workerId: session.worker_id, status: session.status, amount: session.amount, chainId: session.chain_id, platformFeeBps: session.platform_fee_bps, platformFeeAmount: session.platform_fee_amount, successUrl: session.success_url, expiresAt: new Date(session.expires_at) });
     return session;
   }

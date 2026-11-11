@@ -1,5 +1,5 @@
 import { billingSubscriptions, subscriptionPeriods, subscriptionPlans, type Database } from '@bagseven/db';
-import { eq, sql } from 'drizzle-orm';
+import { and, asc, eq, lte, ne, or, sql } from 'drizzle-orm';
 import type { Subscription, SubscriptionPeriod, SubscriptionPlan } from './subscription-types.js';
 
 export interface SubscriptionStore {
@@ -8,6 +8,7 @@ export interface SubscriptionStore {
   get(id: string): Promise<Subscription | null>;
   save(subscription: Subscription): Promise<void>;
   list(holder?: string): Promise<Subscription[]>;
+  due(now: number, limit: number): Promise<Subscription[]>;
   period(id: string): Promise<SubscriptionPeriod | null>;
   savePeriod(period: SubscriptionPeriod): Promise<void>;
   lock<T>(id: string, operation: () => Promise<T>): Promise<T | undefined>;
@@ -24,6 +25,12 @@ export class MemorySubscriptionStore implements SubscriptionStore {
   async get(id: string) { return structuredClone(this.subscriptions.get(id) ?? null); }
   async save(sub: Subscription) { this.subscriptions.set(sub.id, structuredClone(sub)); }
   async list(holder?: string) { return structuredClone([...this.subscriptions.values()].filter(s => !holder || s.holder === holder)); }
+  async due(now: number, limit: number) {
+    return structuredClone([...this.subscriptions.values()]
+      .filter(s => s.status !== 'ENDED' && s.nextAttemptAt <= now &&
+        (s.status !== 'CANCELLED' || s.lastError?.startsWith('RENEWAL_FLAG_SYNC_PENDING:')))
+      .sort((a, b) => a.nextAttemptAt - b.nextAttemptAt || a.id.localeCompare(b.id)).slice(0, limit));
+  }
   async period(id: string) { return structuredClone(this.periods.get(id) ?? null); }
   async savePeriod(period: SubscriptionPeriod) { this.periods.set(period.id, structuredClone(period)); }
   async lock<T>(id: string, operation: () => Promise<T>) {
@@ -56,6 +63,15 @@ export class PostgresSubscriptionStore implements SubscriptionStore {
   }
   async list(holder?: string) {
     const rows = await this.db.select().from(billingSubscriptions).where(holder ? eq(billingSubscriptions.holder, holder) : undefined);
+    return rows.map(row => row.data as Subscription);
+  }
+  async due(now: number, limit: number) {
+    const rows = await this.db.select().from(billingSubscriptions).where(and(
+      ne(billingSubscriptions.status, 'ENDED'),
+      lte(billingSubscriptions.nextAttemptAt, new Date(now * 1000)),
+      or(ne(billingSubscriptions.status, 'CANCELLED'),
+        sql`${billingSubscriptions.data}->>'lastError' LIKE 'RENEWAL_FLAG_SYNC_PENDING:%'`),
+    )).orderBy(asc(billingSubscriptions.nextAttemptAt), asc(billingSubscriptions.id)).limit(limit);
     return rows.map(row => row.data as Subscription);
   }
   async period(id: string) {

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { Entitlement, Subscription } from './types.js';
-import { authorizeWhitechainPayment, connectWhitechainWallet, payUsdtOnWhitechain, subscribeOnWhitechain, cancelWhitechainSubscription, renewSubscriptionAllowance } from './wallet.js';
+import { authorizeAvalanchePayment, connectAvalancheWallet, payStablecoinOnAvalanche, subscribeOnAvalanche, cancelAvalancheSubscription, renewSubscriptionAllowance } from './wallet.js';
 import { resolveEmbedComponent, type EmbedComponentId } from './components.js';
 
 export type EmbedView = 'portal' | 'checkout' | 'consume' | 'credits' | 'unsubscribe' | 'pricing' | 'customer';
@@ -410,24 +410,24 @@ export function BagsevenEmbed({
   }, [checkout?.status, checkout?.subscription_plan?.status, loadCheckout]);
 
   const cancelSubscription = async (sub: Subscription) => {
-    await cancelWhitechainSubscription({ contract: sub.contract, key: sub.subscription_key, payer: sub.payer, chainId: sub.chain_id, cancelData: sub.cancel_data });
+    await cancelAvalancheSubscription({ contract: sub.contract, key: sub.subscription_key, payer: sub.payer, chainId: sub.chain_id, cancelData: sub.cancel_data });
     if (accessToken) await publicPost(base, `/subscriptions/${encodeURIComponent(sub.id)}/sync`, accessToken, {});
     else await fetch(`${base}/public/checkout/${encodeURIComponent(sub.checkout_id)}/subscription/sync`, { method: 'POST' }).then(async r => { if (!r.ok) throw new Error((await r.json()).error?.message || 'Cancellation confirmed; status sync needs retry'); });
     await loadCheckout(sub.checkout_id);
-    setMsg('Renewal cancelled on Whitechain. Already-paid access remains until the period ends.');
+    setMsg('Renewal cancelled on Avalanche. Already-paid access remains until the period ends.');
   };
   const subscriptionCard = (sub: Subscription) => (
     <Card key={sub.id}>
-      <strong>{sub.feature} · {sub.amount} USDT every {Math.round(sub.period_seconds / 86400)} days</strong>
+      <strong>{sub.feature} · {sub.amount} stablecoin every {Math.round(sub.period_seconds / 86400)} days</strong>
       <p>{sub.status} · Paid through {formatWhen(sub.paid_through)}</p>
       {!['CANCELLED', 'ENDED'].includes(sub.status) && <p>Next collection attempt: {formatWhen(sub.next_attempt_at)}</p>}
       {sub.last_error && <p role="status">{sub.last_error}</p>}
-      <p style={{ fontSize: 12 }}>Payments are collected from your wallet within the approved plan terms. Your wallet needs USDT balance and allowance. Wallet approval and cancellation use WBT for gas.</p>
+      <p style={{ fontSize: 12 }}>Payments are collected from your wallet within the approved plan terms. Your wallet needs stablecoin balance and allowance. Wallet approval and cancellation use AVAX for gas.</p>
       {!['CANCELLED', 'ENDED'].includes(sub.status) && <>
         <GhostBtn disabled={busy} onClick={() => void act(() => cancelSubscription(sub))}>Cancel recurring payment with wallet</GhostBtn>
         <GhostBtn disabled={busy} onClick={() => void act(async () => {
           await renewSubscriptionAllowance({ contract: sub.contract, payer: sub.payer, chainId: sub.chain_id, usdt: sub.token, amount: sub.amount });
-          setMsg('USDT allowance authorized for up to 12 charges. The next due attempt uses this permission; no payment was collected by this action.');
+          setMsg('stablecoin allowance authorized for up to 12 charges. The next due attempt uses this permission; no payment was collected by this action.');
         })}>Authorize next 12 charges</GhostBtn>
       </>}
     </Card>
@@ -551,7 +551,7 @@ export function BagsevenEmbed({
                   <div style={{ marginTop: 14, display: 'flex', alignItems: 'baseline', gap: 4 }}>
                     <span style={{ fontSize: 28, fontWeight: 750, letterSpacing: '-0.03em', lineHeight: 1 }}>{p.amount}</span>
                     <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--bs-muted)' }}>
-                      USDT{p.interval === 'month' ? '/mo' : ''}
+                      stablecoin{p.interval === 'month' ? '/mo' : ''}
                     </span>
                   </div>
                   <ul style={{ listStyle: 'none', margin: '16px 0 0', padding: 0, display: 'grid', gap: 8, flex: 1 }}>
@@ -728,7 +728,7 @@ export function BagsevenEmbed({
       <div style={{ marginBottom: 16 }}>
         <h3 style={{ margin: 0, fontSize: 20, fontWeight: 700, letterSpacing: '-0.02em' }}>Checkout</h3>
         <p style={{ margin: '6px 0 0', fontSize: 13, color: 'var(--bs-muted)', lineHeight: 1.5 }}>
-          Pay with Whitechain testnet USDT. Entitlement goes live when payment confirms.
+          Pay on Avalanche with the plan’s configured stablecoin. Access activates after payment confirmation.
         </p>
       </div>
       {!sessionId ? (
@@ -765,7 +765,7 @@ export function BagsevenEmbed({
             <span style={{ fontSize: 12, color: 'var(--bs-muted)', fontWeight: 600 }}>Due now</span>
             <span style={{ fontSize: 24, fontWeight: 750, letterSpacing: '-0.02em' }}>
               {checkout.amount}{' '}
-              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--bs-muted)' }}>USDT</span>
+              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--bs-muted)' }}>stablecoin</span>
             </span>
           </div>
 
@@ -783,7 +783,7 @@ export function BagsevenEmbed({
             <p style={{ marginTop: 16, color: 'var(--bs-muted)', fontSize: 13 }}>This checkout is {checkout.status.toLowerCase()}. Open a new checkout before paying.</p>
           ) : (
             <div style={{ marginTop: 16, display: 'grid', gap: 8 }}>
-              {checkout.plan?.interval === 'month' && <p>Approve {checkout.amount} USDT every 30 days to this provider. The first payment starts access. A new allowance is limited to 12 charges; you can cancel future collections in the portal.</p>}
+              {checkout.plan?.interval === 'month' && <p>Approve {checkout.amount} stablecoin every 30 days to this provider. The first payment starts access. A new allowance is limited to 12 charges; you can cancel future collections in the portal.</p>}
               <PrimaryBtn
                 disabled={busy || !checkout.plan || checkout.status !== 'PENDING' || Boolean(demoTx) || (checkout.plan.interval === 'month' && checkout.subscription_plan?.status !== 'ready')}
                 onClick={() =>
@@ -798,9 +798,9 @@ export function BagsevenEmbed({
                     const recurring = fresh.plan?.interval === 'month';
                     if (recurring && fresh.subscription_plan?.status !== 'ready') throw new Error('Recurring plan is preparing; wait before authorizing');
                     const paid = recurring
-                      ? await subscribeOnWhitechain({ contract: fresh.subscription_plan!.address, subscribeData: fresh.subscription_plan!.subscribe_data,
+                      ? await subscribeOnAvalanche({ contract: fresh.subscription_plan!.address, subscribeData: fresh.subscription_plan!.subscribe_data,
                           amount: fresh.amount, usdt: fresh.payment.usdt, chainId: fresh.chain_id, checkoutId: fresh.id, onTransactionSubmitted: onSubmitted })
-                      : await payUsdtOnWhitechain({ merchantWallet: fresh.plan!.merchant_wallet, amount: fresh.amount,
+                      : await payStablecoinOnAvalanche({ merchantWallet: fresh.plan!.merchant_wallet, amount: fresh.amount,
                           chainId: fresh.chain_id, usdt: fresh.payment.usdt, context: `checkout:${fresh.id}`, onTransactionSubmitted: onSubmitted });
                     await fetch(`${base}/public/checkout/${encodeURIComponent(checkout.id)}/confirm`, {
                       method: 'POST',
@@ -823,7 +823,7 @@ export function BagsevenEmbed({
                   disabled={busy}
                   onClick={() =>
                     void act(async () => {
-                      const { address } = await connectWhitechainWallet(checkout.chain_id);
+                      const { address } = await connectAvalancheWallet(checkout.chain_id);
                       setMsg(`Connected ${address}`);
                     })
                   }
@@ -851,7 +851,7 @@ export function BagsevenEmbed({
                   disabled={busy || !demoTx || !checkout.plan}
                   onClick={() =>
                     void act(async () => {
-                      const authorization = await authorizeWhitechainPayment({
+                      const authorization = await authorizeAvalanchePayment({
                         payment_tx: demoTx.trim(),
                         context: `checkout:${checkout.id}`,
                         chainId: checkout.chain_id,

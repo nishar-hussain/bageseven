@@ -10,15 +10,15 @@ import { SubscriptionAbi, SubscriptionBytecode, SubscriptionRuntime } from '../p
 import { MemoryGrantStore } from '../packages/entitlements/dist/index.js';
 import { MemorySubscriptionStore } from '../services/daemon/src/subscription-store.ts';
 import { Subscriptions } from '../services/daemon/src/subscriptions.ts';
-import { WhitechainSubscriptionChain, subscriptionKey } from '../services/daemon/src/subscription-chain.ts';
+import { AvalancheSubscriptionChain, subscriptionKey } from '../services/daemon/src/subscription-chain.ts';
 
 const port = await new Promise(resolve => {
   const server = createServer(); server.listen(0, '127.0.0.1', () => { const port = server.address().port; server.close(() => resolve(port)); });
 });
-const anvil = spawn('anvil', ['--port', String(port), '--chain-id', '1874', '--silent'], { stdio: ['ignore', 'ignore', 'pipe'] });
+const anvil = spawn('anvil', ['--port', String(port), '--chain-id', '43113', '--silent'], { stdio: ['ignore', 'ignore', 'pipe'] });
 let childError = ''; anvil.stderr.on('data', chunk => { childError += chunk.toString(); });
 const url = `http://127.0.0.1:${port}`;
-const chain = defineChain({ id: 1874, name: 'Isolated test chain', nativeCurrency: { name: 'Test gas', symbol: 'TEST', decimals: 18 }, rpcUrls: { default: { http: [url] } } });
+const chain = defineChain({ id: 43113, name: 'Isolated test chain', nativeCurrency: { name: 'Test gas', symbol: 'TEST', decimals: 18 }, rpcUrls: { default: { http: [url] } } });
 const client = createPublicClient({ chain, transport: http(url, { retryCount: 0 }) });
 const test = createTestClient({ chain, mode: 'anvil', transport: http(url) });
 const owner = privateKeyToAccount(generatePrivateKey()); const collector = privateKeyToAccount(generatePrivateKey()); const merchant = privateKeyToAccount(generatePrivateKey());
@@ -84,8 +84,8 @@ try {
   console.log('PASS missed collection window cannot be back-billed');
 
   // Exercise the actual RPC adapter against the compiled contract, not a mocked receipt.
-  const adapter = new WhitechainSubscriptionChain({ signedSubscription: async () => undefined, status: async () => ({ authorization: { subscriptions: true } }), account: async () => collector }, {
-    CHAIN_ID: '1874', WHITECHAIN_RPC_URL: url, RPC_URL: url, WHITECHAIN_USDT: token, WHITECHAIN_CONFIRMATIONS: '1',
+  const adapter = new AvalancheSubscriptionChain({ signedSubscription: async () => undefined, status: async () => ({ authorization: { subscriptions: true } }), account: async () => collector }, {
+    CHAIN_ID: '43113', AVALANCHE_RPC_URL: url, RPC_URL: url, AVALANCHE_USDC: token, AVALANCHE_CONFIRMATIONS: '1',
   });
   const plan = { id: 'adapter-plan', provider_id: 'provider', interval: 'month', ttl_seconds: Number(length), amount: '10', merchant_wallet: merchant.address };
   const prepared = await adapter.preparePlan(plan);
@@ -102,7 +102,7 @@ try {
   await mineTx(firstHash);
   let clock = Number((await client.getBlock()).timestamp);
   const service = new Subscriptions(store, adapter, grants, () => clock);
-  const session = { id: checkout, holder: 'integration-human', plan_id: plan.id, plan: fullPlan, chain_id: 1874, status: 'PENDING', amount: '10', expires_at: new Date((clock + 3600) * 1000).toISOString() };
+  const session = { id: checkout, holder: 'integration-human', plan_id: plan.id, plan: fullPlan, chain_id: 43113, status: 'PENDING', amount: '10', expires_at: new Date((clock + 3600) * 1000).toISOString() };
   const grant = await service.completeCheckout(session, owner.address, firstHash);
   const again = await service.completeCheckout(session, owner.address, firstHash);
   assert.equal(grant.id, again.id);

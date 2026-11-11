@@ -8,15 +8,12 @@ import { registerPublicEntitlementRoutes } from './public-entitlements.js';
 beforeEach(() => {
   vi.stubEnv('PROVIDER_FUNDED_GAS', 'false');
   vi.stubEnv('ENTITLEMENT_STORE', 'memory');
-  vi.stubEnv('ARKIV_ACCESS_KEY', '');
+  vi.stubEnv('REGISTRY_ACCESS_KEY', '');
   vi.stubEnv('RESEND_API_KEY', '');
   vi.stubEnv('OPERATOR_NOTIFY_EMAIL', '');
   vi.stubEnv('BAGSEVEN_MCP_WORKER', '');
-  vi.stubEnv('WORLD_CLIENT_ID', '');
-  vi.stubEnv('WORLD_MOCK_PROOFS', 'true');
-  vi.stubEnv('WORLD_AGENT_PASS_ENABLED', 'true');
-  vi.stubEnv('WHITECHAIN_DEMO_SETTLE', 'true');
-  vi.stubEnv('WHITECHAIN_PRIVATE_KEY', '');
+  vi.stubEnv('AVALANCHE_DEMO_SETTLE', 'true');
+  vi.stubEnv('AVALANCHE_PRIVATE_KEY', '');
   vi.stubEnv('DAEMON_AUTH_TOKEN', 'sk_test_unit');
   vi.stubEnv('BAGSEVEN_PUBLISHABLE_KEY', 'pk_test_unit');
   resetGrantStoreForTests();
@@ -57,11 +54,11 @@ describe('live payment and worker binding', () => {
       expect(res.statusCode).toBe(403); expect(res.json().error.code).toBe('GRANT_WORKER_MISMATCH'); expect((await store.get(grant.id))?.remaining).toBe('3');
     } finally { await app.close(); }
   });
-  it('cannot mint unpaid local grants with live World verification enabled', async () => {
-    const { app } = await fixture(); vi.stubEnv('WORLD_MOCK_PROOFS', 'false');
+  it('cannot mint unpaid local grants in production', async () => {
+    const { app } = await fixture(); vi.stubEnv('NODE_ENV', 'production'); vi.stubEnv('PROVIDER_FUNDED_GAS', 'true');
     try {
       const res = await app.inject({ method: 'POST', url: '/internal/grants/mint', payload: { holder: 'owner', feature: 'ocr', remaining: '3', ttl_seconds: 300, settlement_network: 'local' } });
-      expect(res.statusCode).toBe(403); expect(res.json().error.code).toBe('LIVE_PAYMENT_REQUIRED');
+      expect(res.statusCode).toBe(409); expect(res.json().error.code).toBe('PROVIDER_CHECKOUT_REQUIRED');
     } finally { await app.close(); }
   });
 });
@@ -94,7 +91,7 @@ describe('prepaid access without a spending mandate', () => {
     try {
       const minted = await app.inject({ method: 'POST', url: `/internal/grants/${route}`, payload: {
         holder: 'dashboard-human', feature: 'ocr', remaining: '3', ttl_seconds: 90,
-        world_proof_id: 'world:ok:dashboard-human',
+
       } });
       expect(minted.statusCode).toBe(200);
       const grant = minted.json().grant;
@@ -117,7 +114,7 @@ describe('prepaid access without a spending mandate', () => {
     try {
       const response = await app.inject({ method: 'POST', url: `/internal/grants/${route}`, payload: {
         holder: 'mcp-human', feature: 'ocr', remaining: '3', ttl_seconds: 90,
-        world_proof_id: 'world:ok:mcp-human', worker_id: 'explicit-worker',
+        worker_id: 'explicit-worker',
       } });
       expect(response.statusCode).toBe(200);
       expect(response.json().grant.worker_id).toBe('explicit-worker');
@@ -239,7 +236,7 @@ describe('prepaid access without a spending mandate', () => {
       const minted = await app.inject({
         method: 'POST',
         url: '/internal/grants/mint',
-        payload: { holder: 'sdk-human', feature: 'ocr', remaining: '4', ttl_seconds: 90, world_proof_id: 'world:ok:sdk-human', worker_id: 'w1' },
+        payload: { holder: 'sdk-human', feature: 'ocr', remaining: '4', ttl_seconds: 90, worker_id: 'w1' },
       });
       expect(minted.statusCode).toBe(200);
 
@@ -305,7 +302,7 @@ describe('prepaid access without a spending mandate', () => {
       });
       expect(credits.statusCode).toBe(200);
       expect(credits.json().grant.remaining).toBe('5');
-      expect(credits.json().settlement.settlement_network).toBe('whitechain');
+      expect(credits.json().settlement.settlement_network).toBe('avalanche');
 
       const noGrant = await app.inject({
         method: 'POST',
@@ -329,80 +326,5 @@ describe('prepaid access without a spending mandate', () => {
       expect(response.json().error.message).toContain('GRANT_EXPIRED');
       expect(await store.findLive({ holder: 'local-test' })).toEqual([]);
     } finally { await app.close(); }
-  });
-});
-
-describe('World IDKit challenge lifecycle', () => {
-  async function idkitFixture() {
-    vi.stubEnv('WORLD_APP_ID', 'app_test'); vi.stubEnv('WORLD_RP_ID', 'rp_test');
-    vi.stubEnv('WORLD_RP_SIGNING_KEY', `0x${'01'.repeat(32)}`); vi.stubEnv('WORLD_SIGNER_ADDRESS', '');
-    vi.stubEnv('WORLD_IDKIT_ACTION', 'bagseven-mint');
-    vi.stubEnv('WORLD_IDKIT_LOGIN_ACTION', 'bagseven-login');
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_url: string, init?: { body?: string }) => {
-        const body = init?.body ? (JSON.parse(init.body) as { action?: string }) : {};
-        return new Response(
-          JSON.stringify({ success: true, action: body.action, environment: 'production', nullifier: '0x123456' }),
-        );
-      }),
-    );
-    return fixture();
-  }
-  function proof(nonce: string, action = 'bagseven-login') {
-    return {
-      protocol_version: '4.0',
-      nonce,
-      action,
-      responses: [{ identifier: 'proof_of_human', nullifier: '0x123456', proof: 'verified-by-portal-in-this-unit-test' }],
-    };
-  }
-  it('uses action-free session challenges and binds returning proofs to the saved World session', async () => {
-    const { app } = await idkitFixture();
-    try {
-      const signed = await app.inject({ method: 'POST', url: '/internal/world/rp-signature', payload: { purpose: 'session', existing_session_id: 'session_saved' } });
-      expect(signed.json().action).toBeNull();
-      const payload = { idkit_response: { protocol_version: '4.0', nonce: signed.json().nonce, session_id: 'session_saved', responses: [{ identifier: 'proof_of_human', session_nullifier: ['0x123456', 'action'], proof: [] }] } };
-      const verified = await app.inject({ method: 'POST', url: '/internal/world/verify-idkit-session', payload });
-      expect(verified.statusCode).toBe(200);
-      expect(verified.json()).toMatchObject({ human_id: 'world:session:session_saved', returning: true });
-      expect((await app.inject({ method: 'POST', url: '/internal/world/verify-idkit-session', payload })).statusCode).toBe(403);
-      const wrong = await app.inject({ method: 'POST', url: '/internal/world/rp-signature', payload: { purpose: 'session', existing_session_id: 'session_saved' } });
-      payload.idkit_response.nonce = wrong.json().nonce; payload.idkit_response.session_id = 'session_attacker';
-      expect((await app.inject({ method: 'POST', url: '/internal/world/verify-idkit-session', payload })).statusCode).toBe(403);
-    } finally { await app.close(); vi.unstubAllGlobals(); }
-  });
-  it('rejects an unissued nonce before remote verification', async () => {
-    const { app } = await idkitFixture();
-    try {
-      const res = await app.inject({ method: 'POST', url: '/internal/world/verify-idkit', payload: { idkit_response: proof('unissued') } });
-      expect(res.statusCode).toBe(403); expect(fetch).not.toHaveBeenCalled();
-    } finally { await app.close(); vi.unstubAllGlobals(); }
-  });
-  it('allows returning humans with fresh challenges, rejects replay, and preserves mint eligibility', async () => {
-    const { app } = await idkitFixture();
-    try {
-      for (let login = 0; login < 2; login++) {
-        const signed = await app.inject({ method: 'POST', url: '/internal/world/rp-signature', payload: { purpose: 'login' } });
-        expect(signed.statusCode).toBe(200);
-        const payload = { idkit_response: proof(signed.json().nonce) };
-        expect((await app.inject({ method: 'POST', url: '/internal/world/verify-idkit', payload })).statusCode).toBe(200);
-        expect((await app.inject({ method: 'POST', url: '/internal/world/verify-idkit', payload })).statusCode).toBe(403);
-      }
-      const signed = await app.inject({ method: 'POST', url: '/internal/world/rp-signature', payload: { purpose: 'mint' } });
-      const minted = await app.inject({
-        method: 'POST',
-        url: '/internal/grants/mint',
-        payload: {
-          feature: 'ocr',
-          holder: 'world:human',
-          remaining: '3',
-          ttl_seconds: 60,
-          settlement_network: 'local',
-          idkit_response: proof(signed.json().nonce, 'bagseven-mint'),
-        },
-      });
-      expect(minted.statusCode).toBe(200);
-    } finally { await app.close(); vi.unstubAllGlobals(); }
   });
 });

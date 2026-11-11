@@ -18,7 +18,7 @@ class FakeChain implements SubscriptionChain {
   signed = vi.fn(async () => ({ raw: '0xsigned', hash }));
   send = vi.fn(async () => {});
   ready = false;
-  preparePlan = vi.fn(async (): Promise<SubscriptionPlan> => ({ id: plan.id, providerId: 'provider', contract: `0x${'44'.repeat(20)}`, chainId: 1874, status: 'preparing', raw: '0xdeploy', hash }));
+  preparePlan = vi.fn(async (): Promise<SubscriptionPlan> => ({ id: plan.id, providerId: 'provider', contract: `0x${'44'.repeat(20)}`, chainId: 43113, status: 'preparing', raw: '0xdeploy', hash }));
   async verifyPlan() { return this.ready; }
   async broadcast(raw: string) { await this.send(raw); }
   async state() { return this.stateValue; }
@@ -26,7 +26,7 @@ class FakeChain implements SubscriptionChain {
   async payment(paymentHash: string) { return this.confirmed.get(paymentHash) ?? null; }
 }
 function subscription(): Subscription {
-  return { id: 'subscription', checkoutId: 'checkout', holder: 'holder', providerId: 'provider', plan, chainId: 1874,
+  return { id: 'subscription', checkoutId: 'checkout', holder: 'holder', providerId: 'provider', plan, chainId: 43113,
     contract: `0x${'44'.repeat(20)}`, key: `0x${'55'.repeat(32)}`, payer: `0x${'33'.repeat(20)}`,
     status: 'ACTIVE', paidThrough: now, nextAttemptAt: now + 120, failures: 0,
     grantId: 'prior-grant', paymentTx: `0x${'66'.repeat(32)}` };
@@ -40,6 +40,25 @@ beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime((now + 120) * 1000); });
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('durable recurring collection', () => {
+  it('honors reconciliation backoff and selects only a bounded due batch', async () => {
+    const { store, service } = await fixture();
+    await store.save({ ...subscription(), status: 'RECONCILIATION_REQUIRED', nextAttemptAt: now + 180 });
+    const process = vi.spyOn(service, 'process');
+    vi.spyOn(store, 'list').mockRejectedValue(Error('Worker must not scan every subscription'));
+    await service.tick();
+    expect(process).not.toHaveBeenCalled();
+    vi.setSystemTime((now + 180) * 1000);
+    await service.tick();
+    expect(process).toHaveBeenCalledWith('subscription');
+  });
+  it('does not let completed cancellations crowd out active renewals', async () => {
+    const { store } = await fixture();
+    await store.save({ ...subscription(), id: 'cancelled', status: 'CANCELLED', nextAttemptAt: now });
+    await store.save({ ...subscription(), id: 'sync-pending', status: 'CANCELLED', nextAttemptAt: now,
+      lastError: 'RENEWAL_FLAG_SYNC_PENDING: retry' });
+    const due = await store.due(now + 120, 2);
+    expect(due.map(s => s.id)).toEqual(['sync-pending', 'subscription']);
+  });
   it('recovers a crash between the initial subscription and payment-journal saves before any renewal', async () => {
     const { store, chain, grants } = await fixture();
     const initial = { ...subscription(), grantId: '', status: 'RECONCILIATION_REQUIRED' as const };
@@ -96,18 +115,18 @@ describe('durable recurring collection', () => {
     expect(chain.send.mock.calls.map(c => c[0])).toEqual(['0xsigned', '0xsigned']);
     expect((await store.get('subscription'))?.failures).toBe(0);
   });
-  it('does not mint twice when an Arkiv broadcast outcome is unknown', async () => {
+  it('does not mint twice when an Registry broadcast outcome is unknown', async () => {
     const { store, chain, grants, service } = await fixture();
     await service.process('subscription');
     chain.confirmed.set(hash, { hash, paidAt: now + 120, paidThrough: now + period, payer: subscription().payer, period: 2 });
-    const mint = vi.spyOn(grants, 'mint').mockRejectedValueOnce(Error('Arkiv broadcast unknown'));
+    const mint = vi.spyOn(grants, 'mint').mockRejectedValueOnce(Error('Registry broadcast unknown'));
     await service.process('subscription'); await service.process('subscription');
     expect(mint).toHaveBeenCalledTimes(1); expect((await store.get('subscription'))?.status).toBe('RECONCILIATION_REQUIRED');
     const journal = (await store.period(`subscription:${now}`))!;
     mint.mockRestore();
-    // The original signed Arkiv write becomes visible, as it would after index recovery.
+    // The original signed Registry write becomes visible, as it would after index recovery.
     await grants.mint({ id: journal.grantId, holder: 'holder', merchant: 'provider', feature: 'ocr', remaining: '10',
-      ttl_seconds: period, payment_tx: hash, settlement_network: 'whitechain', renewal_enabled: true });
+      ttl_seconds: period, payment_tx: hash, settlement_network: 'avalanche', renewal_enabled: true });
     await service.process('subscription');
     expect((await store.get('subscription'))?.status).toBe('ACTIVE');
     expect(chain.signed).toHaveBeenCalledTimes(1);

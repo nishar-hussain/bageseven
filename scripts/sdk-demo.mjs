@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * World + Whitechain + Arkiv SDK demo:
+ * Avalanche registry SDK demo:
  *   plan → checkout confirm → human Guard → agent consume → grant evaporates
  *
  * Requires a running daemon (`pnpm start:local`).
@@ -82,7 +82,7 @@ async function main() {
   const planId = planRes.json.plan.id;
   console.log(`  plan ${planId}`);
 
-  step('2. Checkout session + public confirm (demo Whitechain tx)');
+  step('2. Checkout session + public confirm (demo Avalanche tx)');
   const csRes = await j('POST', '/v1/checkout-sessions', {
     token: sk,
     body: { plan_id: planId, holder },

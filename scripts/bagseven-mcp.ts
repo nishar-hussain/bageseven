@@ -6,6 +6,7 @@
  * calls the policy/mandate services.
  */
 import { registerManagementTools } from './mcp-management-tools.ts';
+import { scopedDaemon, principalKey, type McpPrincipal } from './mcp-principal.ts';
 import { readFileSync } from 'node:fs';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -24,8 +25,8 @@ try {
 const DAEMON = process.env.DAEMON_URL ?? 'http://localhost:4001';
 const WORKER = process.env.BAGSEVEN_MCP_WORKER;
 
-async function daemon(method: string, path: string, body?: unknown): Promise<unknown> {
-  const headers: Record<string, string> = {};
+async function daemon(method: string, path: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<unknown> {
+  const headers: Record<string, string> = { ...extraHeaders };
   if (body !== undefined) headers['content-type'] = 'application/json';
   if (process.env.DAEMON_AUTH_TOKEN) headers.authorization = `Bearer ${process.env.DAEMON_AUTH_TOKEN}`;
   let response: Response;
@@ -50,8 +51,10 @@ async function daemon(method: string, path: string, body?: unknown): Promise<unk
 
 const text = (value: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }] });
 
-export function buildServer(worker = WORKER, callDaemon = daemon): McpServer {
+export function buildServer(worker = WORKER, callDaemon = daemon, principal?: McpPrincipal): McpServer {
   if (!worker) throw new Error('BAGSEVEN_MCP_WORKER must bind this MCP instance to one worker');
+  if (principal) callDaemon = scopedDaemon(principal, callDaemon);
+  const accountHolder = principal && principal.clientId !== 'static' ? principal.humanId : undefined;
   const server = new McpServer({ name: 'bagseven-mcp', version: '0.1.0' }, { capabilities: { tools: {} } });
   registerManagementTools(server, worker, callDaemon);
   async function optionalCheckoutWorker() {
@@ -59,7 +62,7 @@ export function buildServer(worker = WORKER, callDaemon = daemon): McpServer {
       const bound = await callDaemon('POST', `/internal/workers/${encodeURIComponent(worker!)}/status`) as { mandate: { owner_address: string } };
       return { worker_id: worker!, owner: bound.mandate.owner_address };
     } catch (error) {
-      if (/NOT_FOUND|no agent found/i.test((error as Error).message)) return undefined;
+      if (/NOT_FOUND|no agent found|WORKER_OWNER_MISMATCH/i.test((error as Error).message)) return undefined;
       throw error;
     }
   }
@@ -77,7 +80,7 @@ export function buildServer(worker = WORKER, callDaemon = daemon): McpServer {
         return text(await callDaemon('POST', `/internal/workers/${encodeURIComponent(worker)}/status`));
       } catch (error) {
         const message = (error as Error).message;
-        if (!/NOT_FOUND|no agent found/i.test(message)) throw error;
+        if (!/NOT_FOUND|no agent found|WORKER_OWNER_MISMATCH/i.test(message)) throw error;
         const tracks = await callDaemon('GET', '/internal/mumbai/status');
         // All living entitlements — do not force OCR filter
         const grants = await callDaemon('GET', '/internal/grants/live');
@@ -165,13 +168,13 @@ export function buildServer(worker = WORKER, callDaemon = daemon): McpServer {
     },
   );
 
-  // Paid access is purchased through a provider checkout; agents never receive World credentials or wallet keys.
-  for (const name of ['mint_with_world', 'buy_credits']) {
+  // Paid access is purchased through a provider checkout; agents never receive account credentials or wallet keys.
+  for (const name of ['buy_access', 'buy_credits']) {
     server.registerTool(name, {
       title: name === 'buy_credits' ? 'Buy entitlement credits' : 'Create paid entitlement',
-      description: 'Choose a provider plan and open a real wallet checkout. World consent is handled during OAuth; never paste World tokens or private keys. If no plan is selected, returns matching plans.',
+      description: 'Choose a provider plan and open a real wallet checkout. email and wallet consent is handled during OAuth; never paste account tokens or private keys. If no plan is selected, returns matching plans.',
       inputSchema: { plan_id: z.string().optional(), feature: z.string().default('ocr'), holder: z.string().optional() },
-    }, async ({ plan_id, feature, holder }) => {
+    }, async ({ plan_id, feature, holder = accountHolder }) => {
       const plans = await callDaemon('GET', '/v1/plans') as { plans: Array<{ id: string; feature: string; active: boolean }> };
       const matching = plans.plans.filter(plan => plan.active && plan.feature === feature);
       if (!plan_id) return text({ requires_plan: true, plans: matching, next_step: 'Choose plan_id and call this tool again to open wallet checkout.' });
@@ -189,7 +192,7 @@ export function buildServer(worker = WORKER, callDaemon = daemon): McpServer {
     {
       title: 'Create checkout session',
       description:
-        'Open a thin Plan checkout session for a holder. Buyer pays USDT on Whitechain (WhiteWallet/EVM); confirm mints a living Arkiv grant. Not a payment-link product.',
+        'Open a plan checkout session for a holder. Buyer pays the configured stablecoin with an EVM wallet on Avalanche; verified payment issues a registry grant.',
       inputSchema: {
         worker_id: z.string().uuid().optional().describe('Target agent; defaults to this MCP worker'),
         plan_id: z.string().min(1),
@@ -211,7 +214,7 @@ export function buildServer(worker = WORKER, callDaemon = daemon): McpServer {
     'check_entitlement',
     {
       title: 'Check entitlement',
-      description: 'Schematic-style check: is this feature enabled for a holder, with remaining credits and TTL? Reads living Arkiv grants.',
+      description: 'Schematic-style check: is this feature enabled for a holder, with remaining credits and TTL? Reads living Registry grants.',
       inputSchema: {
         feature: z.string().min(1).default('ocr'),
         holder: z.string().optional().describe('Defaults to scanning living grants bound to this worker'),
@@ -309,8 +312,6 @@ export function buildServer(worker = WORKER, callDaemon = daemon): McpServer {
         holder: z.string().optional(),
         amount: z.string().default('1'),
         operation: z.enum(['access', 'payment']).default('access'),
-        world_proof_id: z.string().optional(),
-        world_denied: z.boolean().optional(),
         outcome: z.enum(['ok', 'denied', 'expired', 'cancelled', 'invalid']).optional(),
       },
     },
@@ -342,6 +343,7 @@ async function main(): Promise<void> {
     app.use(express.urlencoded({ extended: false }));
     /** ChatGPT / remote clients: one transport per MCP session id. */
     const transports = new Map<string, InstanceType<typeof StreamableHTTPServerTransport>>();
+    const sessionOwners = new Map<string, string>();
     const { isCorsOriginAllowed } = await import('@bagseven/server');
     const corsEnv = { ...process.env, CORS_ORIGIN: process.env.BAGSEVEN_MCP_CORS_ORIGIN ?? process.env.CORS_ORIGIN };
     const publicUrl = (process.env.BAGSEVEN_MCP_PUBLIC_URL ?? '').replace(/\/$/, '');
@@ -404,7 +406,7 @@ async function main(): Promise<void> {
       res.status(401).json({
         error: 'unauthorized',
         message: oauthRequired
-          ? 'Complete ChatGPT OAuth (World gate on authorize page) to obtain a Bearer token.'
+          ? 'Complete ChatGPT OAuth (email and wallet consent on the authorize page) to obtain a Bearer token.'
           : 'Bearer MCP_AUTH_TOKEN required.',
       });
       return false;
@@ -413,9 +415,15 @@ async function main(): Promise<void> {
     const mcpHandler = async (req: import('express').Request, res: import('express').Response) => {
       try {
         if (!requireBearer(req, res)) return;
+        const principal = verifyMcpAccessToken(req.headers.authorization);
+        const owner = principalKey(principal);
 
         const sessionHeader = req.headers['mcp-session-id'];
         const sessionId = Array.isArray(sessionHeader) ? sessionHeader[0] : sessionHeader;
+        if (sessionId && transports.has(sessionId) && sessionOwners.get(sessionId) !== owner) {
+          res.status(403).json({ error: 'forbidden', message: 'MCP session belongs to another authenticated account or client' });
+          return;
+        }
 
         if (req.method === 'GET' || req.method === 'DELETE') {
           if (!sessionId || !transports.has(sessionId)) {
@@ -429,6 +437,7 @@ async function main(): Promise<void> {
           await transports.get(sessionId)!.handleRequest(req, res);
           if (req.method === 'DELETE') {
             transports.delete(sessionId);
+            sessionOwners.delete(sessionId);
           }
           return;
         }
@@ -452,14 +461,15 @@ async function main(): Promise<void> {
             sessionIdGenerator: () => randomUUID(),
             onsessioninitialized: (sid) => {
               transports.set(sid, transport);
+              sessionOwners.set(sid, owner);
               console.error(`[bagseven-mcp] session initialized ${sid}`);
             },
           });
           transport.onclose = () => {
             const sid = transport.sessionId;
-            if (sid) transports.delete(sid);
+            if (sid) { transports.delete(sid); sessionOwners.delete(sid); }
           };
-          await buildServer().connect(transport);
+          await buildServer(WORKER, daemon, principal ?? undefined).connect(transport);
           await transport.handleRequest(req, res, req.body);
           return;
         }

@@ -16,12 +16,12 @@ Discover current MCP schemas first; installed server versions may differ. Tools 
 | `list_plans` | None | Plan prices, credit allocations and payout wallets |
 | `create_plan` | `name`, `feature`, `amount`, `credits`, `ttl_seconds`, `merchant_wallet`, optional `interval` | Create a provider plan when authorized; `amount` is payment, `credits` is allocation |
 | `create_checkout_session` | `plan_id`, `holder`, optional `worker_id`, `success_url`, `expires_in` | Create pending checkout; worker defaults to bound MCP worker |
-| `mint_with_world`, `buy_credits` | `feature`, optional `plan_id`, `holder` | Without plan, return choices. With plan, open provider checkout |
+| `buy_access`, `buy_credits` | `feature`, optional `plan_id`, `holder` | Without plan, return choices. With plan, open provider checkout |
 | `get_checkout_session` | `checkout_id` | Checkout payment/grant state; use returned session IDs |
 | `cancel_renewal` | `grant_id` | Turn future renewal off without revoking paid time |
 | `explain_denial` | Optional `feature`, `holder`, `grant_id`, `amount`; `operation` = `access` or `payment` | Diagnose access or also mandate capacity without spending |
 
-For entitlement-only checkout, prefer `create_checkout_session` with the intended holder and a discovered plan. Some versions of `mint_with_world` / `buy_credits` resolve a mandate owner even when a holder was supplied. If that owner lookup fails, use the explicit checkout tool rather than inventing an agent or disabling authorization.
+For entitlement-only checkout, prefer `create_checkout_session` with the intended holder and a discovered plan. Some versions of `buy_access` / `buy_credits` resolve a mandate owner even when a holder was supplied. If that owner lookup fails, use the explicit checkout tool rather than inventing an agent or disabling authorization.
 
 ## Spending and delegation
 

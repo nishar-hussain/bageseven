@@ -30,7 +30,7 @@ export function walletChallenge(actor: string, origin: string, owner: string) {
   return { claim, token: encode(claim), message: walletChallengeMessage(claim) };
 }
 export function walletChallengeMessage(claim: WalletClaim) {
-  return ['Bagseven: verify wallet ownership for agent spending', `Website: ${claim.origin}`, `Account: ${claim.actor}`,
+  return ['Bagseven: verify Avalanche wallet ownership', `Website: ${claim.origin}`, `Account: ${claim.actor}`,
     `Wallet: ${claim.owner}`, `Nonce: ${claim.nonce}`, `Expires: ${new Date(claim.exp).toISOString()}`,
     'This signature links your wallet to this signed-in account. It does not transfer funds or authorize agent spending.'].join('\n');
 }

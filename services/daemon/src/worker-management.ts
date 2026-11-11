@@ -1,9 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { ApiError } from '@bagseven/server';
-import { canonicalMandate, whitechainConfig } from '@bagseven/onchain';
+import { canonicalMandate, avalancheConfig } from '@bagseven/onchain';
 import { encodeFunctionData, parseAbi, type Address } from 'viem';
-import { usdtUnits } from './whitechain-payment.js';
+import { usdtUnits } from './avalanche-payment.js';
 
 export type WorkerScope = { agent: { id: string; operator_address: string }; mandate: { id: string; owner_address: string; contract_address: string } };
 const terms = z.object({
@@ -34,7 +34,7 @@ export function registerWorkerManagement(app: FastifyInstance, deps: {
     const q = req.query as { mandate_id?: string };
     const { details } = await scope(worker, q.mandate_id);
     const overview = await policy('GET', `/v1/mandates/${details.mandate.id}/overview`);
-    return { ...details, overview, chain_id: whitechainConfig(config).chainId, token: whitechainConfig(config).usdt };
+    return { ...details, overview, chain_id: avalancheConfig(config).chainId, token: avalancheConfig(config).usdt };
   });
   app.get('/internal/workers/:worker/agents', async req => {
     const { worker } = req.params as { worker: string };
@@ -52,7 +52,7 @@ export function registerWorkerManagement(app: FastifyInstance, deps: {
     const body = terms.parse(raw);
     const bound = await deps.resolve(worker);
     for (const amount of [body.budget_per_window, body.lifetime_cap, body.per_purchase_cap]) usdtUnits(amount);
-    const chainId = whitechainConfig(config).chainId;
+    const chainId = avalancheConfig(config).chainId;
     const payload = { ...body, owner_address: bound.mandate.owner_address, chain_id: chainId };
     const message = canonicalMandate({ owner: payload.owner_address.toLowerCase() as Address, operator: body.operator_address.toLowerCase() as Address,
       budgetPerWindow: body.budget_per_window, windowSeconds: body.window_seconds, lifetimeCap: body.lifetime_cap,
@@ -68,7 +68,7 @@ export function registerWorkerManagement(app: FastifyInstance, deps: {
   app.post('/internal/workers/:worker/mandate/funding', async req => {
     const body = z.object({ amount: z.string(), mandate_id: z.string().uuid().optional() }).parse(req.body);
     const { details } = await scope((req.params as { worker: string }).worker, body.mandate_id);
-    const rail = whitechainConfig(config);
+    const rail = avalancheConfig(config);
     if (details.token_address?.toLowerCase() !== rail.usdt.toLowerCase()) throw new ApiError(409, 'MANDATE_TOKEN_MISMATCH', 'This vault uses another token; do not fund it with the checkout token');
     return { mandate_id: details.mandate.id, chain_id: rail.chainId, token: rail.usdt, amount: body.amount,
       recipient: details.mandate.contract_address, requires_wallet_approval: true,

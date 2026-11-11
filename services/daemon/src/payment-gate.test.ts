@@ -9,7 +9,7 @@ const address = privateKeyToAccount(key).address;
 const worker = '110c3d3f-a158-4b12-bf91-2da6666fc44a';
 const policy = vi.fn();
 beforeEach(() => {
-  vi.stubEnv('ENTITLEMENT_STORE', 'memory'); vi.stubEnv('ARKIV_ACCESS_KEY', '');
+  vi.stubEnv('ENTITLEMENT_STORE', 'memory'); vi.stubEnv('REGISTRY_ACCESS_KEY', '');
   vi.stubEnv('BILLING_STORE', 'memory');
   resetGrantStoreForTests(); vi.stubGlobal('fetch', policy); policy.mockReset();
 });

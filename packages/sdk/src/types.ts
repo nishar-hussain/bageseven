@@ -1,9 +1,9 @@
-/** ArcenPay / Schematic-style: boolean = on/off until TTL; numeric = metered credits on Arkiv. */
+/** ArcenPay / Schematic-style: boolean = on/off until TTL; numeric = metered credits on Registry. */
 export type FeatureValueType = 'boolean' | 'numeric';
 
 export type Entitlement = {
   feature: string;
-  /** Whether the living Arkiv grant currently grants access. */
+  /** Whether the living Registry grant currently grants access. */
   enabled: boolean;
   value_type?: FeatureValueType;
   remaining: string;
@@ -14,7 +14,8 @@ export type Entitlement = {
   updated_at?: string;
   paid_through: string | null;
   grant_id: string | null;
-  arkiv_entity_key?: string;
+  registry_grant_id?: string;
+  registry_address?: string;
   payment_tx?: string;
   explorer_url?: string | null;
   settlement_network?: string;

@@ -15,7 +15,7 @@ import {
   issueEmbedToken,
   type ApiPrincipal,
 } from './api-keys.js';
-import { settleWhitechainUsdt } from './whitechain-settle.js';
+import { settleAvalancheUsdt } from './avalanche-settle.js';
 import type { GrantRouteDeps } from './grants.js';
 import { claimSettlement } from './payment-ledger.js';
 import { getFeatureValueType } from './feature-registry.js';
@@ -88,7 +88,8 @@ export function entitlementView(grant: Grant | null, feature: string) {
     paid_through: grant?.paid_through ?? null,
     grant_id: grant?.id ?? null,
     updated_at: grant?.updated_at,
-    arkiv_entity_key: grant?.arkiv_entity_key,
+    registry_grant_id: grant?.registry_grant_id,
+    registry_address: grant?.registry_address,
     payment_tx: grant?.payment_tx,
     explorer_url: grant?.payment_tx ? explorerUrl(grant.payment_tx) : null,
     settlement_network: grant?.settlement_network,
@@ -226,9 +227,9 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
     const live = await store.findLive({ feature: body.feature, holder });
     const prior = [...live].sort((a, b) => Number(b.remaining) - Number(a.remaining))[0];
     if (!prior) {
-      throw new ApiError(404, 'GRANT_NOT_FOUND', `No living ${body.feature} grant for ${holder} — mint with World first`);
+      throw new ApiError(404, 'GRANT_NOT_FOUND', `No living ${body.feature} grant for ${holder} — mint with email and wallet first`);
     }
-    const settlement = await settleWhitechainUsdt({
+    const settlement = await settleAvalancheUsdt({
       amount: body.amount,
       feature: body.feature,
       holder,
@@ -245,9 +246,8 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
       remaining: body.remaining,
       ttl_seconds: body.ttl_seconds,
       payment_tx: settlement.payment_tx,
-      settlement_network: 'whitechain',
+      settlement_network: 'avalanche',
       human_id: prior.human_id,
-      world_proof_id: prior.world_proof_id,
       worker_id: prior.worker_id || process.env.BAGSEVEN_MCP_WORKER?.trim(),
       mandate_id: prior.mandate_id,
       renewal_enabled: true,

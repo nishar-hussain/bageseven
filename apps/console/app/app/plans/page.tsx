@@ -4,7 +4,7 @@ import { RecurringSubscriptions } from './RecurringSubscriptions';
 import { errorMessage } from '../../../lib/error-message';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { connectWhitechainWallet } from '../../../lib/bagseven-sdk-wallet';
+import { connectAvalancheWallet } from '../../../lib/bagseven-sdk-wallet';
 import {
   EmptyState,
   PageHeader,
@@ -105,7 +105,7 @@ export default function PlansPage() {
         <SoftCard className="p-5">
           <h2 className="text-[15px] font-semibold">New plan</h2>
           <p className="mt-1 text-[13px] text-[var(--muted)]">
-            Paying this plan entitles the selected feature for the access period (Arkiv grant).
+            Paying this plan entitles the selected feature for the access period (Registry grant).
           </p>
           <form onSubmit={(e) => void create(e)} className="mt-4 grid gap-3 md:grid-cols-2">
             <label className="block text-xs font-semibold uppercase text-[var(--muted)]">
@@ -137,7 +137,7 @@ export default function PlansPage() {
               </select>
             </label>
             <label className="block text-xs font-semibold uppercase text-[var(--muted)]">
-              Amount (USDT)
+              Amount (stablecoin)
               <input
                 className="mt-1 w-full rounded-xl border border-[var(--line)] px-3 py-2 text-sm"
                 value={amount}
@@ -197,7 +197,7 @@ export default function PlansPage() {
                 />
                 <SecondaryButton
                   onClick={() =>
-                    void connectWhitechainWallet()
+                    void connectAvalancheWallet()
                       .then(({ address }) => setWallet(address))
                       .catch((e) => setMsg(errorMessage(e)))
                   }
@@ -274,7 +274,7 @@ export default function PlansPage() {
                     <td className="px-4 py-3.5 font-mono text-[12px] text-[var(--muted)]" title={p.id}>
                       {shortId(p.id)}
                     </td>
-                    <td className="px-4 py-3.5 tabular-nums">{p.amount} USDT</td>
+                    <td className="px-4 py-3.5 tabular-nums">{p.amount} stablecoin</td>
                     <td className="px-4 py-3.5 tabular-nums">{p.credits}</td>
                     <td className="px-4 py-3.5 text-[var(--muted)]">{p.interval === 'month' ? 'Every 30 days' : 'One time'}</td>
                     <td className="px-4 py-3.5">{featureLabel(p.feature, features)}</td>

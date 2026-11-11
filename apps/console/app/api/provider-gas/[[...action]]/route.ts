@@ -13,7 +13,7 @@ async function proxy(req: NextRequest, ctx: { params: Promise<{ action?: string[
   if (req.method === 'POST' && origin && origin !== req.nextUrl.origin) return NextResponse.json({ error: { message: 'Cross-origin request rejected' } }, { status: 403 });
   try {
     const response = await daemonFetch(`/internal/provider-gas${action ? `/${action}` : ''}`, { method: req.method,
-      headers: { ...providerScopeHeaders(session.world_human_id ? `world:${session.world_human_id}` : sessionHolder(session)), 'x-bagseven-provider': session.world_human_id ? `world:${session.world_human_id}` : sessionHolder(session), 'content-type': 'application/json' },
+      headers: { ...providerScopeHeaders(sessionHolder(session)), 'x-bagseven-provider': sessionHolder(session), 'content-type': 'application/json' },
       body: req.method === 'POST' ? await req.text() : undefined });
     return new NextResponse(await response.text(), { status: response.status, headers: { 'content-type': 'application/json' } });
   } catch { return NextResponse.json({ error: { message: 'Provider gas service is unavailable' } }, { status: 503 }); }

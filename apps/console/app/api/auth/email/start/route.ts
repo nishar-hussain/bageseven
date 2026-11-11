@@ -2,10 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sendNotify } from '@bagseven/notify';
 import {
   generateOtpCode,
-  getSession,
   isAllowedEmail,
   issueOtpChallenge,
-  sessionIsValid,
 } from '../../../../../lib/auth';
 
 const recent = new Map<string, number>();
@@ -18,13 +16,8 @@ function rateLimited(key: string): boolean {
   return false;
 }
 
-/** Attach email to an existing World session and send a 6-digit OTP. */
+/** Start an email-first Bagseven sign-in or verified-email re-confirmation. */
 export async function POST(req: NextRequest) {
-  const session = await getSession();
-  if (!sessionIsValid(session)) {
-    return NextResponse.json({ error: 'Sign in with World first' }, { status: 401 });
-  }
-
   const body = (await req.json().catch(() => ({}))) as { email?: string };
   const email = body.email?.trim().toLowerCase() ?? '';
   if (!email || !email.includes('@')) {
@@ -47,9 +40,13 @@ export async function POST(req: NextRequest) {
     event: 'magic_link',
     subject: 'Your Bagseven verification code',
     title: 'Verify your email',
-    body: `Your code is ${code}. It expires in 10 minutes. You already signed in with World — this only confirms the address for receipts.`,
+    body: `Your code is ${code}. It expires in 10 minutes. It confirms this address for your Bagseven account, invoices, and receipts.`,
     meta: { code, purpose: 'email_otp' },
   });
+
+  if (process.env.NODE_ENV === 'production' && (!sent.ok || sent.skipped)) {
+    return NextResponse.json({ error: 'Email delivery is unavailable. Please try again later.' }, { status: 503 });
+  }
 
   const payload: Record<string, unknown> = {
     ok: true,

@@ -20,7 +20,7 @@ describe('subscription holder scope and cancellation', () => {
     const store = new MemorySubscriptionStore();
     const plan = PlanSchema.parse({ id: 'plan', provider_id: 'provider', feature: 'ocr', name: 'Pro', interval: 'month',
       amount: '1', credits: '5', ttl_seconds: 2592000, merchant_wallet: `0x${'11'.repeat(20)}`, created_at: new Date().toISOString() });
-    await store.save({ id: 'sub_one', checkoutId: 'one', holder: 'alice', providerId: 'provider', plan, chainId: 1874,
+    await store.save({ id: 'sub_one', checkoutId: 'one', holder: 'alice', providerId: 'provider', plan, chainId: 43113,
       contract: `0x${'22'.repeat(20)}`, key: `0x${'33'.repeat(32)}`, payer: `0x${'44'.repeat(20)}`, status: 'ACTIVE',
       paidThrough: 1800000000, nextAttemptAt: 1800000120, failures: 0, grantId: 'grant', paymentTx: `0x${'55'.repeat(32)}` });
     const chain: SubscriptionChain = {

@@ -27,7 +27,7 @@ export function RecurringSubscriptions() {
     {subscriptions.length > 0 && <div className="mt-4 overflow-x-auto"><table className="w-full text-left text-sm">
       <thead><tr>{['Customer', 'Feature', 'Price / 30 days', 'Status', 'Paid through', 'Next attempt', 'Collection details'].map(title => <th className="p-2" key={title}>{title}</th>)}</tr></thead>
       <tbody>{subscriptions.map(sub => <tr key={sub.id} className="border-t border-[var(--line)]">
-        <td className="max-w-48 truncate p-2" title={sub.holder}>{sub.holder}</td><td className="p-2">{sub.feature}</td><td className="p-2">{sub.amount} USDT</td>
+        <td className="max-w-48 truncate p-2" title={sub.holder}>{sub.holder}</td><td className="p-2">{sub.feature}</td><td className="p-2">{sub.amount} stablecoin</td>
         <td className="p-2">{sub.status.replaceAll('_', ' ')}</td><td className="p-2">{new Date(sub.paid_through).toLocaleString()}</td>
         <td className="p-2">{['ENDED', 'CANCELLED'].includes(sub.status) ? '—' : new Date(sub.next_attempt_at).toLocaleString()}</td>
         <td className="max-w-72 p-2">{sub.last_error || 'Payment confirmed'}{sub.failures > 0 && ` · ${sub.failures}/4 customer failures`}

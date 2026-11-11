@@ -11,7 +11,7 @@ export type Subscription = {
   paidThrough: number; failures: number; nextAttemptAt: number; lastError?: string;
   grantId: string; paymentTx: string; workerId?: string;
   attempts?: Array<{ at: number; reason: string; paymentTx?: string }>;
-  humanId?: string; worldProofId?: string;
+  humanId?: string;
 };
 export type SubscriptionPeriod = {
   id: string; subscriptionId: string; due: number;

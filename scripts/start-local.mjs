@@ -7,6 +7,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseEnv } from 'node:util';
 import { ensurePortsAvailable, ownedRuntime, portAvailable, processTable, stopProcessTree } from './local-process.mjs';
+import { assertLocalConfiguration } from './local-config.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const envPath = resolve(root, '.env');
@@ -61,6 +62,8 @@ async function main() {
     for (const port of ports) console.log(`:${port} ${await portAvailable(port) ? 'stopped' : 'listening'}`);
     return;
   }
+  // Validate before stopping a healthy stack or launching a mixture of services.
+  if (!process.argv.includes('--stop')) assertLocalConfiguration(process.env);
   await stopOwner();
   await ensurePortsAvailable(ports, root, { log: console.log });
   if (process.argv.includes('--stop')) { console.log('Bagseven local services stopped. Data containers were left running.'); return; }

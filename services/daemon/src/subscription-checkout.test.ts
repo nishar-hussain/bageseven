@@ -7,15 +7,15 @@ import { resetBillingStoreForTests } from './billing-store.js';
 import { Subscriptions } from './subscriptions.js';
 import { MemorySubscriptionStore } from './subscription-store.js';
 import type { SubscriptionChain } from './subscription-chain.js';
-vi.mock('./whitechain-payment.js', async original => ({ ...await original<typeof import('./whitechain-payment.js')>(),
-  verifyPaymentAuthorization: vi.fn(async () => {}), verifyWhitechainPayment: vi.fn(async () => {}),
+vi.mock('./avalanche-payment.js', async original => ({ ...await original<typeof import('./avalanche-payment.js')>(),
+  verifyPaymentAuthorization: vi.fn(async () => {}), verifyAvalanchePayment: vi.fn(async () => {}),
 }));
 const payer = `0x${'11'.repeat(20)}`; const hash = `0x${'22'.repeat(32)}`;
 const now = 1800000000;
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(now * 1000);
   vi.stubEnv('PROVIDER_FUNDED_GAS', 'false'); vi.stubEnv('ENTITLEMENT_STORE', 'memory');
-  vi.stubEnv('DAEMON_AUTH_TOKEN', 'sk_subscription_test'); vi.stubEnv('WHITECHAIN_DEMO_SETTLE', 'true');
+  vi.stubEnv('DAEMON_AUTH_TOKEN', 'sk_subscription_test'); vi.stubEnv('AVALANCHE_DEMO_SETTLE', 'true');
   resetGrantStoreForTests(); resetBillingStoreForTests();
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); resetGrantStoreForTests(); resetBillingStoreForTests(); });
@@ -23,7 +23,7 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); resetGrantStoreForTest
 async function fixture(paidAt = now) {
   const store = new MemorySubscriptionStore();
   const chain: SubscriptionChain = {
-    preparePlan: async plan => ({ id: plan.id, providerId: 'provider', contract: `0x${'33'.repeat(20)}`, chainId: 1874, status: 'preparing', hash, raw: '0xdeployment' }),
+    preparePlan: async plan => ({ id: plan.id, providerId: 'provider', contract: `0x${'33'.repeat(20)}`, chainId: 43113, status: 'preparing', hash, raw: '0xdeployment' }),
     verifyPlan: async () => true, broadcast: async () => {},
     signCharge: async () => { throw Error('No renewal due during checkout'); },
     payment: async () => ({ paidAt, paidThrough: now + 2592000, hash, payer, period: 1 }),

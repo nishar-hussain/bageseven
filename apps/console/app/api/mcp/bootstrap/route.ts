@@ -84,7 +84,7 @@ export async function GET() {
       'grant_status',
       'check_entitlement',
       'consume_entitlement',
-      'mint_with_world',
+      'buy_access',
       'buy_credits',
       'create_checkout_session',
       'paid_run',
@@ -95,9 +95,9 @@ export async function GET() {
       'explain_denial',
     ],
     auth: {
-      human: 'World-primary dashboard login. Email OTP is verify-later. World still gates mint uniqueness.',
+      human: 'Verified email login and signed Avalanche wallet ownership.',
       agent:
-        'External agents never hold World credentials. They connect via MCP bound to BAGSEVEN_MCP_WORKER; daemon auth is DAEMON_AUTH_TOKEN. Dual-gate still requires a living Arkiv grant minted by a human.',
+        'External agents never hold account credentials. They connect via MCP bound to BAGSEVEN_MCP_WORKER; daemon auth is DAEMON_AUTH_TOKEN. Dual-gate still requires a living Registry grant minted by a human.',
     },
     ...(worker ? configs(worker) : {}),
   });
@@ -120,8 +120,8 @@ export async function POST() {
     created: true,
     ...configs(worker),
     auth: {
-      human: 'World-primary dashboard login. World gates human consent; agents receive Bagseven credentials.',
-      agent: 'MCP + worker UUID + DAEMON_AUTH_TOKEN. No World ID on the agent path.',
+      human: 'Email and wallet authorize the human; agents receive scoped Bagseven credentials.',
+      agent: 'MCP + worker UUID + DAEMON_AUTH_TOKEN. No account credentials on the agent path.',
     },
   });
 }

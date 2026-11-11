@@ -44,7 +44,7 @@ async function app(config: NodeJS.ProcessEnv = {}) {
     return reply.code(result.status).send(result.body);
   });
   buildPolicyRoutes(server, {
-    config: { PROVIDER_FUNDED_GAS: 'false', DAEMON_EXECUTOR_KEY: 'configured', WHITECHAIN_USDT: owner, ...config }, redis: {},
+    config: { PROVIDER_FUNDED_GAS: 'false', DAEMON_EXECUTOR_KEY: 'configured', AVALANCHE_USDC: owner, ...config }, redis: {},
     db: { transaction: async (run: (tx: unknown) => Promise<void>) => run({ insert: () => ({ values: () => ({ returning: async () => [agent] }) }) }), query: {
       mandates: { findMany: async () => [record, { ...record, id: 'healthy', contractAddress: deployed }], findFirst: async () => record },
       agents: { findMany: async () => [agent], findFirst: async () => agent },
@@ -95,9 +95,9 @@ describe('mandate API recovery', () => {
   async function signedCreation() {
     const signer = privateKeyToAccount(`0x${'01'.repeat(32)}`);
     const payload = { owner_address: signer.address, operator_address: owner, budget_per_window: '1', window_seconds: 86400,
-      lifetime_cap: '10', per_purchase_cap: '0.1', per_seller_pct: 10000, max_depth: 2, chain_id: 1874 };
+      lifetime_cap: '10', per_purchase_cap: '0.1', per_seller_pct: 10000, max_depth: 2, chain_id: 43113 };
     const message = canonicalMandate({ owner: signer.address.toLowerCase() as `0x${string}`, operator: owner,
-      budgetPerWindow: '1', windowSeconds: 86400, lifetimeCap: '10', perPurchaseCap: '0.1', perSellerPct: 10000, maxDepth: 2, chainId: 1874 });
+      budgetPerWindow: '1', windowSeconds: 86400, lifetimeCap: '10', perPurchaseCap: '0.1', perSellerPct: 10000, maxDepth: 2, chainId: 43113 });
     return { ...payload, signature: await signer.signMessage({ message }) };
   }
   it('creates a signed permission with a separate gas payer while retaining the executor as enforcer', async () => {
@@ -106,11 +106,11 @@ describe('mandate API recovery', () => {
     expect(response.json()).toMatchObject({ contract_address: deployed, status: 'active' });
     expect(rpc.deploy).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ enforcer: owner }));
   });
-  it('returns a clear gas funding error instead of 500 when the deployer lacks WBT', async () => {
+  it('returns a clear gas funding error instead of 500 when the deployer lacks AVAX', async () => {
     rpc.deploy.mockRejectedValue(new Error('The total cost (gas * gas fee + value) exceeds the balance of the account. Insufficient funds.'));
     const response = await (await app()).inject({ method: 'POST', url: '/v1/mandates', payload: await signedCreation() });
     expect(response.statusCode).toBe(503);
-    expect(response.json().error).toMatchObject({ code: 'DEPLOYER_GAS_INSUFFICIENT', message: expect.stringContaining('needs more WBT') });
+    expect(response.json().error).toMatchObject({ code: 'DEPLOYER_GAS_INSUFFICIENT', message: expect.stringContaining('needs more AVAX') });
   });
   it('does not automatically retry uncertain deployment failures', async () => {
     rpc.deploy.mockRejectedValue(new Error('receipt timed out'));
@@ -121,10 +121,10 @@ describe('mandate API recovery', () => {
   it('prepares a canonical owner signature before creation without calling the chain', async () => {
     const response = await (await app()).inject({ method: 'POST', url: '/v1/mandates/prepare', payload: {
       owner_address: owner, operator_address: owner, budget_per_window: '1', window_seconds: 86400,
-      lifetime_cap: '10', per_purchase_cap: '0.1', per_seller_pct: 10000, max_depth: 2, chain_id: 1874,
+      lifetime_cap: '10', per_purchase_cap: '0.1', per_seller_pct: 10000, max_depth: 2, chain_id: 43113,
     } });
     expect(response.statusCode).toBe(200);
-    expect(response.json().message).toBe(`bagseven-mandate-v1|${owner}|${owner}|1|86400|10|0.1|10000|2|1874`);
+    expect(response.json().message).toBe(`bagseven-mandate-v1|${owner}|${owner}|1|86400|10|0.1|10000|2|43113`);
     expect(rpc.getCode).not.toHaveBeenCalled();
   });
   it('prepares exact owner-wallet funding, withdrawal, and revocation calls without submitting transactions', async () => {
@@ -137,7 +137,7 @@ describe('mandate API recovery', () => {
       const response = await server.inject({ method: 'POST', url: `/v1/mandates/${record.id}/transaction`, payload: { action, amount: '0.01' } });
       expect(response.statusCode).toBe(200);
       const draft = response.json();
-      expect(draft).toMatchObject({ chain_id: 1874, from: owner, to: action === 'fund' ? owner : missing, value: '0x0' });
+      expect(draft).toMatchObject({ chain_id: 43113, from: owner, to: action === 'fund' ? owner : missing, value: '0x0' });
       const decoded = decodeFunctionData({ abi, data: draft.data });
       expect(decoded.functionName).toBe(name); expect(decoded.args?.map(a => typeof a === 'string' ? a.toLowerCase() : a)).toEqual(args);
     }

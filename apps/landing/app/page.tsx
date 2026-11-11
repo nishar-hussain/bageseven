@@ -43,10 +43,10 @@ export default function LandingPage() {
           <div className="fi-wrap relative animate-fi-up pb-20 pt-16 md:pb-28 md:pt-24">
             <h1 className="fi-display max-w-4xl text-[2.8rem] text-white md:text-[4.6rem]">
               Public entitlements.
-              <span className="block">Paid straight on Whitechain.</span>
+              <span className="block">Paid straight on Avalanche.</span>
             </h1>
             <p className="mt-8 max-w-xl text-lg text-white/65 md:text-xl">
-              Humans approve mint once, up to a TTL. Each spend checks a mandate and a living Arkiv grant.
+              Humans approve mint once, up to a TTL. Each spend checks a mandate and a living Registry grant.
               Bagseven never holds settlement.
             </p>
             <div className="mt-10 flex flex-wrap gap-3">
@@ -64,7 +64,7 @@ export default function LandingPage() {
           <div className="fi-wrap max-w-4xl">
             <p className="fi-display text-center text-3xl text-white md:text-[2.6rem]">
               Humans mint once<span className="text-white/45">,</span> up to a TTL.
-              <span className="block text-white/55"> Each month of access lives on Arkiv until it evaporates.</span>
+              <span className="block text-white/55"> Each month of access lives on Registry until it evaporates.</span>
             </p>
           </div>
         </section>
@@ -77,7 +77,7 @@ export default function LandingPage() {
               <a href={`${APP}/app/login`} className="group block overflow-hidden rounded-[16px] bg-[var(--hero)] p-7 text-white">
                 <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/50">For humans</div>
                 <h3 className="mt-3 text-2xl font-medium">I mint access for an agent</h3>
-                <p className="mt-3 text-white/70">World Agent Pass. Arkiv entitlement. Cancel renewal without killing the period already paid.</p>
+                <p className="mt-3 text-white/70">email and wallet Agent Pass. Registry entitlement. Cancel renewal without killing the period already paid.</p>
                 <span className="mt-8 inline-block text-sm font-semibold underline underline-offset-4">Start in the dashboard →</span>
               </a>
               <a href={`${APP}/app/mcp`} className="group block overflow-hidden rounded-[16px] bg-white p-7 text-[var(--ink)]">
@@ -100,8 +100,8 @@ export default function LandingPage() {
             <ol className="mt-12 grid gap-3 md:grid-cols-4">
               {[
                 { n: '01', t: 'Sign in', d: 'Magic link via Resend. 8-hour session.' },
-                { n: '02', t: 'Mint', d: 'World gate. Deny writes nothing.' },
-                { n: '03', t: 'Settle', d: 'Whitechain buy_credits stamps payment_tx.' },
+                { n: '02', t: 'Mint', d: 'email and wallet gate. Deny writes nothing.' },
+                { n: '03', t: 'Settle', d: 'Avalanche buy_credits stamps payment_tx.' },
                 { n: '04', t: 'Spend', d: 'paid_run dual-gate. Email on each event.' },
               ].map((s) => (
                 <li key={s.n} className="rounded-[16px] border border-white/10 bg-white/[0.04] p-5">
@@ -145,7 +145,7 @@ check_entitlement · consume_entitlement · paid_run`}
             <ul className="mt-10 grid gap-3 md:grid-cols-3">
               {[
                 { t: 'Overview', d: 'Revenue-style activity, attention queue, living grants.', href: `${APP}/app` },
-                { t: 'Mint / Credits', d: 'World gate + Whitechain settle + explorer.', href: `${APP}/app/mint` },
+                { t: 'Mint / Credits', d: 'email and wallet gate + Avalanche settle + explorer.', href: `${APP}/app/mint` },
                 { t: 'Email', d: 'Resend on mint, deny, settle, paid_run, sign-in.', href: `${APP}/app/login` },
               ].map((x) => (
                 <li key={x.t}>
@@ -164,11 +164,11 @@ check_entitlement · consume_entitlement · paid_run`}
           <div className="fi-wrap">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/45">Security</p>
             <h2 className="fi-display mt-3 text-4xl text-white md:text-[3.2rem]">Four things Bagseven cannot do.</h2>
-            <p className="mt-4 max-w-2xl text-white/55">If we shut down, settlement is already on Whitechain and access is already a public Arkiv object.</p>
+            <p className="mt-4 max-w-2xl text-white/55">If we shut down, settlement is already on Avalanche and access is already a public Registry object.</p>
             <ul className="mt-12 grid gap-4 md:grid-cols-2">
               {[
-                { k: 'Hold your USDC', v: 'We record Whitechain payment_tx. There is no Bagseven balance.' },
-                { k: 'Mint without World', v: 'Backend verify. Deny writes nothing to Arkiv.' },
+                { k: 'Hold your USDC', v: 'We record Avalanche payment_tx. There is no Bagseven balance.' },
+                { k: 'Mint without email and wallet', v: 'Backend verify. Deny writes nothing to Registry.' },
                 { k: 'Spend after TTL', v: 'Expired grants leave the query surface.' },
                 { k: 'Bypass dual-gate', v: 'Mandate remaining and living grant must both pass.' },
               ].map((t) => (
@@ -187,9 +187,9 @@ check_entitlement · consume_entitlement · paid_run`}
             <h2 className="fi-display text-3xl">What people ask first.</h2>
             <dl className="mt-8 grid gap-4 md:grid-cols-2">
               {[
-                { q: 'Does Bagseven hold the money?', a: 'No. Whitechain settlement is wallet-to-record. We stamp payment_tx.' },
+                { q: 'Does Bagseven hold the money?', a: 'No. Avalanche settlement is wallet-to-record. We stamp payment_tx.' },
                 { q: 'How do I sign in?', a: 'Operator email + magic link (Resend). Session lasts 8 hours.' },
-                { q: 'What if World denies mint?', a: 'Nothing is written. You get WORLD_DENIED and an email.' },
+                { q: 'What happens if payment fails?', a: 'Access activates only after the configured Avalanche payment is verified. Retry a pending confirmation with the same transaction.' },
                 { q: 'Is this live or mock?', a: 'Dashboard badges. Keys in .env switch Live vs Mock per track.' },
               ].map((f) => (
                 <div key={f.q} className="rounded-[16px] border border-[var(--line)] bg-white p-5">
@@ -203,7 +203,7 @@ check_entitlement · consume_entitlement · paid_run`}
 
         <section className="fi-band-blue py-20 text-center">
           <h2 className="fi-display text-4xl text-white md:text-[3.2rem]">Start collecting this week.</h2>
-          <p className="mx-auto mt-4 max-w-lg text-white/75">No Bagseven fee in beta. You never hold network gas for Whitechain demo settle.</p>
+          <p className="mx-auto mt-4 max-w-lg text-white/75">No Bagseven fee in beta. You never hold network gas for Avalanche demo settle.</p>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
             <a href={`${APP}/app/login`} className="fi-btn fi-btn-light">
               Start free
@@ -221,7 +221,7 @@ check_entitlement · consume_entitlement · paid_run`}
             <Mark className="h-5 w-5" /> Bagseven
           </div>
           <a href="/docs/introduction" className="hover:text-white">Documentation ↗</a>
-          <div>World · Whitechain · Arkiv · © {new Date().getFullYear()}</div>
+          <div>email and wallet · Avalanche · Registry · © {new Date().getFullYear()}</div>
         </div>
       </footer>
     </div>

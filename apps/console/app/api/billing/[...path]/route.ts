@@ -31,7 +31,7 @@ async function proxy(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   const url = new URL(req.url);
   const target = `/v1/${suffix}${url.search}`;
   const headers = new Headers();
-  headers.set('x-bagseven-provider', session.world_human_id ? `world:${session.world_human_id}` : sessionHolder(session));
+  headers.set('x-bagseven-provider', sessionHolder(session));
   for (const [name, value] of Object.entries(providerScopeHeaders(headers.get('x-bagseven-provider')!))) headers.set(name, value);
   const init: RequestInit = { method: req.method, headers };
   if (req.method !== 'GET' && req.method !== 'HEAD') {

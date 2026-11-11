@@ -1,6 +1,6 @@
 ---
 name: bagseven-development
-description: Integrate the Bagseven SDK or maintain and deploy the Bagseven monorepo. Use for entitlement checks, provider checkout integration, World authentication, Arkiv storage, Whitechain settlement, MCP implementation, or Railway/Vercel configuration in Bagseven code.
+description: Integrate the Bagseven SDK or maintain and deploy the Bagseven monorepo. Use for entitlement checks, provider checkout integration, email and wallet authentication, Avalanche registry storage, Avalanche settlement, MCP implementation, or Railway/Vercel configuration in Bagseven code.
 ---
 
 # Bagseven development
@@ -14,22 +14,22 @@ In the Bagseven repository, read the applicable `AGENTS.md`, package manifests a
 Read only the reference matching the work:
 
 - [SDK integration](references/sdk.md): React/Node/agent entry points, keys, checks, consume and checkout.
-- [Service architecture](references/architecture.md): code ownership, World/MCP boundaries, grants, policy and meaningful verification.
+- [Service architecture](references/architecture.md): code ownership, email and wallet/MCP boundaries, grants, policy and meaningful verification.
 - [Deployment](references/deployment.md): Railway backends, separate Vercel projects, `.env.prod`, live tracks and session persistence.
 
 ## Preserve the domain
 
 | Operation | Required truth |
 | --- | --- |
-| Authoritative feature access | Living Arkiv grant with remaining credits and valid `paid_through`; apply holder and worker authorization |
+| Authoritative feature access | Living Avalanche registry grant with remaining credits and valid `paid_through`; apply holder and worker authorization |
 | Prepaid `paid_run`, `consume_entitlement`, SDK `/v1/usage/consume` | Authorized living grant and sufficient feature credits; no USDT mandate required |
 | New payment through `bagseven_fetch` | Registered active policy agent, remaining mandate capacity and living grant |
-| Checkout confirmation | Verified Whitechain payment for the plan, intended buyer and merchant; then mint access |
+| Checkout confirmation | Verified Avalanche payment for the plan, intended buyer and merchant; then mint access |
 | Cancel renewal | Change `renewal_enabled`; preserve already-paid time |
 
 Credit quantities and token payment amounts are distinct units. Keep decimal money strings and bigint token units; follow the existing six-decimal USDT conversion helpers. Reuse idempotency keys for retries with identical inputs, and preserve unresolved payment holds for reconciliation.
 
-World proves the human during login/mint/consent. MCP proves the agent to the daemon with Bagseven OAuth/Bearer credentials. Agents never hold World credentials. Publishable API keys are for permitted reads; secret keys stay server-side; embed tokens are holder-scoped. Browser guards are UI hints; the server authorizes use.
+Email and wallet signatures authorize login and consent. MCP proves the agent to the daemon with Bagseven OAuth/Bearer credentials. Agents never hold email and wallet credentials. Publishable API keys are for permitted reads; secret keys stay server-side; embed tokens are holder-scoped. Browser guards are UI hints; the server authorizes use.
 
 ## Change the existing product path
 

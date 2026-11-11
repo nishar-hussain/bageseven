@@ -25,6 +25,6 @@ export function DocsArticle({ page }: { page: DocPage }) {
     <div className="docs-article-rule" />
     {page.sections.map(section => <section key={section.id} id={section.id}><h2><a href={`#${section.id}`} aria-label={`Link to ${section.title}`}>{section.title}<span aria-hidden="true">#</span></a></h2>{section.blocks.map((block, i) => <Block block={block} key={i} />)}</section>)}
     <nav className="docs-pagination" aria-label="Previous and next page">{previous ? <Link href={`/docs/${previous.slug}`}><small><ArrowLeft size={13} /> Previous</small><strong>{previous.title}</strong></Link> : <span />}{next && <Link href={`/docs/${next.slug}`}><small>Next <ArrowRight size={13} /></small><strong>{next.title}</strong></Link>}</nav>
-    <footer className="docs-article-footer"><span>Bagseven documentation</span><span>World · Whitechain · Arkiv</span></footer>
+    <footer className="docs-article-footer"><span>Bagseven documentation</span><span>email and wallet · Avalanche · Registry</span></footer>
   </article>;
 }

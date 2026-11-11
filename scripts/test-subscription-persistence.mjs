@@ -31,9 +31,19 @@ try {
   const checkout = await billing.createCheckout({ plan_id: plan.id, holder: 'test-holder' });
   const first = new PostgresSubscriptionStore(firstDb); const second = new PostgresSubscriptionStore(secondDb);
   const sub = { id: 'sub_test', checkoutId: checkout.id, holder: 'test-holder', providerId: 'test-provider', plan,
-    chainId: 1874, contract: `0x${'22'.repeat(20)}`, key: `0x${'33'.repeat(32)}`, payer: `0x${'44'.repeat(20)}`,
+    chainId: 43113, contract: `0x${'22'.repeat(20)}`, key: `0x${'33'.repeat(32)}`, payer: `0x${'44'.repeat(20)}`,
     status: 'ACTIVE', paidThrough: 1800000000, failures: 0, nextAttemptAt: 1800000120, grantId: 'grant', paymentTx: `0x${'55'.repeat(32)}` };
   await first.save(sub);
+  assert.deepEqual(await second.due(sub.nextAttemptAt - 1, 100), []);
+  assert.deepEqual((await second.due(sub.nextAttemptAt, 1)).map(s => s.id), [sub.id]);
+  await first.save({ ...sub, status: 'RECONCILIATION_REQUIRED', nextAttemptAt: sub.nextAttemptAt + 60 });
+  assert.deepEqual(await second.due(sub.nextAttemptAt, 100), []);
+  await first.save({ ...sub, status: 'CANCELLED' });
+  assert.deepEqual(await second.due(sub.nextAttemptAt, 100), []);
+  await first.save({ ...sub, status: 'CANCELLED', lastError: 'RENEWAL_FLAG_SYNC_PENDING: retry' });
+  assert.equal((await second.due(sub.nextAttemptAt, 1))[0]?.id, sub.id);
+  await first.save(sub);
+  console.log('PASS indexed due queries honor retry delays, batch limits, and cancellation synchronization');
   const period = { id: 'period_test', subscriptionId: sub.id, due: sub.paidThrough, stage: 'signed', hash: `0x${'66'.repeat(32)}`, raw: '0xcommitted' };
   await assert.rejects(first.lock(sub.id, async () => { await first.savePeriod(period); throw Error('simulated process failure'); }), /simulated/);
   assert.deepEqual(await second.period(period.id), period);
@@ -55,24 +65,24 @@ try {
   const gasEnv = { PROVIDER_GAS_ENCRYPTION_KEY: 'ab'.repeat(32) };
   const gasA = new ProviderGasManager(firstDb, gasEnv), gasB = new ProviderGasManager(secondDb, gasEnv);
   const draft = await gasA.prepare(plan.provider_id, { owner: owner.address, subscriptions: true,
-    whitechainBudget: '1', arkivBudget: '1', whitechainTxLimit: '0.1', arkivTxLimit: '0.1', expires: Date.now() + 90 * 86400000 });
+    avalancheBudget: '1', registryBudget: '1', avalancheTxLimit: '0.1', registryTxLimit: '0.1', expires: Date.now() + 90 * 86400000 });
   await gasA.authorize(plan.provider_id, await owner.signMessage({ message: draft.message }));
-  await first.savePlan({ id: plan.id, providerId: plan.provider_id, chainId: 1874, contract: sub.contract, status: 'ready' });
-  const accountA = await gasA.account(plan.provider_id, 'whitechain'), accountB = await gasB.account(plan.provider_id, 'whitechain');
+  await first.savePlan({ id: plan.id, providerId: plan.provider_id, chainId: 43113, contract: sub.contract, status: 'ready' });
+  const accountA = await gasA.account(plan.provider_id, 'avalanche'), accountB = await gasB.account(plan.provider_id, 'avalanche');
   const dataA = encodeFunctionData({ abi: SubscriptionAbi, functionName: 'charge', args: [sub.key, 1800000000n] });
   const dataB = encodeFunctionData({ abi: SubscriptionAbi, functionName: 'charge', args: [`0x${'77'.repeat(32)}`, 1800000000n] });
-  const tx = { chainId: 1874, type: 'legacy', nonce: 0, to: sub.contract, gas: 100000n, gasPrice: 1n };
+  const tx = { chainId: 43113, type: 'legacy', nonce: 0, to: sub.contract, gas: 100000n, gasPrice: 1n };
   const contenders = await Promise.allSettled([accountA.signTransaction({ ...tx, data: dataA }), accountB.signTransaction({ ...tx, data: dataB })]);
   assert.equal(contenders.filter(r => r.status === 'fulfilled').length, 1);
   assert.match(String(contenders.find(r => r.status === 'rejected').reason), /NONCE_BUSY/);
   const winningData = contenders[0].status === 'fulfilled' ? dataA : dataB;
   const winningRaw = contenders.find(r => r.status === 'fulfilled').value;
   // A restart/new nonce/changed fee must recover the exact original intent without another fee reservation.
-  const before = (await gasA.status(plan.provider_id)).whitechain_reserved_wei;
+  const before = (await gasA.status(plan.provider_id)).avalanche_reserved_wei;
   const replay = await accountB.signTransaction({ ...tx, nonce: 2, gasPrice: 2n, data: winningData });
   assert.equal(replay, winningRaw); assert.equal(parseTransaction(replay).nonce, 0);
-  assert.equal((await gasB.status(plan.provider_id)).whitechain_reserved_wei, before);
-  assert.equal(await gasB.signedSubscription(plan.provider_id, 1874, winningData, sub.contract), winningRaw);
+  assert.equal((await gasB.status(plan.provider_id)).avalanche_reserved_wei, before);
+  assert.equal(await gasB.signedSubscription(plan.provider_id, 43113, winningData, sub.contract), winningRaw);
   console.log('PASS separate PostgreSQL signer connections exclude conflicting nonces and recover exact signed intents without charging gas budgets twice');
 
   const orphan = { ...sub, grantId: '', status: 'RECONCILIATION_REQUIRED' };

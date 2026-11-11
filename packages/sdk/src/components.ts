@@ -12,7 +12,7 @@ export const EMBED_COMPONENTS = [
   {
     id: 'cmp_checkout',
     label: 'Checkout',
-    blurb: 'Pay for a plan on Whitechain — mints the plan’s entitlement on success.',
+    blurb: 'Pay for a plan on Avalanche — activates the plan’s entitlement on success.',
     view: 'checkout' as const,
   },
   {

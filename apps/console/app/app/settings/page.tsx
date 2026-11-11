@@ -23,36 +23,32 @@ export default function SettingsPage() {
   const checks: Check[] = status
     ? [
         {
-          id: 'world',
-          ok: Boolean(status.tracks.world.idkit) && !status.tracks.world.mock_proofs,
-          title: 'World IDKit (login + mint uniqueness)',
-          need: status.tracks.world.mock_proofs
-            ? 'Set WORLD_MOCK_PROOFS=false and restart. You already have APP_ID / RP_ID / signing key.'
-            : status.tracks.world.idkit
-              ? 'Live — scan World App on login / mint.'
-              : 'Set WORLD_APP_ID, WORLD_RP_ID, WORLD_RP_SIGNING_KEY (+ NEXT_PUBLIC_* mirrors).',
-          action: '/app/login',
+          id: 'account',
+          ok: true,
+          title: 'Email and Avalanche wallet',
+          need: 'Verified email receives billing messages; wallet signatures authorize financial actions.',
+          action: '/app/account',
         },
         {
-          id: 'whitechain',
-          ok: Boolean(status.tracks.whitechain.usdt && (status.dual_gate.provider_funded_gas || status.tracks.whitechain.pay_to)),
-          title: 'Whitechain USDT (money clock)',
+          id: 'avalanche',
+          ok: Boolean(status.tracks.avalanche.usdt && (status.dual_gate.provider_funded_gas || status.tracks.avalanche.pay_to)),
+          title: 'Avalanche stablecoin (money clock)',
           need: status.dual_gate.provider_funded_gas
             ? 'Provider checkout pays each plan’s merchant wallet. Fund and authorize your dedicated gas account below; platform keys are not fee payers.'
-            : !status.tracks.whitechain.pay_to
-            ? 'Set WHITECHAIN_PAY_TO (payout wallet) or WHITECHAIN_PRIVATE_KEY — Mint / Buy credits need a recipient. Restart daemon after changing .env.'
-            : status.tracks.whitechain.demo_settle
-              ? `Recipient ${status.tracks.whitechain.pay_to.slice(0, 10)}… · demo settle on. Set WHITECHAIN_DEMO_SETTLE=false for live verify.`
-              : `Live · recipient ${status.tracks.whitechain.pay_to.slice(0, 10)}… · USDT configured.`,
+            : !status.tracks.avalanche.pay_to
+            ? 'Set AVALANCHE_PAY_TO (payout wallet) or AVALANCHE_PRIVATE_KEY — Mint / Buy credits need a recipient. Restart daemon after changing .env.'
+            : status.tracks.avalanche.demo_settle
+              ? `Recipient ${status.tracks.avalanche.pay_to.slice(0, 10)}… · demo settle on. Set AVALANCHE_DEMO_SETTLE=false for live verify.`
+              : `Live · recipient ${status.tracks.avalanche.pay_to.slice(0, 10)}… · stablecoin configured.`,
           action: '/app/plans',
         },
         {
-          id: 'arkiv',
-          ok: status.tracks.arkiv.live,
-          title: 'Arkiv living grants',
-          need: status.tracks.arkiv.live
+          id: 'registry',
+          ok: status.tracks.registry.live,
+          title: 'Registry living grants',
+          need: status.tracks.registry.live
             ? 'Live store — grants are queryable entities.'
-            : status.dual_gate.provider_funded_gas ? 'Set ARKIV_ACCESS_KEY and ENTITLEMENT_STORE=arkiv, then authorize and fund the provider gas account.' : 'Set ARKIV_ACCESS_KEY + ARKIV_PRIVATE_KEY and ENTITLEMENT_STORE=arkiv.',
+            : status.dual_gate.provider_funded_gas ? 'Set AVALANCHE_ENTITLEMENT_REGISTRY and ENTITLEMENT_STORE=avalanche, then authorize and fund the provider gas account.' : 'Set AVALANCHE_ENTITLEMENT_REGISTRY and ENTITLEMENT_STORE=avalanche.',
           action: '/app/grants',
         },
       ]
@@ -105,28 +101,23 @@ export default function SettingsPage() {
         <div className="grid gap-4 md:grid-cols-3">
           {[
             {
-              t: 'World',
+              t: 'Account',
+              lines: ['Email sign-in', 'Signed Avalanche wallet ownership'],
+            },
+            {
+              t: 'Avalanche',
               lines: [
-                `Mode: ${status.tracks.world.mode}`,
-                `Live proofs: ${!status.tracks.world.mock_proofs}`,
-                `IDKit: ${Boolean(status.tracks.world.idkit)}`,
-                `Agent Pass: ${Boolean(status.tracks.world.agent_pass)}`,
+                `Network: ${status.tracks.avalanche.network} (${status.tracks.avalanche.chain_id})`,
+                `Operator: ${status.tracks.avalanche.operator}`,
+                `Demo settle: ${status.tracks.avalanche.demo_settle}`,
               ],
             },
             {
-              t: 'Whitechain',
-              lines: [
-                `Network: ${status.tracks.whitechain.network} (${status.tracks.whitechain.chain_id})`,
-                `Operator: ${status.tracks.whitechain.operator}`,
-                `Demo settle: ${status.tracks.whitechain.demo_settle}`,
-              ],
-            },
-            {
-              t: 'Arkiv',
-              lines: [`Store: ${status.tracks.arkiv.store}`, `Live entities: ${status.tracks.arkiv.live}`],
+              t: 'Registry',
+              lines: [`Store: ${status.tracks.registry.store}`, `Live entities: ${status.tracks.registry.live}`],
               extra: (
-                <Link href="/app/arkiv" className="mt-3 inline-block text-xs font-semibold text-[var(--blue)] underline">
-                  Open Arkiv studio →
+                <Link href="/app/registry" className="mt-3 inline-block text-xs font-semibold text-[var(--blue)] underline">
+                  Open Registry studio →
                 </Link>
               ),
             },

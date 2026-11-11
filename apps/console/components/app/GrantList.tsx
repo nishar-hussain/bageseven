@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { entitlementsApi, type Grant } from '../../lib/entitlements-client';
 import { featureLabel, shortId } from '../../lib/use-operator';
@@ -52,7 +52,7 @@ function GrantRow({
   valueType: 'boolean' | 'numeric';
 }) {
   const { label, dead } = useTtl(grant.paid_through);
-  const host = network === 'mainnet' ? 'https://explorer.whitechain.io' : 'https://explorer.testnet.whitechain.io';
+  const host = network === 'mainnet' ? 'https://snowtrace.io' : 'https://testnet.snowtrace.io';
   const explorer = grant.payment_tx ? `${host}/tx/${grant.payment_tx}` : null;
   const isBoolean = valueType === 'boolean';
   return (
@@ -65,7 +65,7 @@ function GrantRow({
             <div className="font-medium">
               {featureLabel(grant.feature)} entitlement
               <span className="ml-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">
-                {isBoolean ? 'boolean · Arkiv' : 'numeric · Arkiv'}
+                {isBoolean ? 'boolean · Registry' : 'numeric · Registry'}
               </span>
             </div>
             <div className="break-words text-xs text-[var(--muted)]">
@@ -93,7 +93,7 @@ function GrantRow({
         <span>Renewal {grant.renewal_enabled ? 'on' : 'off'}</span>
         {explorer && (
           <a className="font-medium text-[var(--blue)] underline" href={explorer} target="_blank" rel="noreferrer">
-            Whitechain
+            Avalanche
           </a>
         )}
         {!isBoolean ? (
@@ -125,12 +125,14 @@ export function GrantList({
   selectable = false,
   onSelect,
   selectedId,
+  onGrantsChange,
 }: {
   feature?: string;
   holder?: string;
   selectable?: boolean;
   onSelect?: (grant: Grant) => void;
   selectedId?: string;
+  onGrantsChange?: (grants: Grant[]) => void;
 }) {
   const [grants, setGrants] = useState<Grant[]>([]);
   const [network, setNetwork] = useState('testnet');
@@ -141,27 +143,35 @@ export function GrantList({
   const [cancellationUrl, setCancellationUrl] = useState('');
   const [localSelected, setLocalSelected] = useState<string | undefined>(selectedId);
   const { features } = useFeatures();
+  const refreshVersion = useRef(0);
 
   const refresh = useCallback(async () => {
+    const version = ++refreshVersion.current;
     setError(null);
     try {
       const live = await entitlementsApi.live({ feature, holder });
+      if (version !== refreshVersion.current) return;
       const list = live.grants ?? [];
       setGrants(list);
+      onGrantsChange?.(list);
       setLocalSelected((prev) => {
         if (prev && list.some((g) => g.id === prev)) return prev;
         return list[0]?.id;
       });
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (version === refreshVersion.current) setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      if (version === refreshVersion.current) setLoading(false);
     }
-  }, [feature, holder]);
+  }, [feature, holder, onGrantsChange]);
 
   useEffect(() => {
     setLoading(true);
     void refresh();
+    const interval = window.setInterval(() => void refresh(), 45_000);
+    const focused = () => void refresh();
+    window.addEventListener('focus', focused);
+    return () => { window.clearInterval(interval); window.removeEventListener('focus', focused); };
   }, [refresh]);
 
   useEffect(() => {
@@ -179,7 +189,7 @@ export function GrantList({
     void entitlementsApi
       .status()
       .then((s) => {
-        if (s?.tracks.whitechain.network) setNetwork(s.tracks.whitechain.network);
+        if (s?.tracks.avalanche.network) setNetwork(s.tracks.avalanche.network);
       })
       .catch(() => undefined);
   }, []);
@@ -243,7 +253,7 @@ export function GrantList({
         <div className="py-10 text-center">
           <p className="font-medium text-[var(--ink)]">No live entitlements yet</p>
           <p className="mt-2 text-sm text-[var(--muted)]">
-            Nothing on Arkiv for this workspace right now. Create boolean or credit access with a TTL.
+            Nothing on Registry for this workspace right now. Create boolean or credit access with a TTL.
           </p>
           <Link href="/app/mint" className="mt-5 inline-flex rounded-full bg-[var(--ink)] px-5 py-2 text-sm font-semibold text-white">
             Create entitlement

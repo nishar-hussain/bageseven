@@ -2,13 +2,13 @@ import type { Subscriptions } from './subscriptions.js';
 import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import { ApiError } from '@bagseven/server';
-import { ArkivInvalidValueError, getGrantStore } from '@bagseven/entitlements';
+import { EntitlementPreflightError, getGrantStore } from '@bagseven/entitlements';
 import type { Redis } from 'ioredis';
 import type { Database } from '@bagseven/db';
-import { ProviderGasManager, providerGasEnabled, verifyProviderScope, whitechainConfig } from '@bagseven/onchain';
+import { ProviderGasManager, providerGasEnabled, verifyProviderScope, avalancheConfig } from '@bagseven/onchain';
 import { assertProviderReady } from './provider-gas.js';
-import { verifyPaymentAuthorization, verifyWhitechainPayment } from './whitechain-payment.js';
-import { whitechainDemoAllowed } from './whitechain-settle.js';
+import { verifyPaymentAuthorization, verifyAvalanchePayment } from './avalanche-payment.js';
+import { avalancheDemoAllowed } from './avalanche-settle.js';
 import {
   authenticateRequest,
   type ApiPrincipal,
@@ -165,7 +165,7 @@ export function registerBillingRoutes(
         chain_id: session.chain_id,
         worker_id: session.worker_id,
         subscription_plan: session.plan?.interval === 'month' && deps.subscriptions ? await deps.subscriptions.planView(session.plan_id, session.id, session.expires_at) : null,
-        payment: { chain_id: session.chain_id, usdt: whitechainConfig().usdt, rpc_url: whitechainConfig().rpcUrl, explorer: whitechainConfig().explorer },
+        payment: { chain_id: session.chain_id, usdt: avalancheConfig().usdt, rpc_url: avalancheConfig().rpcUrl, explorer: avalancheConfig().explorer },
         holder: session.holder,
         expires_at: session.expires_at,
         customer_wallet: session.customer_wallet,
@@ -198,16 +198,16 @@ export function registerBillingRoutes(
     const plan = session.plan ?? await store.getPlan(session.plan_id);
     if (!plan) throw new ApiError(404, 'PLAN_NOT_FOUND', 'plan missing');
     await ready(plan.provider_id);
-    if (session.chain_id !== whitechainConfig().chainId) throw new ApiError(409, 'CHECKOUT_NETWORK_CHANGED', 'Create a new checkout for the configured network');
+    if (session.chain_id !== avalancheConfig().chainId) throw new ApiError(409, 'CHECKOUT_NETWORK_CHANGED', 'Create a new checkout for the configured network');
 
     const pending = confirmations.get(id);
     if (pending) return pending;
     const confirm = async () => {
-      const demo = whitechainDemoAllowed();
+      const demo = avalancheDemoAllowed();
       if (!demo || plan.interval === 'month') {
         try {
           await verifyPaymentAuthorization({ wallet: body.customer_wallet, signature: body.payment_signature, context: `checkout:${session.id}`, hash: body.payment_tx });
-          await verifyWhitechainPayment({
+          await verifyAvalanchePayment({
             payment_tx: body.payment_tx, merchant_wallet: plan.merchant_wallet,
             customer_wallet: body.customer_wallet, amount: session.amount,
           });
@@ -216,7 +216,7 @@ export function registerBillingRoutes(
           throw new ApiError(402, 'PAYMENT_UNVERIFIED', error instanceof Error ? error.message : String(error));
         }
       }
-      const paymentKey = `whitechain:payment:${session.chain_id}:${body.payment_tx.toLowerCase()}`;
+      const paymentKey = `avalanche:payment:${session.chain_id}:${body.payment_tx.toLowerCase()}`;
       if (deps.redis) {
         const fresh = await deps.redis.set(paymentKey, id, 'NX');
         if (!fresh && (await deps.redis.get(paymentKey) !== id || (plan.interval !== 'month' && await deps.redis.getdel(`${paymentKey}:preflight-retry`) !== id))) {
@@ -240,15 +240,14 @@ export function registerBillingRoutes(
         remaining: plan.credits,
         ttl_seconds: plan.ttl_seconds,
         payment_tx: body.payment_tx,
-        settlement_network: 'whitechain',
+        settlement_network: 'avalanche',
         human_id: prior?.human_id,
-        world_proof_id: prior?.world_proof_id ?? `world:checkout:${session.id}`,
         worker_id: session.worker_id || prior?.worker_id,
         renewal_enabled: false,
       }).catch(async error => {
         // SDK value validation happens before signing/broadcast. Unknown write
         // failures retain the receipt hold and require reconciliation.
-        if (error instanceof ArkivInvalidValueError && deps.redis) await deps.redis.set(`${paymentKey}:preflight-retry`, id);
+        if (error instanceof EntitlementPreflightError && deps.redis) await deps.redis.set(`${paymentKey}:preflight-retry`, id);
         throw error;
       });
 
