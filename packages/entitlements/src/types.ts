@@ -26,6 +26,8 @@ export const GrantSchema = z.object({
 export type Grant = z.infer<typeof GrantSchema>;
 
 export const MintGrantInputSchema = z.object({
+  /** Internal fulfillment identity: one grant per confirmed subscription period. */
+  id: z.string().uuid().optional(),
   feature: z.string().min(1),
   holder: z.string().min(1),
   human_id: z.string().min(1).optional(),

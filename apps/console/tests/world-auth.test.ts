@@ -14,9 +14,12 @@ function request(body: unknown, cookie?: string) {
   return new NextRequest('http://localhost:3000/api/auth/world', { method: 'POST', headers: { 'content-type': 'application/json', ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body) });
 }
 describe('public World sign-in', () => {
-  it('returns public configuration before login without exposing the RP signing key', async () => {
+  it('returns daemon public configuration before login without exposing the RP signing key', async () => {
+    daemon.mockResolvedValueOnce({ ok: true, status: 200, body: { tracks: { world: { app_id: 'app_test', rp_id: 'rp_test', mock_proofs: false, signing_configured: true, idkit: true } } } });
     const res = await GET(new NextRequest('http://localhost:3000/api/auth/world'));
     const data = await res.json();
+    expect(res.status).toBe(200);
+    expect(daemon).toHaveBeenCalledWith('/internal/mumbai/status');
     expect(data).toMatchObject({ app_id: 'app_test', rp_id: 'rp_test', mock_proofs: false });
     expect(JSON.stringify(data)).not.toContain('server-key-not-returned');
   });

@@ -137,6 +137,9 @@ export default function McpPage() {
               'mint_with_world',
               'buy_credits',
               'cancel_renewal',
+              'list_subscriptions',
+              'get_subscription',
+              'cancel_subscription',
               'explain_denial',
               'bagseven_fetch',
             ]

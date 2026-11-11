@@ -5,7 +5,7 @@ import {
   ExpirationTime,
 } from '@arkiv-network/sdk';
 import { rabdi } from '@arkiv-network/sdk/chains';
-import { and, eq, gt } from '@arkiv-network/sdk/query';
+import { eq, gte as indexedGte } from '@arkiv-network/sdk/query';
 import { dec } from '@arkiv-network/sdk/schema';
 import { add, gte, gt as moneyGt, sub, validateMoney } from '@bagseven/money';
 import { http } from 'viem';
@@ -97,6 +97,19 @@ export class ArkivGrantStore implements GrantStore {
   private wallet: ReturnType<typeof createWalletClient> | null = null;
   private public: ReturnType<typeof createPublicClient> | null = null;
   private live = false;
+  private readonly mutations = new Map<string, Promise<unknown>>();
+
+  private withGrantLock<T>(id: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.mutations.get(id) ?? Promise.resolve();
+    const task = previous.catch(() => {}).then(operation);
+    this.mutations.set(id, task);
+    void task.finally(() => { if (this.mutations.get(id) === task) this.mutations.delete(id); }).catch(() => {});
+    return task;
+  }
+
+  private mutationTime(grant: Grant): string {
+    return new Date(Math.max(Date.now(), Date.parse(grant.updated_at) + 1)).toISOString();
+  }
 
   constructor(rpcUrlOrConfig?: string | ArkivStoreConfig, maybeConfig?: ArkivStoreConfig) {
     const config = typeof rpcUrlOrConfig === 'object' ? rpcUrlOrConfig : maybeConfig;
@@ -184,6 +197,10 @@ export class ArkivGrantStore implements GrantStore {
     if (grant.arkiv_entity_key) {
       this.entityKeys.set(grant.id, grant.arkiv_entity_key as Hex);
     }
+    // Indexing may lag a confirmed patch. Never replace that patch with an older row,
+    // including zero-credit/disabled snapshots that no longer match findLive filters.
+    const cached = this.cache.get(grant.id);
+    if (cached && Date.parse(cached.updated_at) >= Date.parse(grant.updated_at)) return cached;
     this.cache.set(grant.id, grant);
     return grant;
   }
@@ -213,7 +230,14 @@ export class ArkivGrantStore implements GrantStore {
     validateMoney(input.remaining);
 
     this.ensureClients();
-    const id = randomUUID();
+    if (input.id) {
+      const prior = await this.get(input.id);
+      if (prior) {
+        if (prior.holder !== input.holder || prior.feature !== input.feature || prior.payment_tx !== input.payment_tx || prior.merchant !== input.merchant) throw new Error('GRANT_ID_CONFLICT');
+        return prior;
+      }
+    }
+    const id = input.id ?? randomUUID();
     const created = nowIso();
     const paidThrough = new Date(Date.now() + input.ttl_seconds * 1000).toISOString();
     const settlement = input.settlement_network;
@@ -266,16 +290,13 @@ export class ArkivGrantStore implements GrantStore {
   }
 
   async get(id: string): Promise<Grant | null> {
-    const cached = this.cache.get(id);
-    if (cached && !isExpired(cached)) return cached;
     this.ensureClients();
-    try {
-      const key = await this.resolveEntityKey(id);
-      const row = await this.public!.getEntity(key, BagsevenGrants);
-      return this.rowToGrant(row as unknown as Record<string, unknown>);
-    } catch {
-      return this.cache.get(id) ?? null;
-    }
+    let key: Hex;
+    try { key = await this.resolveEntityKey(id); }
+    catch (error) { if ((error as Error).message === 'GRANT_NOT_FOUND') return null; throw error; }
+    // Refresh by key so updates made by another client become visible too.
+    const row = await this.public!.getEntity(key, BagsevenGrants);
+    return this.rowToGrant(row as unknown as Record<string, unknown>);
   }
 
   async findLive(query: {
@@ -300,26 +321,31 @@ export class ArkivGrantStore implements GrantStore {
     }
 
     try {
-      // Indexed remaining/enabled on-chain; feature/holder/worker filtered client-side
-      // to keep the SDK FilterCheck happy across optional query dims.
+      // Include zero and disabled rows to invalidate formerly-live cached grants.
+      // Apply access and identity filters after reconciling each indexed snapshot.
       const result = await this.public!
         .select()
         .from(BagsevenGrants)
-        .where(and(gt('remaining', dec('0')), eq('enabled', 'true')))
+        .where(indexedGte('remaining', dec('0')))
         .fetch();
 
       for (const row of result.entities as unknown as Record<string, unknown>[]) {
         const g = this.rowToGrant(row);
         if (matches(g)) byId.set(g.id, g);
+        else byId.delete(g.id);
       }
-    } catch {
-      // Query surface can lag or fail; cached mints still power the operator UI.
+    } catch (error) {
+      throw new Error('ARKIV_UNAVAILABLE: could not refresh living entitlements', { cause: error });
     }
 
     return [...byId.values()];
   }
 
-  async consume(id: string, amount: string, idempotencyKey: string): Promise<Grant> {
+  consume(id: string, amount: string, idempotencyKey: string): Promise<Grant> {
+    return this.withGrantLock(id, () => this.consumeLocked(id, amount, idempotencyKey));
+  }
+
+  private async consumeLocked(id: string, amount: string, idempotencyKey: string): Promise<Grant> {
     validateMoney(amount);
     if (!moneyGt(amount, '0')) throw new Error('INVALID_AMOUNT: consume amount must be positive');
     const key = `${id}:${idempotencyKey}`;
@@ -336,7 +362,7 @@ export class ArkivGrantStore implements GrantStore {
     this.ensureClients();
     const entityKey = await this.resolveEntityKey(id);
     const nextRemaining = sub(grant.remaining, amount);
-    const updated = nowIso();
+    const updated = this.mutationTime(grant);
     const wallet = await this.walletFor(grant.merchant, entityKey);
     await wallet.patchEntity(BagsevenGrants, entityKey, {
       set: { remaining: dec(nextRemaining), updated_at: updated },
@@ -349,13 +375,17 @@ export class ArkivGrantStore implements GrantStore {
     return next;
   }
 
-  async cancelRenewal(id: string): Promise<Grant> {
+  cancelRenewal(id: string): Promise<Grant> {
+    return this.withGrantLock(id, () => this.cancelRenewalLocked(id));
+  }
+
+  private async cancelRenewalLocked(id: string): Promise<Grant> {
     const grant = (await this.get(id)) ?? (() => {
       throw new Error('GRANT_NOT_FOUND');
     })();
     this.ensureClients();
     const entityKey = await this.resolveEntityKey(id);
-    const updated = nowIso();
+    const updated = this.mutationTime(grant);
     const wallet = await this.walletFor(grant.merchant, entityKey);
     await wallet.patchEntity(BagsevenGrants, entityKey, {
       set: { renewal_enabled: flag(false), updated_at: updated },
@@ -365,7 +395,11 @@ export class ArkivGrantStore implements GrantStore {
     return next;
   }
 
-  async hold(id: string, amount: string, holdId: string): Promise<Grant> {
+  hold(id: string, amount: string, holdId: string): Promise<Grant> {
+    return this.withGrantLock(id, () => this.holdLocked(id, amount, holdId));
+  }
+
+  private async holdLocked(id: string, amount: string, holdId: string): Promise<Grant> {
     validateMoney(amount);
     if (this.holds.has(holdId)) throw new Error('HOLD_EXISTS');
     const grant = (await this.get(id)) ?? (() => {
@@ -376,7 +410,7 @@ export class ArkivGrantStore implements GrantStore {
     this.ensureClients();
     const entityKey = await this.resolveEntityKey(id);
     const nextRemaining = sub(grant.remaining, amount);
-    const updated = nowIso();
+    const updated = this.mutationTime(grant);
     const wallet = await this.walletFor(grant.merchant, entityKey);
     await wallet.patchEntity(BagsevenGrants, entityKey, {
       set: { remaining: dec(nextRemaining), updated_at: updated },
@@ -396,23 +430,29 @@ export class ArkivGrantStore implements GrantStore {
     return grant;
   }
 
-  async release(holdId: string): Promise<Grant> {
+  release(holdId: string): Promise<Grant> {
+    const hold = this.holds.get(holdId);
+    if (!hold) return Promise.reject(new Error('HOLD_NOT_FOUND'));
+    return this.withGrantLock(hold.grantId, () => this.releaseLocked(holdId));
+  }
+
+  private async releaseLocked(holdId: string): Promise<Grant> {
     const hold = this.holds.get(holdId);
     if (!hold) throw new Error('HOLD_NOT_FOUND');
-    this.holds.delete(holdId);
     const grant = (await this.get(hold.grantId)) ?? (() => {
       throw new Error('GRANT_NOT_FOUND');
     })();
     this.ensureClients();
     const entityKey = await this.resolveEntityKey(hold.grantId);
     const nextRemaining = add(grant.remaining, hold.amount);
-    const updated = nowIso();
+    const updated = this.mutationTime(grant);
     const wallet = await this.walletFor(grant.merchant, entityKey);
     await wallet.patchEntity(BagsevenGrants, entityKey, {
       set: { remaining: dec(nextRemaining), updated_at: updated },
     });
     const next: Grant = { ...grant, remaining: nextRemaining, updated_at: updated };
     this.cache.set(hold.grantId, next);
+    this.holds.delete(holdId);
     return next;
   }
 

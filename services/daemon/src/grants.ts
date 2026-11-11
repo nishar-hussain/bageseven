@@ -106,6 +106,7 @@ export type MandateCapacity = {
 };
 
 export type GrantRouteDeps = PaymentLedger & {
+  subscriptionCancellation?: (grantId: string) => Promise<unknown | null>;
   /** Dual-gate: mandate money ceiling for a worker. */
   resolveMandateCapacity?: (workerId: string, amount?: string) => Promise<MandateCapacity>;
 };
@@ -898,6 +899,8 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
     }
     try {
       const { id } = req.params as { id: string };
+      const draft = await deps.subscriptionCancellation?.(id);
+      if (draft) return draft;
       const grant = await store.cancelRenewal(id);
       void notifyOperator(
         'renewal_cancelled',

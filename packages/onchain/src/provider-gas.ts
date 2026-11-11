@@ -1,8 +1,9 @@
 import { createCipheriv, createDecipheriv, createHmac, timingSafeEqual, randomBytes, randomUUID } from 'node:crypto';
-import { eq, sql } from 'drizzle-orm';
-import { providerGasAccounts, mandates, type Database } from '@bagseven/db';
-import { createPublicClient, createWalletClient, http, nonceManager, decodeAbiParameters, decodeFunctionData, formatEther, parseAbi, parseAbiParameters, parseEther, recoverMessageAddress, toFunctionSelector, type Hex } from 'viem';
+import { and, eq, sql } from 'drizzle-orm';
+import { providerGasAccounts, providerSignedTransactions, mandates, billingPlans, subscriptionPlans, type Database } from '@bagseven/db';
+import { createPublicClient, createWalletClient, http, nonceManager, decodeAbiParameters, decodeFunctionData, formatEther, parseAbi, parseAbiParameters, parseEther, recoverMessageAddress, toFunctionSelector, keccak256, stringToHex, parseUnits, type Hex } from 'viem';
 import { generatePrivateKey, privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
+import { SubscriptionBytecode, SubscriptionAbi } from './subscription-artifact.js';
 import { BagMandateBytecode } from './bytecode.js';
 
 export const ARKIV_ENGINE = '0x4400000000000000000000000000000000000044';
@@ -21,6 +22,7 @@ export function providerGasEnabled(env: NodeJS.ProcessEnv = process.env) {
   return env.PROVIDER_FUNDED_GAS !== 'false';
 }
 export type GasAuthorization = {
+  subscriptions?: boolean;
   provider: string; owner: string; address: string; nonce: string; challengeExpires: number; expires: number;
   whitechainId: number; arkivId: number; whitechainBudget: string; arkivBudget: string;
   whitechainTxLimit: string; arkivTxLimit: string;
@@ -34,6 +36,7 @@ export function gasAuthorizationMessage(a: GasAuthorization) {
     `Whitechain maximum fee per transaction: ${a.whitechainTxLimit}`, `Arkiv maximum fee per transaction: ${a.arkivTxLimit}`,
     `Expires: ${new Date(a.expires).toISOString()}`, `Challenge expires: ${new Date(a.challengeExpires).toISOString()}`, `Nonce: ${a.nonce}`,
     'Permitted: provider entitlement create/update on Arkiv; owner mandate deployment and provider-mandate registerWorker/execute on Whitechain.',
+    ...(a.subscriptions ? ['Also permitted: deploy fixed-price subscription plans owned by this provider; collect only their due USDT renewals under customer-approved on-chain terms.'] : []),
     'No native transfers, token approvals, arbitrary calls, or platform-wallet fallback. Budgets reserve maximum fees before signing; reservations are not automatically refunded.',
     'The server holds an encrypted delegated signing key. These limits are server-enforced, not restrictions encoded into the EOA on-chain.'].join('\n');
 }
@@ -60,10 +63,25 @@ export function validateGasAuthorization(a: GasAuthorization) {
   for (const [limit, budget] of [[a.whitechainTxLimit, a.whitechainBudget], [a.arkivTxLimit, a.arkivBudget]] as const) {
     if (!/^\d+(\.\d{1,18})?$/.test(limit) || !/^\d+(\.\d{1,18})?$/.test(budget) || parseEther(limit) <= 0n || parseEther(budget) < parseEther(limit)) throw new Error('PROVIDER_GAS_INVALID: each budget must be positive and at least its per-transaction fee limit');
   }
-  if (!Number.isSafeInteger(a.expires) || a.expires <= Date.now() || a.expires > Date.now() + 30 * 86400_000) throw new Error('PROVIDER_GAS_INVALID: authorization must expire within 30 days');
+  if (!Number.isSafeInteger(a.expires) || a.expires <= Date.now() || a.expires > Date.now() + (a.subscriptions ? 365 : 30) * 86400_000) throw new Error('PROVIDER_GAS_INVALID: authorization must expire within 30 days, or 365 days when subscription collection is explicitly authorized');
 }
 export class ProviderGasManager {
   constructor(private db: Database, private env: NodeJS.ProcessEnv) {}
+  private subscriptionIntent(data: Hex, to?: string) {
+    return keccak256(stringToHex(`${to?.toLowerCase() ?? 'deploy'}:${data.toLowerCase()}`));
+  }
+  /** Previously signed permissions may be recovered without signing or reserving fees again. */
+  async signedSubscription(provider: string, chainId: number, data: Hex, to?: string): Promise<Hex | undefined> {
+    const [signed] = await this.db.select().from(providerSignedTransactions).where(and(
+      eq(providerSignedTransactions.providerId, provider), eq(providerSignedTransactions.chainId, chainId),
+      eq(providerSignedTransactions.intent, this.subscriptionIntent(data, to))));
+    return signed?.raw as Hex | undefined;
+  }
+  /** Only the chain adapter may release an intent after proving that its transaction reverted. */
+  async revertedSubscription(provider: string, chainId: number, raw: Hex) {
+    await this.db.update(providerSignedTransactions).set({ intent: null }).where(and(
+      eq(providerSignedTransactions.providerId, provider), eq(providerSignedTransactions.chainId, chainId), eq(providerSignedTransactions.raw, raw)));
+  }
   private async row(provider: string) {
     const row = await this.db.query.providerGasAccounts.findFirst({ where: eq(providerGasAccounts.providerId, provider) });
     if (!row) throw new Error('PROVIDER_GAS_REQUIRED: provider must configure and fund its gas account');
@@ -73,7 +91,7 @@ export class ProviderGasManager {
     encryptionKey(this.env);
     let row = await this.db.query.providerGasAccounts.findFirst({ where: eq(providerGasAccounts.providerId, provider) });
     const draft: GasAuthorization = { ...input, owner: input.owner.toLowerCase(), provider, address: row?.address ?? privateKeyToAccount(generatePrivateKey()).address,
-      nonce: randomUUID(), challengeExpires: Date.now() + 300_000,
+      subscriptions: true, nonce: randomUUID(), challengeExpires: Date.now() + 300_000,
       whitechainId: Number(this.env.CHAIN_ID ?? 1874), arkivId: Number(this.env.ARKIV_CHAIN_ID ?? 7794095) };
     validateGasAuthorization(draft);
     if (row && row.ownerAddress !== draft.owner) throw new Error('PROVIDER_GAS_OWNER_MISMATCH: revoke and recover the existing account before changing its owner');
@@ -169,18 +187,34 @@ export class ProviderGasManager {
         const expectedChain = network === 'arkiv' ? a.arkivId : a.whitechainId;
         if (Number(transaction.chainId) !== expectedChain || BigInt(transaction.value ?? 0) !== 0n) throw new Error('PROVIDER_GAS_CALL_FORBIDDEN: wrong chain or native value');
         const data = transaction.data ?? '0x';
+        let subscriptionIntent: string | undefined;
         if (network === 'arkiv') {
           if (transaction.to?.toLowerCase() !== ARKIV_ENGINE.toLowerCase()) throw new Error('PROVIDER_GAS_CALL_FORBIDDEN: only Arkiv engine writes are delegated');
           const decoded = decodeFunctionData({ abi: parseAbi(['function execute((uint8 operation,bytes operationData)[] ops)']), data });
           if (decoded.functionName !== 'execute' || decoded.args[0].length !== 1 || ![1, 2].includes(decoded.args[0][0]!.operation)) throw new Error('PROVIDER_GAS_CALL_FORBIDDEN: only single create/patch operations are delegated');
         } else if (!transaction.to) {
-          if (!data.startsWith(BagMandateBytecode)) throw new Error('PROVIDER_GAS_CALL_FORBIDDEN: only BagMandate deployment is delegated');
-          const args = decodeAbiParameters(parseAbiParameters('address,address,address,address,uint256,uint256,uint256,uint256,uint256,uint8,bytes32,uint256'), `0x${data.slice(BagMandateBytecode.length)}`);
-          if (args[0].toLowerCase() !== current.ownerAddress || args[2].toLowerCase() !== raw.address.toLowerCase()) throw new Error('PROVIDER_GAS_CALL_FORBIDDEN: deployment must retain the authorized owner and provider enforcer');
+          if (a.subscriptions && data.startsWith(SubscriptionBytecode)) {
+            subscriptionIntent = this.subscriptionIntent(data);
+            const args = decodeAbiParameters(parseAbiParameters('address,address,address,uint256,uint256,bytes32'), `0x${data.slice(SubscriptionBytecode.length)}`);
+            const plans = await this.db.select().from(billingPlans).where(eq(billingPlans.providerId, provider));
+            const plan = plans.find(p => keccak256(stringToHex(p.id)) === args[5]);
+            if (!plan || plan.active !== 'true' || plan.interval !== 'month' || plan.merchantWallet.toLowerCase() !== args[1].toLowerCase() ||
+                args[0].toLowerCase() !== (this.env.WHITECHAIN_USDT || (a.whitechainId === 1874 ? '0xaa7962d073935D387e8d442DA1D7149C81388f46' : '')).toLowerCase() || args[2].toLowerCase() !== raw.address.toLowerCase() ||
+                args[3] !== parseUnits(plan.amount, 6) || args[4] !== BigInt(plan.ttlSeconds)) throw new Error('PROVIDER_GAS_CALL_FORBIDDEN: subscription terms do not match the provider plan');
+          } else {
+            if (!data.startsWith(BagMandateBytecode)) throw new Error('PROVIDER_GAS_CALL_FORBIDDEN: deployment is not delegated; renew provider gas authorization for subscriptions');
+            const args = decodeAbiParameters(parseAbiParameters('address,address,address,address,uint256,uint256,uint256,uint256,uint256,uint8,bytes32,uint256'), `0x${data.slice(BagMandateBytecode.length)}`);
+            if (args[0].toLowerCase() !== current.ownerAddress || args[2].toLowerCase() !== raw.address.toLowerCase()) throw new Error('PROVIDER_GAS_CALL_FORBIDDEN: deployment must retain the authorized owner and provider enforcer');
+          }
         } else {
           const mandate = await this.db.query.mandates.findFirst({ where: sql`lower(${mandates.contractAddress}) = ${transaction.to.toLowerCase()}` });
           const allowed = ['execute(uint256,address,bytes32)', 'registerWorker(bytes32,bytes32,address,uint256,uint8)'].map(toFunctionSelector);
-          if (mandate?.providerId !== provider || !allowed.some(selector => data.startsWith(selector))) throw new Error('PROVIDER_GAS_CALL_FORBIDDEN: target mandate or method is not delegated');
+          const subscription = a.subscriptions && data.startsWith(toFunctionSelector('charge(bytes32,uint256)'))
+            ? (await this.db.select().from(subscriptionPlans).where(eq(subscriptionPlans.providerId, provider))).find(p => (p.data as { contract?: string; status?: string }).contract?.toLowerCase() === transaction.to!.toLowerCase() && (p.data as { status?: string }).status === 'ready') : undefined;
+          if (subscription) {
+            decodeFunctionData({ abi: SubscriptionAbi, data });
+            subscriptionIntent = this.subscriptionIntent(data, transaction.to);
+          } else if (mandate?.providerId !== provider || !allowed.some(selector => data.startsWith(selector))) throw new Error('PROVIDER_GAS_CALL_FORBIDDEN: target mandate or method is not delegated');
         }
         const fee = transaction.maxFeePerGas ?? transaction.gasPrice;
         if (!transaction.gas || fee === undefined || transaction.gas <= 0n || fee < 0n) throw new Error('PROVIDER_GAS_FEE_REQUIRED: a bounded gas limit and fee must be prepared before signing');
@@ -191,10 +225,35 @@ export class ProviderGasManager {
         const column = network === 'arkiv' ? providerGasAccounts.arkivReserved : providerGasAccounts.whitechainReserved;
         const field = network === 'arkiv' ? 'arkivReserved' : 'whitechainReserved';
         // Atomic reservation also rechecks revocation and the authorization nonce.
-        const updated = await this.db.update(providerGasAccounts).set({ [field]: sql`${column} + ${cost.toString()}::numeric` }).where(sql`${providerGasAccounts.providerId} = ${provider} and ${providerGasAccounts.status} = 'active' and ${providerGasAccounts.expiresAt} > now() and ${providerGasAccounts.authorization}->>'nonce' = ${a.nonce} and ${column} + ${cost.toString()}::numeric <= ${budget.toString()}::numeric`).returning({ id: providerGasAccounts.providerId });
-        if (!updated.length) throw new Error('PROVIDER_GAS_BUDGET: provider budget exhausted or authorization changed');
-        // Reservations remain charged after signing, even if broadcast becomes uncertain.
-        return raw.signTransaction(transaction, options);
+        const sign = async (db: Database, signed?: Hex) => {
+          const updated = await db.update(providerGasAccounts).set({ [field]: sql`${column} + ${cost.toString()}::numeric` }).where(sql`${providerGasAccounts.providerId} = ${provider} and ${providerGasAccounts.status} = 'active' and ${providerGasAccounts.expiresAt} > now() and ${providerGasAccounts.authorization}->>'nonce' = ${a.nonce} and ${column} + ${cost.toString()}::numeric <= ${budget.toString()}::numeric`).returning({ id: providerGasAccounts.providerId });
+          if (!updated.length) throw new Error('PROVIDER_GAS_BUDGET: provider budget exhausted or authorization changed');
+          return signed ?? raw.signTransaction(transaction, options);
+        };
+        if (network !== 'whitechain') return sign(this.db);
+        if (!Number.isSafeInteger(transaction.nonce) || transaction.nonce! < 0) throw Error('PROVIDER_GAS_NONCE_REQUIRED');
+        return this.db.transaction(async tx => {
+          // Serialize every Whitechain signer for this account across daemon/policy replicas.
+          await tx.select().from(providerGasAccounts).where(eq(providerGasAccounts.providerId, provider)).for('update');
+          if (subscriptionIntent) {
+            const [existing] = await tx.select().from(providerSignedTransactions).where(and(
+              eq(providerSignedTransactions.providerId, provider), eq(providerSignedTransactions.chainId, expectedChain),
+              eq(providerSignedTransactions.intent, subscriptionIntent)));
+            if (existing) return existing.raw as Hex;
+          }
+          const id = `${provider}:${expectedChain}:${transaction.nonce}`;
+          const [existing] = await tx.select().from(providerSignedTransactions).where(eq(providerSignedTransactions.id, id));
+          const signed = await raw.signTransaction(transaction, options);
+          if (existing) {
+            if (existing.raw === signed) return signed;
+            throw Error('PROVIDER_GAS_NONCE_BUSY: this nonce already belongs to another signed transaction; retry with a fresh pending nonce');
+          }
+          await sign(tx as unknown as Database, signed);
+          // Both the fee reservation and exact signed bytes commit before the caller can broadcast.
+          await tx.insert(providerSignedTransactions).values({ id, providerId: provider, chainId: expectedChain,
+            nonce: transaction.nonce!, intent: subscriptionIntent, raw: signed });
+          return signed;
+        });
       },
     };
     return account;

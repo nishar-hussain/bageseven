@@ -7,7 +7,7 @@ import {
   getGrantStore,
   type Grant,
 } from '@bagseven/entitlements';
-import { gte } from '@bagseven/money';
+import { add, gte } from '@bagseven/money';
 import {
   assertCanRead,
   assertCanWrite,
@@ -64,6 +64,7 @@ export function isPublicEntitlementPath(url: string): boolean {
   if (path.startsWith('/v1/plans/')) return true;
   if (path.startsWith('/v1/checkout-sessions/')) return true;
   if (path.startsWith('/v1/public/checkout/')) return true;
+  if (path === '/v1/subscriptions' || path.startsWith('/v1/subscriptions/')) return true;
   if (path.startsWith('/v1/entitlements/') && path.endsWith('/cancel-renewal')) return true;
   return false;
 }
@@ -86,6 +87,7 @@ export function entitlementView(grant: Grant | null, feature: string) {
     allocation: valueType === 'boolean' ? (live ? '1' : '0') : (grant?.remaining ?? '0'),
     paid_through: grant?.paid_through ?? null,
     grant_id: grant?.id ?? null,
+    updated_at: grant?.updated_at,
     arkiv_entity_key: grant?.arkiv_entity_key,
     payment_tx: grant?.payment_tx,
     explorer_url: grant?.payment_tx ? explorerUrl(grant.payment_tx) : null,
@@ -120,7 +122,7 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
     assertCanRead(principal, holder);
     const live = await store.findLive({ feature: q.feature, holder });
     const grant = [...live].sort((a, b) => Number(b.remaining) - Number(a.remaining))[0] ?? null;
-    return entitlementView(grant, q.feature);
+    return { ...entitlementView(grant, q.feature), total_remaining: getFeatureValueType(q.feature) === 'boolean' ? (grant ? '1' : '0') : live.reduce((sum, g) => add(sum, g.remaining), '0') };
   });
 
   app.get('/v1/entitlements', async (req) => {
@@ -146,6 +148,8 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
     if (principal.kind === 'embed' && principal.holder !== grant.holder) {
       throw new ApiError(403, 'HOLDER_MISMATCH', 'embed token is scoped to a different holder');
     }
+    const draft = await deps.subscriptionCancellation?.(id);
+    if (draft) return draft;
     const next = await store.cancelRenewal(id);
     return {
       entitlement: entitlementView(next, next.feature),

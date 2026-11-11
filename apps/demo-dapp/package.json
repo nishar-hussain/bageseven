@@ -7,7 +7,8 @@
     "dev": "node ./scripts/dev.mjs",
     "dev:web": "vite --port 5177 --strictPort",
     "dev:api": "node --env-file-if-exists=../../.env ./server.mjs",
-    "check": "node --env-file-if-exists=../../.env ./scripts/check-product.mjs"
+    "check": "node --env-file-if-exists=../../.env ./scripts/check-product.mjs",
+    "seed:demo": "node --env-file-if-exists=../../.env ./scripts/prepare-demo.mjs"
   },
   "dependencies": {
     "@bagseven/sdk": "workspace:*",

@@ -206,6 +206,25 @@ describe('prepaid access without a spending mandate', () => {
     } finally { await app.close(); }
   });
 
+  it('reports total holder credits when consumption changes the richest grant', async () => {
+    const app = Fastify();
+    registerPublicEntitlementRoutes(app);
+    await app.ready();
+    const store = getGrantStore();
+    try {
+      const one = await store.mint({ holder: 'multiple-packs', feature: 'ocr', remaining: '44', ttl_seconds: 120 });
+      await store.mint({ holder: 'multiple-packs', feature: 'ocr', remaining: '44', ttl_seconds: 120 });
+      const headers = { authorization: 'Bearer sk_test_unit' };
+      const check = () => app.inject({ url: '/v1/check?feature=ocr&holder=multiple-packs', headers });
+      expect((await check()).json().total_remaining).toBe('88');
+      await store.consume(one.id, '1', 'multi-pack-use');
+      const result = (await check()).json();
+      expect(result.remaining).toBe('44');
+      expect(result.total_remaining).toBe('87');
+      expect(result.grant_id).not.toBe(one.id);
+    } finally { await app.close(); }
+  });
+
   it('exposes Schematic-style /v1/check and consume for humans vs agents', async () => {
     const resolve = vi.fn(async () => ({ ok: true }));
     const app = Fastify();

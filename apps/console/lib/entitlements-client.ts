@@ -101,7 +101,7 @@ export const entitlementsApi = {
   mint: (body: Record<string, unknown>) => api<{ grant: Grant; settlement?: { payment_tx?: string; explorer_url?: string; mode?: string }; world?: { mode?: string } }>('POST', 'grants/mint', body),
   buyCredits: (body: Record<string, unknown>) => api<{ grant: Grant; settlement?: { payment_tx?: string; explorer_url?: string; mode?: string } }>('POST', 'grants/buy-credits', body),
   paidRun: (body: Record<string, unknown>) => api<{ grant: Grant; dual_gate?: unknown }>('POST', 'grants/paid-run', body),
-  cancelRenewal: (id: string) => api<{ grant: Grant }>('POST', `grants/${encodeURIComponent(id)}/cancel-renewal`),
+  cancelRenewal: (id: string) => api<{ grant: Grant } | { requires_wallet_approval: true; management_url: string }>('POST', `grants/${encodeURIComponent(id)}/cancel-renewal`),
   explainDenial: (body: Record<string, unknown>) => api<{ denied: boolean; reasons: Array<{ code: string; detail: string }> }>('POST', 'grants/explain-denial', body),
   worldAuthorize: (redirectUri?: string) => {
     const qs = redirectUri ? `?redirect_uri=${encodeURIComponent(redirectUri)}` : '';

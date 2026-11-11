@@ -49,7 +49,7 @@ Demo: pnpm sdk:demo
 ## Dual-gate (IP)
 
 Payment clock = Whitechain (payment_tx)
-Renewal clock = grant.renewal_enabled (cancel does not kill paid_through)
+Renewal clock = customer-authorized Whitechain subscription + durable scheduler; grant.renewal_enabled mirrors intent (cancel does not kill paid_through). Monthly checkout uses 30-day wallet pulls, not a standalone USDT transfer.
 Access clock = Arkiv grant remaining + TTL — queryable object
 
 paid_run / secret consume use prepaid grants without a mandate. New USDT payments via bagseven_fetch require mandate remaining AND a living grant. Dashboard /app/mandate manages owner-signed spending permissions.
@@ -61,7 +61,7 @@ Email is optional — verify later via 6-digit OTP. Magic link is recovery/invit
 
 ## MCP tools
 
-bagseven_status, grant_status, check_entitlement, consume_entitlement, mint_with_world, buy_credits, create_checkout_session, paid_run, cancel_renewal, explain_denial, bagseven_fetch
+bagseven_status, grant_status, check_entitlement, consume_entitlement, mint_with_world, buy_credits, create_checkout_session, paid_run, cancel_renewal, explain_denial, bagseven_fetch, list_subscriptions, get_subscription, cancel_subscription
 Bind one worker: BAGSEVEN_MCP_WORKER=<uuid> pnpm mcp:local
 
 ## Tracks (mock vs live)

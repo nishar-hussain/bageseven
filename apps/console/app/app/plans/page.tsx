@@ -1,4 +1,5 @@
 'use client';
+import { RecurringSubscriptions } from './RecurringSubscriptions';
 
 import { errorMessage } from '../../../lib/error-message';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -70,7 +71,7 @@ export default function PlansPage() {
         feature,
         amount,
         credits: isBool ? '1' : credits,
-        ttl_seconds: ttl,
+        ttl_seconds: billingInterval === 'month' ? 30 * 86400 : ttl,
         interval: billingInterval,
         merchant_wallet: wallet,
       });
@@ -170,7 +171,7 @@ export default function PlansPage() {
                 onChange={(e) => setBillingInterval(e.target.value as 'once' | 'month')}
               >
                 <option value="once">One time</option>
-                <option value="month">Every month</option>
+                <option value="month">Every 30 days · wallet-authorized subscription</option>
               </select>
             </label>
             <label className="block text-xs font-semibold uppercase text-[var(--muted)]">
@@ -178,7 +179,8 @@ export default function PlansPage() {
               <input
                 type="number"
                 className="mt-1 w-full rounded-xl border border-[var(--line)] px-3 py-2 text-sm"
-                value={ttl}
+                disabled={billingInterval === 'month'}
+                value={billingInterval === 'month' ? 30 * 86400 : ttl}
                 onChange={(e) => setTtl(Number(e.target.value))}
               />
             </label>
@@ -274,7 +276,7 @@ export default function PlansPage() {
                     </td>
                     <td className="px-4 py-3.5 tabular-nums">{p.amount} USDT</td>
                     <td className="px-4 py-3.5 tabular-nums">{p.credits}</td>
-                    <td className="px-4 py-3.5 text-[var(--muted)]">{p.interval === 'month' ? 'Every month' : 'One time'}</td>
+                    <td className="px-4 py-3.5 text-[var(--muted)]">{p.interval === 'month' ? 'Every 30 days' : 'One time'}</td>
                     <td className="px-4 py-3.5">{featureLabel(p.feature, features)}</td>
                     <td className="px-4 py-3.5">{p.active && p.provider_id !== 'legacy' ? <Link className="font-semibold text-[var(--blue)] underline" href={`/app/mint?plan_id=${encodeURIComponent(p.id)}`}>Open checkout</Link> : <span className="text-[var(--muted)]">Unavailable</span>}</td>
                   </tr>
@@ -287,6 +289,7 @@ export default function PlansPage() {
           Showing {filtered.length === 0 ? 0 : 1}–{filtered.length} of {filtered.length} plans
         </div>
       </SoftCard>
+      <RecurringSubscriptions />
     </div>
   );
 }

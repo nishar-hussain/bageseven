@@ -58,6 +58,16 @@ export const providerGasAccounts = pgTable('provider_gas_accounts', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** Durable ownership of Whitechain nonces, shared by every provider signing process. */
+export const providerSignedTransactions = pgTable('provider_signed_transactions', {
+  id: text('id').primaryKey(),
+  providerId: text('provider_id').notNull().references(() => providerGasAccounts.providerId),
+  chainId: integer('chain_id').notNull(),
+  nonce: integer('nonce').notNull(),
+  intent: text('intent'),
+  raw: text('raw').notNull(),
+}, t => [uniqueIndex('uq_provider_signed_intent').on(t.providerId, t.chainId, t.intent)]);
+
 export const providers = pgTable(
   'providers',
   {
@@ -192,6 +202,27 @@ export const checkoutSessions = pgTable(
     uniqueIndex('idx_checkout_payment_unique').on(t.chainId, t.paymentTx),
   ],
 );
+
+/** Durable subscription journals; signed transactions are public data, never wallet keys. */
+export const subscriptionPlans = pgTable('subscription_plans', {
+  id: text('id').primaryKey().references(() => billingPlans.id),
+  providerId: text('provider_id').notNull(),
+  data: jsonb('data').notNull(),
+});
+export const billingSubscriptions = pgTable('billing_subscriptions', {
+  id: text('id').primaryKey(),
+  checkoutId: text('checkout_id').notNull().unique().references(() => checkoutSessions.id),
+  holder: text('holder').notNull(),
+  providerId: text('provider_id').notNull(),
+  nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull(),
+  status: text('status').notNull(),
+  data: jsonb('data').notNull(),
+}, t => [index('idx_subscription_due').on(t.status, t.nextAttemptAt), index('idx_subscription_holder').on(t.holder)]);
+export const subscriptionPeriods = pgTable('subscription_periods', {
+  id: text('id').primaryKey(),
+  subscriptionId: text('subscription_id').notNull().references(() => billingSubscriptions.id),
+  data: jsonb('data').notNull(),
+});
 
 /** Every on-chain action for audit. */
 export const transactions = pgTable(

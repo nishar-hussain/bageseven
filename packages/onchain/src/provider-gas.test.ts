@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { encodeFunctionData, encodeDeployData, parseAbi, parseEther, recoverTransactionAddress, type Hex } from 'viem';
+import { encodeFunctionData, encodeDeployData, parseAbi, parseEther, recoverTransactionAddress, keccak256, stringToHex, type Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import type { Database } from '@bagseven/db';
+import { providerGasAccounts, providerSignedTransactions, type Database } from '@bagseven/db';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { ARKIV_ENGINE, ProviderGasManager, encryptGasKey, gasAuthorizationMessage, providerGasEnabled, type GasAuthorization } from './provider-gas.js';
+import { SubscriptionAbi, SubscriptionBytecode } from './subscription-artifact.js';
 import { BagMandateAbi } from './abi.js';
 import { BagMandateBytecode } from './bytecode.js';
 const rpc = vi.hoisted(() => ({ send: vi.fn(), wallet: vi.fn() }));
@@ -23,10 +25,37 @@ function fixture() {
   const returning = vi.fn(async () => [{ id: provider }]);
   const mandate = { providerId: provider, contractAddress: owner.address.toLowerCase() };
   const set = vi.fn((values: object) => { Object.assign(row, values); return { where: () => ({ returning }) }; });
-  const db = { query: { providerGasAccounts: { findFirst: async () => row }, mandates: { findFirst: async () => mandate } }, update: () => ({ set }), transaction: async (run: (tx: unknown) => unknown) => run({ select: () => ({ from: () => ({ where: () => ({ for: async () => [row] }) }) }), update: () => ({ set }) }) } as unknown as Database;
-  return { manager: new ProviderGasManager(db, env), row, returning, set, mandate };
+  const selected: unknown[] = [];
+  const signatures: { id: string; providerId: string; chainId: number; intent?: string; raw: string }[] = [];
+  const dialect = new PgDialect();
+  const select = () => ({ from: (table: unknown) => ({ where: (condition: Parameters<PgDialect['sqlToQuery']>[0]) => {
+    const values = dialect.sqlToQuery(condition).params;
+    const rows = table === providerGasAccounts ? [row] : table === providerSignedTransactions
+      ? signatures.filter(r => values.length === 1 ? r.id === values[0] : r.providerId === values[0] && r.chainId === values[1] && r.intent === values[2]) : selected;
+    return Object.assign(Promise.resolve(rows), { for: async () => rows });
+  } }) });
+  let queue = Promise.resolve();
+  const context = { select, update: () => ({ set }), insert: () => ({ values: async (value: typeof signatures[number]) => { signatures.push(value); } }) };
+  const db = { ...context, query: { providerGasAccounts: { findFirst: async () => row }, mandates: { findFirst: async () => mandate } },
+    transaction: async (run: (tx: unknown) => Promise<unknown>) => {
+      const previous = queue; let release!: () => void; queue = new Promise<void>(r => { release = r; });
+      await previous; try { return await run(context); } finally { release(); }
+    } } as unknown as Database;
+  return { manager: new ProviderGasManager(db, env), row, returning, set, mandate, selected };
 }
 describe('provider-funded restricted signing', () => {
+  it('rejects conflicting Whitechain signatures for the same provider nonce across concurrent callers', async () => {
+    const { manager, row } = fixture();
+    const account = await manager.account(provider, 'whitechain');
+    const call = encodeFunctionData({ abi: parseAbi(['function execute(uint256,address,bytes32)']), functionName: 'execute', args: [1n, owner.address, `0x${'00'.repeat(32)}`] });
+    const results = await Promise.allSettled([
+      account.signTransaction({ ...tx, chainId: 1874, to: owner.address, data: call }),
+      account.signTransaction({ ...tx, chainId: 1874, to: owner.address, data: encodeFunctionData({ abi: parseAbi(['function execute(uint256,address,bytes32)']), functionName: 'execute', args: [2n, owner.address, `0x${'00'.repeat(32)}`] }) }),
+    ]);
+    expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter(r => r.status === 'rejected')).toHaveLength(1);
+    expect(row.address).toBe(account.address.toLowerCase());
+  });
   it('permits only the provider-owned deployment and recorded mandate methods on Whitechain', async () => {
     const { manager, row, mandate } = fixture();
     const account = await manager.account(provider, 'whitechain');
@@ -36,9 +65,26 @@ describe('provider-funded restricted signing', () => {
     const wrong = encodeDeployData({ abi: BagMandateAbi, bytecode: BagMandateBytecode, args: [row.address, ...args.slice(1)] });
     await expect(account.signTransaction({ ...tx, chainId: 1874, to: undefined, data: wrong })).rejects.toThrow('FORBIDDEN');
     const call = encodeFunctionData({ abi: parseAbi(['function execute(uint256,address,bytes32)']), functionName: 'execute', args: [1n, owner.address, `0x${'00'.repeat(32)}`] });
-    await expect(account.signTransaction({ ...tx, chainId: 1874, to: owner.address, data: call })).resolves.toMatch(/^0x/);
+    await expect(account.signTransaction({ ...tx, nonce: 1, chainId: 1874, to: owner.address, data: call })).resolves.toMatch(/^0x/);
     mandate.providerId = 'another-provider';
     await expect(account.signTransaction({ ...tx, chainId: 1874, to: owner.address, data: call })).rejects.toThrow('FORBIDDEN');
+  });
+  it('requires explicit subscription permission and limits deployments and collections to provider-owned plan terms', async () => {
+    const { manager, row, selected, mandate } = fixture();
+    const call = encodeFunctionData({ abi: SubscriptionAbi, functionName: 'charge', args: [`0x${'00'.repeat(32)}`, 1800000000n] });
+    mandate.providerId = 'other-provider';
+    const account = await manager.account(provider, 'whitechain');
+    await expect(account.signTransaction({ ...tx, chainId: 1874, to: owner.address, data: call })).rejects.toThrow('FORBIDDEN');
+    row.authorization.subscriptions = true;
+    selected.push({ providerId: provider, data: { contract: owner.address, status: 'ready' } });
+    await expect(account.signTransaction({ ...tx, nonce: 1, chainId: 1874, to: owner.address, data: call })).resolves.toMatch(/^0x/);
+    selected.length = 0;
+    selected.push({ id: 'plan', providerId: provider, active: 'true', interval: 'month', merchantWallet: owner.address, amount: '1', ttlSeconds: 2592000 });
+    const args = ['0xaa7962d073935D387e8d442DA1D7149C81388f46', owner.address, row.address as Hex, 1000000n, 2592000n, keccak256(stringToHex('plan'))] as const;
+    const deployment = encodeDeployData({ abi: SubscriptionAbi, bytecode: SubscriptionBytecode, args });
+    await expect(account.signTransaction({ ...tx, chainId: 1874, to: undefined, data: deployment })).resolves.toMatch(/^0x/);
+    const wrong = encodeDeployData({ abi: SubscriptionAbi, bytecode: SubscriptionBytecode, args: [args[0], row.address as Hex, ...args.slice(2)] });
+    await expect(account.signTransaction({ ...tx, chainId: 1874, to: undefined, data: wrong })).rejects.toThrow('FORBIDDEN');
   });
   it('requires revocation and a fresh owner signature for native recovery, never an automatic delegate', async () => {
     rpc.send.mockReset().mockResolvedValue(`0x${'ab'.repeat(32)}`);

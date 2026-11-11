@@ -142,3 +142,69 @@ export async function payUsdtOnWhitechain(input: {
   }
   throw new Error(`Payment is still pending. Retry confirmation with transaction ${payment_tx}`);
 }
+
+async function confirmedWalletTransaction(provider: EthereumProvider, hash: string) {
+  if (!/^0x[0-9a-fA-F]{64}$/.test(hash)) throw new Error('Wallet returned an invalid transaction hash');
+  const deadline = Date.now() + 120000;
+  while (Date.now() < deadline) {
+    const receipt = await provider.request({ method: 'eth_getTransactionReceipt', params: [hash] }) as { status: string; blockNumber: string } | null;
+    if (receipt) {
+      if (receipt.status !== '0x1') throw new Error('Wallet transaction reverted');
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  throw new Error(`Transaction pending: ${hash}. Check its receipt before retrying.`);
+}
+
+/** Explicit customer action: bounded ERC-20 approval, then the fixed-plan subscription. */
+export async function subscribeOnWhitechain(input: {
+  contract: string; subscribeData: string; amount: string; usdt: string; chainId: number; checkoutId: string;
+  onTransactionSubmitted?: (hash: string) => void;
+}) {
+  for (const address of [input.contract, input.usdt]) if (!/^0x[\da-fA-F]{40}$/.test(address)) throw new Error('Invalid subscription address');
+  if (!/^0x[\da-fA-F]{136}$/.test(input.subscribeData)) throw new Error('Invalid subscription transaction');
+  const { address, provider } = await connectWhitechainWallet(input.chainId);
+  const [whole, fraction = ''] = input.amount.split('.');
+  if (!/^\d+(\.\d{1,6})?$/.test(input.amount)) throw new Error('Invalid subscription amount');
+  const amount = BigInt(whole!) * 1000000n + BigInt(fraction.padEnd(6, '0'));
+  const owner = address.slice(2).padStart(64, '0'); const spender = input.contract.slice(2).padStart(64, '0');
+  const allowance = BigInt(await provider.request({ method: 'eth_call', params: [{ to: input.usdt, data: `0xdd62ed3e${owner}${spender}` }, 'latest'] }) as string);
+  if (allowance < amount) {
+    const approve = async (value: bigint) => {
+      const hash = await provider.request({ method: 'eth_sendTransaction', params: [{ from: address, to: input.usdt, value: '0x0', data: `0x095ea7b3${spender}${value.toString(16).padStart(64, '0')}` }] }) as string;
+      await confirmedWalletTransaction(provider, hash);
+    };
+    // Reset existing allowance for USDT variants which require zero-first approval.
+    if (allowance > 0n) await approve(0n);
+    await approve(amount * 12n);
+  }
+  const hash = await provider.request({ method: 'eth_sendTransaction', params: [{ from: address, to: input.contract, value: '0x0', data: input.subscribeData }] }) as string;
+  input.onTransactionSubmitted?.(hash);
+  await confirmedWalletTransaction(provider, hash);
+  return { payment_tx: hash, ...await authorizeWhitechainPayment({ payment_tx: hash, context: `checkout:${input.checkoutId}`, chainId: input.chainId }) };
+}
+
+/** Returns only after the paying wallet has signed and its cancellation has landed. */
+export async function cancelWhitechainSubscription(input: { contract: string; key: string; payer: string; chainId: number; cancelData: string }) {
+  const { address, provider } = await connectWhitechainWallet(input.chainId);
+  if (address.toLowerCase() !== input.payer.toLowerCase()) throw new Error('Connect the wallet that pays this subscription');
+  if (!/^0x[\da-fA-F]{40}$/.test(input.contract) || !/^0x[\da-fA-F]{64}$/.test(input.key) || !/^0x[\da-fA-F]{72}$/.test(input.cancelData)) throw new Error('Invalid cancellation transaction');
+  const hash = await provider.request({ method: 'eth_sendTransaction', params: [{ from: address, to: input.contract, value: '0x0', data: input.cancelData }] }) as string;
+  await confirmedWalletTransaction(provider, hash);
+  return hash;
+}
+
+export async function renewSubscriptionAllowance(input: { contract: string; payer: string; chainId: number; usdt: string; amount: string }) {
+  const { address, provider } = await connectWhitechainWallet(input.chainId);
+  if (address.toLowerCase() !== input.payer.toLowerCase()) throw new Error('Connect the wallet that pays this subscription');
+  if (![input.contract, input.usdt].every(value => /^0x[\da-fA-F]{40}$/.test(value)) || !/^\d+(\.\d{1,6})?$/.test(input.amount)) throw new Error('Invalid allowance terms');
+  const [whole, fraction = ''] = input.amount.split('.');
+  const units = BigInt(whole!) * 1000000n + BigInt(fraction.padEnd(6, '0'));
+  if (units <= 0n) throw new Error('Invalid allowance amount');
+  const spender = input.contract.slice(2).padStart(64, '0');
+  for (const amount of [0n, units * 12n]) {
+    const hash = await provider.request({ method: 'eth_sendTransaction', params: [{ from: address, to: input.usdt, value: '0x0', data: `0x095ea7b3${spender}${amount.toString(16).padStart(64, '0')}` }] }) as string;
+    await confirmedWalletTransaction(provider, hash);
+  }
+}

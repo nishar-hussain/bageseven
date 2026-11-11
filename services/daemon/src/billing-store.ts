@@ -99,7 +99,7 @@ export class MemoryBillingStore {
       amount: input.amount,
       interval: input.interval,
       credits: input.credits,
-      ttl_seconds: input.ttl_seconds,
+      ttl_seconds: input.interval === 'month' ? 30 * 86400 : input.ttl_seconds,
       merchant_wallet: input.merchant_wallet.toLowerCase() as `0x${string}`,
       active: input.active,
       created_at: nowIso(),
@@ -159,12 +159,12 @@ export class MemoryBillingStore {
       .sort((a, b) => b.created_at.localeCompare(a.created_at));
   }
 
-  markPaid(id: string, input: { payment_tx: string; customer_wallet: string; grant_id: string }): CheckoutSession {
+  markPaid(id: string, input: { payment_tx: string; customer_wallet: string; grant_id: string; allow_expired?: boolean }): CheckoutSession {
     const s = this.getCheckout(id);
     if (!s) throw new Error('CHECKOUT_NOT_FOUND');
-    if (s.status === 'EXPIRED') throw new Error('CHECKOUT_EXPIRED');
+    if (s.status === 'EXPIRED' && !input.allow_expired) throw new Error('CHECKOUT_EXPIRED');
     if (s.status === 'PAID') return s;
-    if (s.status !== 'PENDING') throw new Error(`CHECKOUT_${s.status}`);
+    if (s.status !== 'PENDING' && !(s.status === 'EXPIRED' && input.allow_expired)) throw new Error(`CHECKOUT_${s.status}`);
     const next: CheckoutSession = {
       ...s,
       status: 'PAID',
@@ -232,11 +232,11 @@ export class PostgresBillingStore implements BillingStore {
     if (rows.length) return; // Receipt remains bound to the same checkout on a safe retry.
     await this.db.update(checkoutSessions).set({ paymentTx: hash.toLowerCase() }).where(eq(checkoutSessions.id, id));
   }
-  async markPaid(id: string, input: { payment_tx: string; customer_wallet: string; grant_id: string }): Promise<CheckoutSession> {
+  async markPaid(id: string, input: { payment_tx: string; customer_wallet: string; grant_id: string; allow_expired?: boolean }): Promise<CheckoutSession> {
     const session = await this.getCheckout(id);
     if (!session) throw new Error('CHECKOUT_NOT_FOUND');
     if (session.status === 'PAID') return session;
-    if (session.status !== 'PENDING') throw new Error(`CHECKOUT_${session.status}`);
+    if (session.status !== 'PENDING' && !(session.status === 'EXPIRED' && input.allow_expired)) throw new Error(`CHECKOUT_${session.status}`);
     await this.db.update(checkoutSessions).set({ status: 'PAID', paymentTx: input.payment_tx.toLowerCase(), customerWallet: input.customer_wallet.toLowerCase(), grantId: input.grant_id }).where(eq(checkoutSessions.id, id));
     return (await this.getCheckout(id))!;
   }

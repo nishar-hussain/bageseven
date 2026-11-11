@@ -92,6 +92,8 @@ export function verifyMcpAccessToken(authHeader: string | undefined): AccessToke
       exp: Date.now() + 86_400_000,
     };
   }
+  // Refresh credentials are accepted only by the token endpoint.
+  if (token.startsWith('refresh:')) return null;
   const row = tokens.get(token);
   if (!row || row.exp < Date.now()) return null;
   return row;
@@ -391,7 +393,7 @@ export function mountMcpOAuth(app: Express): void {
     prune();
     const body = req.body as Record<string, string>;
     const grant = body.grant_type;
-    if (grant !== 'authorization_code') {
+    if (grant !== 'authorization_code' && grant !== 'refresh_token') {
       res.status(400).json({ error: 'unsupported_grant_type' });
       return;
     }
@@ -409,17 +411,35 @@ export function mountMcpOAuth(app: Express): void {
     const expectedId = clientId();
     const expectedSecret = clientSecret();
     // Accept our registered client when secret configured; otherwise public PKCE clients (ChatGPT).
-    if (expectedSecret && cid === expectedId && csec && !safeEqual(csec, expectedSecret)) {
+    if (expectedSecret && cid === expectedId && !safeEqual(csec, expectedSecret)) {
       res.status(401).json({ error: 'invalid_client' });
       return;
     }
 
+    if (grant === 'refresh_token') {
+      const key = `refresh:${body.refresh_token || ''}`;
+      const previous = tokens.get(key);
+      if (!previous || previous.exp < Date.now() || previous.clientId !== cid ||
+          (body.resource && body.resource !== previous.resource) ||
+          (body.scope && body.scope !== previous.scope)) {
+        res.status(400).json({ error: 'invalid_grant' });
+        return;
+      }
+      tokens.delete(key);
+      const access = b64url(randomBytes(32));
+      const refresh = b64url(randomBytes(32));
+      tokens.set(access, { ...previous, exp: Date.now() + 3600_000 });
+      tokens.set(`refresh:${refresh}`, { ...previous, exp: Date.now() + 30 * 86_400_000 });
+      res.set('Cache-Control', 'no-store').json({ access_token: access, token_type: 'Bearer',
+        expires_in: 3600, refresh_token: refresh, scope: previous.scope });
+      return;
+    }
+
     const row = codes.get(body.code || '');
-    if (!row || row.exp < Date.now()) {
+    if (!row || row.exp < Date.now() || row.clientId !== cid) {
       res.status(400).json({ error: 'invalid_grant' });
       return;
     }
-    codes.delete(body.code);
 
     if (row.redirectUri !== body.redirect_uri) {
       res.status(400).json({ error: 'invalid_grant', error_description: 'redirect_uri mismatch' });
@@ -445,6 +465,7 @@ export function mountMcpOAuth(app: Express): void {
       }
     }
 
+    codes.delete(body.code);
     const access = b64url(randomBytes(32));
     const refresh = b64url(randomBytes(32));
     const expiresIn = 3600;
@@ -466,7 +487,7 @@ export function mountMcpOAuth(app: Express): void {
       exp: Date.now() + 30 * 86_400_000,
     });
 
-    res.json({
+    res.set('Cache-Control', 'no-store').json({
       access_token: access,
       token_type: 'Bearer',
       expires_in: expiresIn,
@@ -486,7 +507,7 @@ export function mountMcpOAuth(app: Express): void {
       redirect_uris: body.redirect_uris || [],
       client_name: body.client_name || 'ChatGPT',
       token_endpoint_auth_method: 'none',
-      grant_types: ['authorization_code'],
+      grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
     });
   });

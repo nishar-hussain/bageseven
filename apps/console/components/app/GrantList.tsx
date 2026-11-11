@@ -138,6 +138,7 @@ export function GrantList({
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState('');
+  const [cancellationUrl, setCancellationUrl] = useState('');
   const [localSelected, setLocalSelected] = useState<string | undefined>(selectedId);
   const { features } = useFeatures();
 
@@ -203,11 +204,17 @@ export function GrantList({
 
   const cancel = async (grant: Grant) => {
     setBusyId(grant.id);
+    setCancellationUrl('');
     setActionMsg('Cancelling renewal…');
     try {
       const r = await entitlementsApi.cancelRenewal(grant.id);
-      setActionMsg(`Renewal ${r.grant.renewal_enabled ? 'on' : 'off'}`);
-      await refresh();
+      if ('grant' in r) {
+        setActionMsg(`Renewal ${r.grant.renewal_enabled ? 'on' : 'off'}`);
+        await refresh();
+      } else {
+        setActionMsg('The paying wallet must approve cancellation. Paid access remains available.');
+        setCancellationUrl(r.management_url);
+      }
     } catch (e) {
       setActionMsg(e instanceof Error ? e.message : String(e));
     } finally {
@@ -260,6 +267,7 @@ export function GrantList({
         />
       ))}
       {actionMsg && <p className="mt-3 text-sm text-[var(--muted)]">{actionMsg}</p>}
+      {cancellationUrl && <Link className="mt-2 inline-block text-sm font-medium text-[var(--blue)] underline" href={cancellationUrl}>Open subscription management</Link>}
     </div>
   );
 }

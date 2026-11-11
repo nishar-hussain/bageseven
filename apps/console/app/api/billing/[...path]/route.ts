@@ -6,6 +6,8 @@ import { daemonFetch } from '../../../../lib/daemon-bff';
 type Ctx = { params: Promise<{ path: string[] }> };
 
 const ALLOWED: Array<{ method: string; match: (parts: string[]) => boolean }> = [
+  { method: 'GET', match: p => p[0] === 'subscriptions' && p.length <= 2 },
+  { method: 'POST', match: p => p[0] === 'subscriptions' && p.length === 3 && ['cancel', 'sync'].includes(p[2]!) },
   { method: 'GET', match: (p) => p[0] === 'plans' && (p.length === 1 || p.length === 2) },
   { method: 'POST', match: (p) => p[0] === 'plans' && p.length === 1 },
   { method: 'GET', match: (p) => p[0] === 'checkout-sessions' && (p.length === 1 || p.length === 2) },

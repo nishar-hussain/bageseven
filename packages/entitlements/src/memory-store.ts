@@ -38,10 +38,15 @@ export class MemoryGrantStore implements GrantStore {
       throw new Error('WORLD_DENIED: World Agent Pass failed, expired, or was cancelled — no grant written');
     }
     validateMoney(input.remaining);
+    if (input.id && this.grants.has(input.id)) {
+      const existing = this.grants.get(input.id)!;
+      if (existing.holder !== input.holder || existing.feature !== input.feature || existing.payment_tx !== input.payment_tx || existing.merchant !== input.merchant) throw new Error('GRANT_ID_CONFLICT');
+      return existing;
+    }
     const created = nowIso();
     const paidThrough = new Date(Date.now() + input.ttl_seconds * 1000).toISOString();
     const grant: Grant = {
-      id: randomUUID(),
+      id: input.id ?? randomUUID(),
       feature: input.feature,
       holder: input.holder,
       human_id: input.human_id,

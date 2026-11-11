@@ -11,7 +11,7 @@ Three clocks, all independent:
 | Clock | Question | Source of truth |
 | --- | --- | --- |
 | Payment | Did money move? | Whitechain `payment_tx` |
-| Renewal | Will we collect again? | `renewal_enabled` on the grant |
+| Renewal | Will we collect again? | Customer on-chain subscription permission + scheduler state; grant `renewal_enabled` mirrors renewal intent |
 | Access | Can they use the feature *now*? | Living Arkiv grant (`remaining` + `paid_through`) |
 
 **Access vs payment:** `paid_run` and SDK consume use prepaid grants without a USDT mandate. New payments (`bagseven_fetch`) need mandate remaining **and** a living grant. Fail closed on payment checks.
@@ -224,3 +224,36 @@ According to the [skills.sh FAQ](https://skills.sh/docs/faq), skills are tracked
 For later GitHub-sourced updates, users can run `npx skills update`. Skill distribution is separate from deploying Bagseven, connecting its MCP server or publishing `@bagseven/sdk`.
 
 When editing skills, validate their frontmatter and links, check examples against current MCP schemas/SDK exports, and rerun local discovery. Read-only checks, prepaid consumption, new payments, worker mismatch, cancelled renewal, pending checkout and restart recovery should remain distinct workflows.
+
+### ReceiptBox merchant integration
+
+The existing `apps/demo-dapp` is a working receipt scanner at `http://127.0.0.1:5177`. It runs printed-English OCR locally using the installed `tesseract` executable (`TESSERACT_BIN` overrides the path). PNG, JPEG and WebP uploads are limited to 6 MB. Results include merchant, date, currency, tax, total, line items and raw text; users review and correct OCR output before exporting. Original images and edited records persist under the gitignored `.data/receipts/<holder-hash>/` directory. This local integration uses one explicitly configured `DEMO_HOLDER`; it is not a hosted multi-user service.
+
+| Customer action | Living entitlement |
+| --- | --- |
+| Scan a receipt | One `ocr` credit after OCR succeeds |
+| Export CSV | Active boolean `pro_notes` access; no credit burn |
+| Generate expense insights | One `research_fetch` credit; totals grouped by currency/category |
+| Export JSON | One `api_access` credit |
+
+The merchant server authorizes each action against the holder's Bagseven grant. It uses short-lived holder tokens for prepaid consumption and stable request IDs for retries. Concurrent scans serialize; recognized results survive a failed consumption attempt; successful retries return the saved receipt without burning another credit. Refreshes never refill access. Receipt data and images stay on this local machine; grants/usage live on Arkiv.
+
+Keep `DEMO_PROVIDER_ID` and `DEMO_HOLDER` server-side in `.env`. Explicitly seed missing local access with `pnpm --filter @bagseven/demo-dapp seed:demo` (requires World mock mode and an already authorized/funded provider gas account). Seeded Pro/insights/JSON access does not represent customer payments. The existing OCR grant came from a verified Whitechain testnet checkout. Billing uses the three saved Bagseven plans through the SDK embed.
+
+`pnpm demo:check` exercises actual sample-image OCR, one scan-credit burn, idempotent retry, editing/history, image persistence and invalid-image rejection. Each run uses one scan credit and creates a sample receipt. Focused tests: `pnpm exec vitest run apps/demo-dapp/tests/receipts.test.ts`.
+
+PM2 manages `bagseven-demo-api`, `bagseven-demo-web`, `bagseven-mcp` and `bagseven-tunnel`; the main local console/daemon stack must also run. Inspect using `pnpm exec pm2 list`; restore saved processes using `pnpm exec pm2 resurrect`. A changed ngrok hostname requires updating `BAGSEVEN_MCP_PUBLIC_URL`, restarting MCP and updating the ChatGPT connection. MCP restarts clear in-memory OAuth tokens/sessions. Keep the laptop awake for the presentation.
+
+The ChatGPT connection is named **Bagseven**. Its original logo is available as `apps/console/public/icon.svg`; `apps/demo-dapp/public/bagseven-icon.png` is an optimized PNG for ChatGPT’s 10 KB custom-MCP icon limit. [Verified ChatGPT calls](https://chatgpt.com/c/6aeeb4d7-d4b4-83ee-9325-645bb15b4e5c) include `bagseven_status`, `grant_status` and one prepaid OCR `paid_run`. The current worker is in `entitlements_only` mode: prepaid access works; new `bagseven_fetch` payments remain gated by an owner-approved spending mandate.
+
+ReceiptBox consistency verification on 2026-11-07 passed actual OCR and browser scanning, confirmed usage snapshots, repeated merchant/public SDK balance reads, safe retries, persistence and invalid-image denial. The React SDK applies confirmed consume responses per grant immediately, retains all grants, ignores out-of-order reads, and exposes refresh errors. `useRemaining(feature)` and Node `getRemaining()` return the sum of living credits for that holder/feature; `useEntitlement` and `checkEntitlement().remaining` describe the selected grant. `/v1/check` also returns `total_remaining`. ReceiptBox displays the total, so switching to a second paid grant never disguises a deduction. MCP `check_entitlement` reports the selected grant; `grant_status` provides the per-grant breakdown. Arkiv reads reconcile snapshots by `updated_at`; in-process mutations of the same grant serialize. This lock is local to one daemon process, not a distributed concurrency guarantee. ReceiptBox refreshes visible balances every 10 seconds and on focus; embeds refresh every 15 seconds. Merchant actions return the confirmed entitlement, and browser holder tokens renew before their one-hour expiry.
+
+The branded **Bagseven Access** ChatGPT connection completed World authorization and successfully called `check_entitlement`, `list_mandates`, `list_plans` and `create_checkout_session` after the repair. Checkout creation works without a deployed spending agent and returns an unpaid wallet checkout. Empty spending reads explicitly describe the required owner mandate setup. OAuth refresh tokens now rotate and remain bound to the issuing client and verified identity; MCP restart still requires reconnecting because the token store is in memory. New autonomous payments still require an owner-signed, funded mandate. Read current balances from the application rather than relying on saved showcase counts.
+
+### Recurring billing integration
+
+`interval: 'month'` creates a 30-day recurring plan. `createCheckoutSession` prepares its fixed-price on-chain plan using the provider's explicitly authorized gas signer. The public checkout response exposes `subscription_plan.status`; the SDK waits for `ready` before requesting wallet approval. Subscription checkout uses a deadline-bound contract transaction, not a standalone token transfer. Transaction confirmation verifies its subscription event and exact USDT payment before access is fulfilled. A payment made before expiry may be confirmed later with the same checkout and transaction.
+
+`BagsevenClient.listSubscriptions(holder?)`, `getSubscription(id)`, `prepareSubscriptionCancellation(id)` and `syncSubscription(id)` mirror `/v1/subscriptions`. Prepare-cancellation returns an unsigned payer-wallet draft; syncing checks the chain. MCP adds `list_subscriptions`, `get_subscription` and `cancel_subscription`; cancellation never signs or broadcasts a customer transaction. `cancel_renewal` returns the same approval requirement for grants belonging to active recurring subscriptions, while retaining legacy flag cancellation for other grants.
+
+A subscription has `ACTIVE`, `PAST_DUE`, `CANCELLED`, `ENDED` or `RECONCILIATION_REQUIRED` status, separate `paid_through` and `next_attempt_at`, and durable attempt/payment records. Use `paid_through` plus living grant checks for access, not subscription status alone. Expired or legacy monthly grants are never automatically reenrolled. Renewal payment stages are persisted in PostgreSQL. The separate fee accrual for a renewal is recorded in its completed period journal.

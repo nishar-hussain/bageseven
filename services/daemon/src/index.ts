@@ -1,3 +1,8 @@
+import { Subscriptions } from './subscriptions.js';
+import { PostgresSubscriptionStore } from './subscription-store.js';
+import { WhitechainSubscriptionChain } from './subscription-chain.js';
+import { registerSubscriptionRoutes, cancellationDraft } from './subscription-routes.js';
+import { getBillingStore } from './billing-store.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
@@ -14,7 +19,7 @@ import { decodeX402PaymentRequired, selectX402Requirements, validateX402AgainstP
 import { x402PayerFromEnv, type X402Payer } from './x402-payer.js';
 import { beginWorkerRequest } from './worker-request-ledger.js';
 import { registerWorkerManagement } from './worker-management.js';
-import { registerGrantRoutes } from './grants.js';
+import { registerGrantRoutes, type GrantRouteDeps } from './grants.js';
 import { WHITECHAIN_CHAIN_ID, whitechainConfig, ProviderGasManager, providerGasEnabled } from '@bagseven/onchain';
 import { configureProviderGrantSigners } from '@bagseven/entitlements';
 import { registerProviderGasRoutes } from './provider-gas.js';
@@ -205,6 +210,28 @@ async function executeSpend(config: NodeJS.ProcessEnv, resolved: ResolvedWorker,
 
 export function buildRoutes(app: FastifyInstance, { config, redis, db }: ServiceDeps): void {
   const providerGas = new ProviderGasManager(db, config);
+  const subscriptions = new Subscriptions(new PostgresSubscriptionStore(db), new WhitechainSubscriptionChain(providerGas, config), getGrantStore(config));
+  registerSubscriptionRoutes(app, subscriptions);
+  let ticking = false;
+  const tick = async () => {
+    if (ticking) return;
+    ticking = true;
+    try {
+      // Resume plan deployment from its committed signed transaction after restarts.
+      for (const plan of await getBillingStore(db).listPlans(true)) {
+        if (plan.interval === 'month') {
+          const saved = await subscriptions.store.plan(plan.id);
+          if (saved?.status === 'preparing') await subscriptions.prepare(plan).catch(error => app.log.warn({ plan: plan.id, error: String(error) }, 'subscription plan pending'));
+        }
+      }
+      await subscriptions.tick();
+    } catch (error) { app.log.error({ error: String(error) }, 'subscription worker failed'); }
+    finally { ticking = false; }
+  };
+  app.addHook('onReady', async () => { void tick(); });
+  const renewalTimer = setInterval(() => void tick(), 15000);
+  renewalTimer.unref();
+  app.addHook('onClose', async () => { clearInterval(renewalTimer); });
   configureProviderGrantSigners(provider => providerGas.account(provider, 'arkiv'));
   app.addHook('preHandler', async (req, reply) => {
     if (req.routeOptions.url === '/healthz' && (req.method === 'GET' || req.method === 'HEAD')) return;
@@ -401,7 +428,7 @@ export function buildRoutes(app: FastifyInstance, { config, redis, db }: Service
   });
 
   // Public entitlement layer (Arkiv physics + World mint gate). Lives beside mandate spend.
-  const grantDeps = {
+  const grantDeps: GrantRouteDeps = {
     claimPayment: async (hash: string) => {
       const chain = whitechainConfig(config).chainId;
       return await redis.set(`whitechain:payment:${chain}:${hash.toLowerCase()}`, 'entitlement', 'NX') === 'OK';
@@ -435,11 +462,18 @@ export function buildRoutes(app: FastifyInstance, { config, redis, db }: Service
       }
     },
   };
+  grantDeps.subscriptionCancellation = async grantId => {
+    const sub = (await subscriptions.store.list()).find(s => s.grantId === grantId && !['CANCELLED', 'ENDED'].includes(s.status));
+    if (!sub) return null;
+    const updated = await subscriptions.store.lock(sub.id, async () => subscriptions.syncCancellation((await subscriptions.store.get(sub.id))!));
+    if (!updated) throw new ApiError(409, 'SUBSCRIPTION_BUSY', 'Subscription is being updated; retry');
+    return updated.status === 'CANCELLED' ? null : { ...cancellationDraft(updated), management_url: `${config.CONSOLE_URL || 'http://localhost:3000'}/checkout?session=${encodeURIComponent(updated.checkoutId)}` };
+  };
   registerWorkerManagement(app, { config, resolve: worker => resolveWorker(config, worker), policy: (method, path, body) => daemonApi(config, method, path, body) });
   registerProviderGasRoutes(app, db, config);
   registerGrantRoutes(app, grantDeps);
   registerPublicEntitlementRoutes(app, grantDeps);
-  registerBillingRoutes(app, { redis, db, validateWorker: async worker => {
+  registerBillingRoutes(app, { redis, db, subscriptions, validateWorker: async worker => {
     const resolved = await resolveWorker(config, worker);
     if (resolved.agent.status !== 'active' || resolved.mandate.status !== 'active') throw new ApiError(403, 'WORKER_INACTIVE', 'Choose an active agent for this checkout');
   } });

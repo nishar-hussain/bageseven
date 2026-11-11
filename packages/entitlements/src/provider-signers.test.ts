@@ -5,7 +5,7 @@ import { configureProviderGrantSigners } from './provider-signers.js';
 import { str } from '@arkiv-network/sdk/schema';
 const rpc = vi.hoisted(() => ({ create: vi.fn(), patch: vi.fn(), wallet: vi.fn(), rows: [] as Record<string, unknown>[] }));
 vi.mock('@arkiv-network/sdk', async original => ({ ...await original<typeof import('@arkiv-network/sdk')>(),
-  createPublicClient: () => ({ select: () => ({ from: () => ({ where: () => ({ fetch: async () => ({ entities: rpc.rows }) }) }) }) }), createWalletClient: (config: { account: unknown }) => { rpc.wallet(config); return { account: config.account, createEntity: rpc.create, patchEntity: rpc.patch }; },
+  createPublicClient: () => ({ getEntity: async (key: string) => rpc.rows.find(row => row.$key === key), select: () => ({ from: () => ({ where: () => ({ fetch: async () => ({ entities: rpc.rows }) }) }) }) }), createWalletClient: (config: { account: unknown }) => { rpc.wallet(config); return { account: config.account, createEntity: rpc.create, patchEntity: rpc.patch }; },
 }));
 describe('provider-funded Arkiv writes', () => {
   it('round trips long holder and provider identities through the real string validator after restart', async () => {
@@ -31,7 +31,7 @@ describe('provider-funded Arkiv writes', () => {
     const one = privateKeyToAccount(`0x${'01'.repeat(32)}`); const two = privateKeyToAccount(`0x${'02'.repeat(32)}`);
     const resolve = vi.fn(async (provider: string) => provider === 'one' ? one : two);
     configureProviderGrantSigners(resolve);
-    rpc.create.mockResolvedValue({ entityKey: `0x${'ab'.repeat(32)}` }); rpc.patch.mockResolvedValue({});
+    rpc.create.mockImplementation(async (_schema, values) => { const entityKey = `0x${'ab'.repeat(32)}`; rpc.rows = [{ ...values, $key: entityKey, $owner: one.address }]; return { entityKey }; }); rpc.patch.mockResolvedValue({});
     const store = ArkivGrantStore.fromEnv({ ARKIV_ACCESS_KEY: 'test', ARKIV_PRIVATE_KEY: 'unused-platform-key' });
     const grant = await store.mint({ merchant: 'one', holder: 'customer', feature: 'ocr', remaining: '3', ttl_seconds: 120, settlement_network: 'whitechain' });
     await store.consume(grant.id, '1', 'job'); await store.cancelRenewal(grant.id);

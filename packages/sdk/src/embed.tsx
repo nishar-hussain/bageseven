@@ -1,8 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
-import type { Entitlement } from './types.js';
-import { authorizeWhitechainPayment, connectWhitechainWallet, payUsdtOnWhitechain } from './wallet.js';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import type { Entitlement, Subscription } from './types.js';
+import { authorizeWhitechainPayment, connectWhitechainWallet, payUsdtOnWhitechain, subscribeOnWhitechain, cancelWhitechainSubscription, renewSubscriptionAllowance } from './wallet.js';
 import { resolveEmbedComponent, type EmbedComponentId } from './components.js';
 
 export type EmbedView = 'portal' | 'checkout' | 'consume' | 'credits' | 'unsubscribe' | 'pricing' | 'customer';
@@ -20,6 +20,7 @@ type PublicPlan = {
 };
 
 type PublicCheckout = {
+  subscription_plan?: { status: string; address: string; chain_id: number; subscribe_data: string } | null;
   expires_at: string;
   id: string;
   status: string;
@@ -34,6 +35,7 @@ type PublicCheckout = {
     feature: string;
     amount: string;
     credits: string;
+    interval?: 'once' | 'month';
     merchant_wallet: string;
   } | null;
 };
@@ -61,7 +63,7 @@ const rootStyle = {
 } as CSSProperties;
 
 async function publicGet<T>(apiUrl: string, path: string, token: string): Promise<T> {
-  const res = await fetch(`${apiUrl}${path}`, { headers: { authorization: `Bearer ${token}` } });
+  const res = await fetch(`${apiUrl}${path}`, { cache: 'no-store', headers: { authorization: `Bearer ${token}` } });
   const json = (await res.json().catch(() => ({}))) as T & { error?: { message?: string } };
   if (!res.ok) throw new Error(json.error?.message ?? `Bagseven GET ${path} failed (${res.status})`);
   return json;
@@ -274,6 +276,7 @@ export function BagsevenEmbed({
   mode = 'inline',
   publishableKey,
   checkoutSessionId,
+  planIds,
   component,
   holder,
   theme,
@@ -288,6 +291,8 @@ export function BagsevenEmbed({
   mode?: 'inline' | 'modal';
   publishableKey?: string;
   checkoutSessionId?: string;
+  /** Optional storefront selection; checkout still authorizes the selected plan on the server. */
+  planIds?: string[];
   component?: EmbedComponentId | string;
   holder?: string;
   theme?: EmbedTheme;
@@ -311,6 +316,8 @@ export function BagsevenEmbed({
     setView(startView);
   }, [startView]);
   const [entitlements, setEntitlements] = useState<Entitlement[]>([]);
+  const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
+  const [checkoutSubscription, setCheckoutSubscription] = useState<Subscription | null>(null);
   const [plans, setPlans] = useState<PublicPlan[]>([]);
   const [period, setPeriod] = useState<'month' | 'once'>('month');
   const [checkout, setCheckout] = useState<PublicCheckout | null>(null);
@@ -329,12 +336,21 @@ export function BagsevenEmbed({
   const token = accessToken || publishableKey || '';
   const single = Boolean(resolved);
 
+  const loadGeneration = useRef(0);
   const load = useCallback(async () => {
+    const request = ++loadGeneration.current;
     if (!accessToken) {
       setLoading(false);
       return;
     }
-    const data = await publicGet<{ entitlements: Entitlement[] }>(base, '/entitlements', accessToken);
+    const data = await publicGet<{ entitlements: Entitlement[] }>(base, '/entitlements', accessToken).catch(error => {
+      if (request !== loadGeneration.current) return null;
+      throw error;
+    });
+    if (!data || request !== loadGeneration.current) return;
+    const subscribed = await publicGet<{ subscriptions: Subscription[] }>(base, '/subscriptions', accessToken);
+    if (request !== loadGeneration.current) return;
+    setSubscriptions(subscribed.subscriptions);
     setEntitlements(data.entitlements ?? []);
     setLoading(false);
   }, [accessToken, base]);
@@ -343,8 +359,8 @@ export function BagsevenEmbed({
     const auth = publishableKey || token;
     if (!auth) return;
     const data = await publicGet<{ plans: PublicPlan[] }>(base, '/plans?active=true', auth);
-    setPlans((data.plans ?? []).filter((p) => p.active));
-  }, [publishableKey, token, base]);
+    setPlans((data.plans ?? []).filter((p) => p.active && (!planIds || planIds.includes(p.id))));
+  }, [publishableKey, token, base, planIds]);
 
   const loadCheckout = useCallback(
     async (id?: string) => {
@@ -354,6 +370,10 @@ export function BagsevenEmbed({
       const json = (await res.json().catch(() => ({}))) as { session?: PublicCheckout; error?: { message?: string } };
       if (!res.ok) throw new Error(json.error?.message ?? `checkout ${res.status}`);
       setCheckout(json.session ?? null);
+      if (json.session?.status === 'PAID') {
+        const state = await fetch(`${base}/public/checkout/${encodeURIComponent(sid)}/subscription`).then(r => r.json()) as { subscription?: Subscription };
+        setCheckoutSubscription(state.subscription ?? null);
+      }
       setSessionId(sid);
       return json.session;
     },
@@ -361,10 +381,16 @@ export function BagsevenEmbed({
   );
 
   useEffect(() => {
-    void load().catch((e) => {
+    const requests = loadGeneration;
+    const update = () => void load().catch((e) => {
+      setEntitlements([]);
       setMsg(e instanceof Error ? e.message : String(e));
       setLoading(false);
     });
+    update();
+    const timer = setInterval(() => { if (!document.hidden) update(); }, 15000);
+    window.addEventListener('focus', update);
+    return () => { clearInterval(timer); window.removeEventListener('focus', update); requests.current++; };
   }, [load]);
 
   useEffect(() => {
@@ -376,6 +402,36 @@ export function BagsevenEmbed({
   useEffect(() => {
     if (checkoutSessionId) void loadCheckout(checkoutSessionId).catch((e) => setMsg(e instanceof Error ? e.message : String(e)));
   }, [checkoutSessionId, loadCheckout]);
+
+  useEffect(() => {
+    if (checkout?.status !== 'PENDING' || checkout.subscription_plan?.status !== 'preparing') return;
+    const timer = setInterval(() => void loadCheckout().catch(e => setMsg(String(e))), 5000);
+    return () => clearInterval(timer);
+  }, [checkout?.status, checkout?.subscription_plan?.status, loadCheckout]);
+
+  const cancelSubscription = async (sub: Subscription) => {
+    await cancelWhitechainSubscription({ contract: sub.contract, key: sub.subscription_key, payer: sub.payer, chainId: sub.chain_id, cancelData: sub.cancel_data });
+    if (accessToken) await publicPost(base, `/subscriptions/${encodeURIComponent(sub.id)}/sync`, accessToken, {});
+    else await fetch(`${base}/public/checkout/${encodeURIComponent(sub.checkout_id)}/subscription/sync`, { method: 'POST' }).then(async r => { if (!r.ok) throw new Error((await r.json()).error?.message || 'Cancellation confirmed; status sync needs retry'); });
+    await loadCheckout(sub.checkout_id);
+    setMsg('Renewal cancelled on Whitechain. Already-paid access remains until the period ends.');
+  };
+  const subscriptionCard = (sub: Subscription) => (
+    <Card key={sub.id}>
+      <strong>{sub.feature} · {sub.amount} USDT every {Math.round(sub.period_seconds / 86400)} days</strong>
+      <p>{sub.status} · Paid through {formatWhen(sub.paid_through)}</p>
+      {!['CANCELLED', 'ENDED'].includes(sub.status) && <p>Next collection attempt: {formatWhen(sub.next_attempt_at)}</p>}
+      {sub.last_error && <p role="status">{sub.last_error}</p>}
+      <p style={{ fontSize: 12 }}>Payments are collected from your wallet within the approved plan terms. Your wallet needs USDT balance and allowance. Wallet approval and cancellation use WBT for gas.</p>
+      {!['CANCELLED', 'ENDED'].includes(sub.status) && <>
+        <GhostBtn disabled={busy} onClick={() => void act(() => cancelSubscription(sub))}>Cancel recurring payment with wallet</GhostBtn>
+        <GhostBtn disabled={busy} onClick={() => void act(async () => {
+          await renewSubscriptionAllowance({ contract: sub.contract, payer: sub.payer, chainId: sub.chain_id, usdt: sub.token, amount: sub.amount });
+          setMsg('USDT allowance authorized for up to 12 charges. The next due attempt uses this permission; no payment was collected by this action.');
+        })}>Authorize next 12 charges</GhostBtn>
+      </>}
+    </Card>
+  );
 
   const act = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -406,7 +462,9 @@ export function BagsevenEmbed({
 
   const cancelRenewal = async (grantId: string) => {
     if (!accessToken) throw new Error('accessToken required');
-    await publicPost(base, `/entitlements/${encodeURIComponent(grantId)}/cancel-renewal`, accessToken, {});
+    const sub = subscriptions.find(s => s.grant_id === grantId && !['CANCELLED', 'ENDED'].includes(s.status));
+    if (sub) await cancelSubscription(sub);
+    else await publicPost(base, `/entitlements/${encodeURIComponent(grantId)}/cancel-renewal`, accessToken, {});
     setConfirmCancel(null);
     setMsg('Renewal cancelled — access stays until the period ends');
   };
@@ -429,7 +487,7 @@ export function BagsevenEmbed({
         <div>
           <h3 style={{ margin: 0, fontSize: 20, fontWeight: 700, letterSpacing: '-0.02em' }}>{heading || 'Plans'}</h3>
           <p style={{ margin: '6px 0 0', fontSize: 13, color: 'var(--bs-muted)', lineHeight: 1.5, maxWidth: 360 }}>
-            Choose a plan to unlock entitlements. Monthly plans renew until you cancel.
+            Choose a plan to unlock entitlements. Monthly subscriptions collect every 30 days after wallet authorization.
           </p>
         </div>
         {hasMonth && hasOnce ? (
@@ -567,7 +625,7 @@ export function BagsevenEmbed({
         <div style={{ display: 'grid', gap: 12 }}>
           {entitlements.map((e) => {
             const live = e.enabled;
-            const renewing = Boolean(e.renewal_enabled);
+            const renewing = subscriptions.some(s => s.grant_id === e.grant_id && !['CANCELLED', 'ENDED'].includes(s.status));
             return (
               <Card key={e.grant_id ?? e.feature}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
@@ -661,6 +719,7 @@ export function BagsevenEmbed({
           })}
         </div>
       )}
+      {subscriptions.length > 0 && <div style={{ display: 'grid', gap: 12, marginTop: 16 }}><h3>Recurring payments</h3>{subscriptions.map(subscriptionCard)}</div>}
     </section>
   );
 
@@ -715,32 +774,34 @@ export function BagsevenEmbed({
               <p style={{ margin: 0, color: 'var(--bs-good)', fontSize: 14, fontWeight: 650 }}>
                 Paid — entitlement is live for {checkout.holder}
               </p>
+              {checkoutSubscription && subscriptionCard(checkoutSubscription)}
               <div style={{ marginTop: 12 }}>
                 {accessToken ? <PrimaryBtn onClick={() => setView('portal')}>Go to plan manager</PrimaryBtn> : null}
               </div>
             </div>
-          ) : checkout.status !== 'PENDING' ? (
+          ) : checkout.status !== 'PENDING' && !(checkout.status === 'EXPIRED' && demoTx && checkout.plan?.interval === 'month') ? (
             <p style={{ marginTop: 16, color: 'var(--bs-muted)', fontSize: 13 }}>This checkout is {checkout.status.toLowerCase()}. Open a new checkout before paying.</p>
           ) : (
             <div style={{ marginTop: 16, display: 'grid', gap: 8 }}>
+              {checkout.plan?.interval === 'month' && <p>Approve {checkout.amount} USDT every 30 days to this provider. The first payment starts access. A new allowance is limited to 12 charges; you can cancel future collections in the portal.</p>}
               <PrimaryBtn
-                disabled={busy || !checkout.plan || Boolean(demoTx)}
+                disabled={busy || !checkout.plan || checkout.status !== 'PENDING' || Boolean(demoTx) || (checkout.plan.interval === 'month' && checkout.subscription_plan?.status !== 'ready')}
                 onClick={() =>
                   void act(async () => {
                     if (!checkout.plan) return;
                     const fresh = await loadCheckout(checkout.id);
                     if (!fresh || fresh.status !== 'PENDING' || new Date(fresh.expires_at).getTime() <= Date.now()) throw new Error('This checkout has expired or is no longer payable. Open a new checkout.');
-                    const paid = await payUsdtOnWhitechain({
-                      merchantWallet: checkout.plan.merchant_wallet,
-                      amount: checkout.amount,
-                      chainId: checkout.chain_id,
-                      usdt: checkout.payment.usdt,
-                      context: `checkout:${checkout.id}`,
-                      onTransactionSubmitted: hash => {
-                        setDemoTx(hash);
-                        try { sessionStorage.setItem(`bagseven-payment:${checkout.id}`, hash); } catch { /* Receipt remains visible in memory. */ }
-                      },
-                    });
+                    const onSubmitted = (hash: string) => {
+                      setDemoTx(hash);
+                      try { sessionStorage.setItem(`bagseven-payment:${checkout.id}`, hash); } catch { /* Keep the receipt in memory. */ }
+                    };
+                    const recurring = fresh.plan?.interval === 'month';
+                    if (recurring && fresh.subscription_plan?.status !== 'ready') throw new Error('Recurring plan is preparing; wait before authorizing');
+                    const paid = recurring
+                      ? await subscribeOnWhitechain({ contract: fresh.subscription_plan!.address, subscribeData: fresh.subscription_plan!.subscribe_data,
+                          amount: fresh.amount, usdt: fresh.payment.usdt, chainId: fresh.chain_id, checkoutId: fresh.id, onTransactionSubmitted: onSubmitted })
+                      : await payUsdtOnWhitechain({ merchantWallet: fresh.plan!.merchant_wallet, amount: fresh.amount,
+                          chainId: fresh.chain_id, usdt: fresh.payment.usdt, context: `checkout:${fresh.id}`, onTransactionSubmitted: onSubmitted });
                     await fetch(`${base}/public/checkout/${encodeURIComponent(checkout.id)}/confirm`, {
                       method: 'POST',
                       headers: { 'content-type': 'application/json' },
@@ -755,7 +816,7 @@ export function BagsevenEmbed({
                   })
                 }
               >
-                {busy ? 'Waiting for wallet…' : demoTx ? 'Payment submitted — confirm below' : 'Pay with wallet'}
+                {busy ? 'Waiting for wallet…' : demoTx ? 'Payment submitted — confirm below' : checkout.plan?.interval === 'month' ? checkout.subscription_plan?.status === 'ready' ? 'Authorize subscription & pay first period' : 'Preparing recurring plan…' : 'Pay with wallet'}
               </PrimaryBtn>
               {!walletSlot ? (
                 <GhostBtn

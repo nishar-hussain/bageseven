@@ -16,7 +16,7 @@ export default function GrantsPage() {
         title="Entitlements"
         description={
           <>
-            Credits + TTL. Agents also need a{' '}
+            Credits + TTL. Prepaid access works directly. New agent payments require a{' '}
             <Link href="/app/mandate" className="font-medium text-[var(--blue)] underline decoration-dotted underline-offset-2">
               mandate
             </Link>

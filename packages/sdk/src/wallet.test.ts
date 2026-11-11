@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { authorizeWhitechainPayment, payUsdtOnWhitechain } from './wallet.js';
+import { authorizeWhitechainPayment, payUsdtOnWhitechain, subscribeOnWhitechain, cancelWhitechainSubscription } from './wallet.js';
 const address = '0x1111111111111111111111111111111111111111';
 const hash = `0x${'ab'.repeat(32)}`;
 let request: ReturnType<typeof vi.fn>;
@@ -17,6 +17,36 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 describe('buyer wallet checkout', () => {
+  it('authorizes a bounded allowance before subscribing and preserves the payment receipt', async () => {
+    const original = request.getMockImplementation()!;
+    request.mockImplementation(async args => args.method === 'eth_call' ? '0x0' : original(args));
+    const onTransactionSubmitted = vi.fn();
+    const result = await subscribeOnWhitechain({ contract: address, subscribeData: `0x12345678${'00'.repeat(64)}`,
+      amount: '1.25', usdt: address, chainId: 1874, checkoutId: 'cs_subscription', onTransactionSubmitted });
+    const sends = request.mock.calls.filter(([args]) => args.method === 'eth_sendTransaction');
+    expect(sends).toHaveLength(2);
+    const transactions = sends.map(([args]) => (args as unknown as { params: Array<{ data: string }> }).params[0].data);
+    expect(transactions[0].startsWith('0x095ea7b3')).toBe(true);
+    expect(transactions[0].endsWith(15000000n.toString(16).padStart(64, '0'))).toBe(true);
+    expect(transactions[1]).toBe(`0x12345678${'00'.repeat(64)}`);
+    expect(result.payment_tx).toBe(hash); expect(onTransactionSubmitted).toHaveBeenCalledExactlyOnceWith(hash);
+  });
+  it('does not send a subscription payment when allowance approval is declined', async () => {
+    const original = request.getMockImplementation()!;
+    request.mockImplementation(async args => {
+      if (args.method === 'eth_call') return '0x0';
+      if (args.method === 'eth_sendTransaction') throw Error('Approval declined');
+      return original(args);
+    });
+    await expect(subscribeOnWhitechain({ contract: address, subscribeData: `0x12345678${'00'.repeat(64)}`,
+      amount: '1', usdt: address, chainId: 1874, checkoutId: 'checkout' })).rejects.toThrow('Approval declined');
+    expect(request.mock.calls.filter(([args]) => args.method === 'eth_sendTransaction')).toHaveLength(1);
+  });
+  it('requires the paying wallet for on-chain cancellation', async () => {
+    await expect(cancelWhitechainSubscription({ contract: address, key: `0x${'00'.repeat(32)}`,
+      payer: `0x${'22'.repeat(20)}`, chainId: 1874, cancelData: `0x12345678${'00'.repeat(32)}` })).rejects.toThrow('wallet that pays');
+    expect(request.mock.calls.some(([args]) => args.method === 'eth_sendTransaction')).toBe(false);
+  });
   it('keeps the submitted receipt available even if the later purchase signature is declined', async () => {
     const original = request.getMockImplementation()!;
     request.mockImplementation(async args => { if (args.method === 'personal_sign') throw new Error('Signature declined'); return original(args); });

@@ -373,3 +373,5 @@ export function workerKey(workerId: string): Hex {
 export function canonicalWithdraw(input: { mandateId: string; amount: string; to: Address; chainId: number }): string {
   return ['bagseven-withdraw-v1', input.mandateId, input.amount, input.to, input.chainId].join('|');
 }
+
+export { SubscriptionAbi, SubscriptionBytecode, SubscriptionRuntime } from './subscription-artifact.js';

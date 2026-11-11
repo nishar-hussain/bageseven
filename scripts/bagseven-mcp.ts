@@ -218,10 +218,10 @@ export function buildServer(worker = WORKER, callDaemon = daemon): McpServer {
       },
     },
     async ({ feature, holder }) => {
-      const params = new URLSearchParams({ feature, worker_id: worker });
+      const params = new URLSearchParams({ feature });
       if (holder) params.set('holder', holder);
-      const live = (await callDaemon('GET', `/internal/grants/live?${params.toString()}`)) as { grants?: Array<{ remaining: string; enabled?: boolean; paid_through?: string; id: string; feature: string }> };
-      const ranked = [...(live.grants ?? [])].sort((a, b) => Number(b.remaining) - Number(a.remaining));
+      const live = (await callDaemon('GET', `/internal/grants/live?${params.toString()}`)) as { grants?: Array<{ remaining: string; worker_id?: string; enabled?: boolean; paid_through?: string; id: string; feature: string }> };
+      const ranked = [...(live.grants ?? [])].filter(g => (!g.worker_id || g.worker_id === worker) && g.enabled !== false).sort((a, b) => Number(b.remaining) - Number(a.remaining));
       const grant = ranked[0];
       const enabled = Boolean(grant && Number(grant.remaining) > 0);
       return text({
@@ -292,7 +292,7 @@ export function buildServer(worker = WORKER, callDaemon = daemon): McpServer {
     'cancel_renewal',
     {
       title: 'Cancel renewal only',
-      description: 'Turns renewal off without killing access. Grant stays queryable until paid_through (three-clock rule).',
+      description: 'Preserves paid access. For recurring subscriptions, returns a cancellation transaction that the payer must approve in their wallet. For legacy grants, turns off the renewal flag.',
       inputSchema: { grant_id: z.string().min(1) },
     },
     async ({ grant_id }) => text(await callDaemon('POST', `/internal/grants/${encodeURIComponent(grant_id)}/cancel-renewal`)),
