@@ -74,7 +74,7 @@ async function main() {
   ownsLock = true;
   managedPorts = ports;
   writeFileSync(ownerFile, JSON.stringify({ pid: process.pid, root }), { mode: 0o600 });
-  for (const [key, bytes] of [['AUTH_SECRET', 32], ['DAEMON_AUTH_TOKEN', 24], ['PROVIDER_GAS_ENCRYPTION_KEY', 32]]) {
+  for (const [key, bytes] of [['AUTH_SECRET', 32], ['DAEMON_AUTH_TOKEN', 24], ['PROVIDER_GAS_ENCRYPTION_KEY', 32], ['PROVIDER_SCOPE_SIGNING_KEY', 32], ['X402_PAYMENT_ENCRYPTION_KEY', 32]]) {
     if (process.env[key]?.trim()) continue;
     const value = randomBytes(bytes).toString('hex');
     let raw = readFileSync(envPath, 'utf8');

@@ -1,5 +1,5 @@
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { createDb, featureDefinitions, type Database } from '@bagseven/db';
+import { eq } from 'drizzle-orm';
 import {
   FEATURE_CATALOG,
   assertValidFeatureId,
@@ -17,36 +17,19 @@ export type FeatureRecord = {
   created_at: string;
 };
 
-function registryPath(): string {
-  const base = process.env.BAGSEVEN_DATA_DIR?.trim() || join(process.cwd(), '.data');
-  return join(base, 'features.json');
+let database: Database | undefined;
+export function configureFeatureDatabase(value: Database) { database = value; }
+const testFeatures = new Map<string, FeatureRecord>();
+function db() {
+  if (!process.env.DATABASE_URL) throw Error('FEATURE_STORAGE_UNAVAILABLE: DATABASE_URL is required');
+  return database ??= createDb({ connectionString: process.env.DATABASE_URL, max: 5 });
+}
+async function loadCustom(): Promise<FeatureRecord[]> {
+  if (process.env.NODE_ENV === 'test') return [...testFeatures.values()];
+  return (await db().select().from(featureDefinitions)).map(row => row.data as FeatureRecord);
 }
 
-function loadCustom(): FeatureRecord[] {
-  const path = registryPath();
-  if (!existsSync(path)) return [];
-  try {
-    const raw = JSON.parse(readFileSync(path, 'utf8')) as { features?: FeatureRecord[] };
-    return Array.isArray(raw.features)
-      ? raw.features
-          .filter((f) => f?.id && !f.builtin)
-          .map((f) => ({
-            ...f,
-            value_type: f.value_type === 'boolean' ? 'boolean' : 'numeric',
-          }))
-      : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveCustom(features: FeatureRecord[]): void {
-  const path = registryPath();
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify({ features }, null, 2), 'utf8');
-}
-
-export function listFeatures(): FeatureRecord[] {
+export async function listFeatures(): Promise<FeatureRecord[]> {
   const builtin: FeatureRecord[] = FEATURE_CATALOG.map((f) => ({
     id: f.id,
     label: f.label,
@@ -56,7 +39,7 @@ export function listFeatures(): FeatureRecord[] {
     builtin: true,
     created_at: '1970-01-01T00:00:00.000Z',
   }));
-  const custom = loadCustom();
+  const custom = await loadCustom();
   const seen = new Set(builtin.map((f) => f.id));
   const merged = [...builtin];
   for (const f of custom) {
@@ -67,20 +50,24 @@ export function listFeatures(): FeatureRecord[] {
   return merged;
 }
 
-export function getFeatureValueType(id: string): FeatureValueType {
+export async function getFeatureValueType(id: string): Promise<FeatureValueType> {
   const key = id.trim().toLowerCase();
-  return listFeatures().find((f) => f.id === key)?.value_type ?? 'numeric';
+  const builtin = FEATURE_CATALOG.find(f => f.id === key);
+  if (builtin) return builtin.value_type;
+  if (process.env.NODE_ENV === 'test') return testFeatures.get(key)?.value_type ?? 'numeric';
+  const [row] = await db().select().from(featureDefinitions).where(eq(featureDefinitions.id, key));
+  return (row?.data as FeatureRecord | undefined)?.value_type ?? 'numeric';
 }
 
-export function createFeature(input: {
+export async function createFeature(input: {
   id: string;
   label?: string;
   blurb?: string;
   value_type?: FeatureValueType;
   actions?: string[];
-}): FeatureRecord {
+}): Promise<FeatureRecord> {
   const id = assertValidFeatureId(input.id);
-  const existing = listFeatures();
+  const existing = await listFeatures();
   if (existing.some((f) => f.id === id)) {
     throw new Error(`FEATURE_EXISTS: ${id}`);
   }
@@ -101,8 +88,10 @@ export function createFeature(input: {
     builtin: false,
     created_at: new Date().toISOString(),
   };
-  const custom = loadCustom();
-  custom.push(record);
-  saveCustom(custom);
+  if (process.env.NODE_ENV === 'test') testFeatures.set(id, record);
+  else {
+    const rows = await db().insert(featureDefinitions).values({ id, data: record }).onConflictDoNothing().returning();
+    if (!rows.length) throw Error(`FEATURE_EXISTS: ${id}`);
+  }
   return record;
 }

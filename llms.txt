@@ -12,6 +12,9 @@ Recurring billing uses fixed-price BagSubscriptionPlan, explicit payer allowance
 
 Provider-funded gas is mandatory in production. Authorized encrypted delegated keys pay AVAX under server-enforced fee budgets. Do not call these EOA restrictions on-chain smart-account limits. No platform-wallet fallback.
 
-SDK: @bagseven/sdk; browser wallet helpers connectAvalancheWallet/payStablecoinOnAvalanche/subscribeOnAvalanche/cancelAvalancheSubscription. MCP: HTTPS /mcp with email-code plus wallet consent, OAuth PKCE, scoped access and rotating refresh tokens. Transport sessions and OAuth tokens are process-local; reconnect after restart.
+SDK: @bagseven/sdk; browser wallet helpers connectAvalancheWallet/payStablecoinOnAvalanche/subscribeOnAvalanche/cancelAvalancheSubscription. MCP: HTTPS /mcp with email-code plus wallet consent, OAuth PKCE, scoped access and rotating refresh tokens. HTTP MCP is stateless. OAuth codes/tokens, email-consent challenges and rate limits persist in PostgreSQL with atomic single-use exchanges.
 
 Code: services/daemon/src/grants.ts, billing.ts, subscriptions.ts, avalanche-payment.ts; packages/entitlements/src/avalanche-store.ts; packages/contracts/src/BagEntitlementRegistry.sol; scripts/bagseven-mcp.ts and mcp-account-auth.ts.
+
+Isolated x402: separately approved encrypted payment signer; mandate-enforced funding; durable jobs; EIP-3009 nonce/transfer reconciliation; no refund while a payment signature can settle. Use bagseven_x402_payment for status. Migration 0019 and separate X402_PAYMENT_ENCRYPTION_KEY required.
+Builder: /app/builder customizes one complete customer embed (cmp_customer): plans, wallets, checkout, prepaid credits and renewals. Drafts and explicit published snapshots persist in PostgreSQL with provider scope and revision checks; apply migration 0020. Hosted iframe credentials use an exact-origin parent-window postMessage handshake, never new token-bearing URLs. React and legacy standalone components remain supported.

@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createReceiptService, fail } from "./receipts.mjs";
 import { BagsevenClient } from "@bagseven/sdk/node";
-import { FEATURES, HOLDER, PLAN_NAMES, internal } from "./demo-config.mjs";
+import { FEATURES, HOLDER, receiptPlanIds, internal } from "./demo-config.mjs";
 
 const PORT = Number(process.env.DEMO_DAPP_API_PORT || 5178);
 const DAEMON = (
@@ -49,13 +49,7 @@ async function bootstrap() {
     accessToken: identified.token,
     entitlements,
     apiUrl: "/v1",
-    planIds: plans
-      .filter(
-        (p) =>
-          p.provider_id === process.env.DEMO_PROVIDER_ID &&
-          PLAN_NAMES.includes(p.name),
-      )
-      .map((p) => p.id),
+    planIds: receiptPlanIds(plans, process.env.DEMO_PROVIDER_ID),
   };
 }
 

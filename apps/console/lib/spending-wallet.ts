@@ -34,8 +34,8 @@ export function walletChallengeMessage(claim: WalletClaim) {
     `Wallet: ${claim.owner}`, `Nonce: ${claim.nonce}`, `Expires: ${new Date(claim.exp).toISOString()}`,
     'This signature links your wallet to this signed-in account. It does not transfer funds or authorize agent spending.'].join('\n');
 }
-export function verifiedWalletToken(claim: WalletClaim) {
-  return encode({ ...claim, kind: 'ownership', exp: Date.now() + 8 * 60 * 60_000 });
+export function verifiedWalletToken(claim: WalletClaim, ttlMs = 8 * 60 * 60_000) {
+  return encode({ ...claim, kind: 'ownership', exp: Date.now() + ttlMs });
 }
 export function verifiedSpendingOwner(req: NextRequest, session: Session): string | null {
   return readWalletClaim(req.cookies.get(VERIFIED_WALLET_COOKIE)?.value, 'ownership', sessionHolder(session), req.nextUrl.origin)?.owner ?? null;

@@ -1,7 +1,7 @@
 import { createHmac } from 'node:crypto';
 /** Server-only header. Never return this capability or its encryption secret to a browser. */
 export function providerScopeHeaders(provider: string): Record<string, string> {
-  const secret = process.env.PROVIDER_GAS_ENCRYPTION_KEY;
+  const secret = process.env.PROVIDER_SCOPE_SIGNING_KEY || (process.env.NODE_ENV !== 'production' ? process.env.PROVIDER_GAS_ENCRYPTION_KEY : undefined);
   if (!secret) return {};
   const payload = Buffer.from(JSON.stringify({ provider, expires: Date.now() + 60_000 })).toString('base64url');
   const signature = createHmac('sha256', secret).update(`bagseven-provider-scope-v1:${payload}`).digest('base64url');

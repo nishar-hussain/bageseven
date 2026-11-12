@@ -4,6 +4,7 @@ import { errorMessage } from '../../../lib/error-message';
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { SpendingControls } from '../../../components/app/SpendingControls';
+import { X402Payments } from '../../../components/app/X402Payments';
 import { PageHeader } from '../../../components/app/ui';
 import { entitlementsApi, type Grant } from '../../../lib/entitlements-client';
 import { mandateApi, type MandateOverview, type MandateSummary } from '../../../lib/mandate-client';
@@ -143,6 +144,7 @@ export default function MandatePage() {
       </div>
 
       <SpendingControls selectedId={selectedId} overview={overview} onChange={loadList} onCreated={setSelectedId} />
+      <X402Payments mandateId={selectedId} overview={overview} />
 
       {overview?.mandate_id === selectedId && overview && (
         <div className="space-y-4 rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">

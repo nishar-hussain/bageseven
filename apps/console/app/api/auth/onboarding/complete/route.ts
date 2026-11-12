@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { accountProfiles } from '../../../../../lib/account-profiles';
 import {
   attachSessionCookie,
   getSession,
@@ -17,6 +18,7 @@ export async function POST() {
   }
 
   const doneAt = Math.floor(Date.now() / 1000);
+  await accountProfiles().complete(session.email!, session.wallet_address, doneAt);
   const res = NextResponse.json({
     ok: true,
     onboarding_done_at: doneAt,

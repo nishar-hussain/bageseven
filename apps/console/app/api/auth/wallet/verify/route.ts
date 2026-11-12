@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { accountProfiles } from '../../../../../lib/account-profiles';
+import { consumeAuthChallenge, saveAuthChallenge } from '../../../../../lib/auth-challenges';
 import { recoverMessageAddress } from 'viem';
 import { attachSessionCookie, getSession, mergeSessionIdentity, sessionHolder, sessionIsValid } from '../../../../../lib/auth';
 import { WALLET_CHALLENGE_COOKIE, VERIFIED_WALLET_COOKIE, readWalletClaim, spendingWalletCookieOptions,
@@ -11,6 +13,7 @@ export async function GET(req: NextRequest) {
   const owner = req.nextUrl.searchParams.get('owner') ?? '';
   if (!/^0x[0-9a-fA-F]{40}$/.test(owner)) return NextResponse.json({ error: { message: 'Invalid wallet address' } }, { status: 400 });
   const challenge = walletChallenge(sessionHolder(session), req.nextUrl.origin, owner);
+  await saveAuthChallenge(challenge.token, 300000);
   const response = NextResponse.json({ message: challenge.message }, { headers: { 'cache-control': 'no-store' } });
   response.cookies.set(WALLET_CHALLENGE_COOKIE, challenge.token, spendingWalletCookieOptions(300));
   return response;
@@ -39,6 +42,9 @@ export async function POST(req: NextRequest) {
       { status: 409 },
     );
   }
+  if (!await consumeAuthChallenge(req.cookies.get(WALLET_CHALLENGE_COOKIE)!.value)) return NextResponse.json({ error: { message: 'Wallet verification already used or expired' } }, { status: 403 });
+  try { await accountProfiles().bind(session.email!, existingWallet ?? null, challenge.owner); }
+  catch { return NextResponse.json({ error: { message: 'Account changed. Sign in and verify your wallet again.' } }, { status: 409 }); }
   const response = NextResponse.json({ owner_address: challenge.owner, wallet_address: challenge.owner });
   response.cookies.set(VERIFIED_WALLET_COOKIE, verifiedWalletToken(challenge), spendingWalletCookieOptions(8 * 3600));
   response.cookies.set(WALLET_CHALLENGE_COOKIE, '', spendingWalletCookieOptions(0));

@@ -2,6 +2,7 @@ import { createHmac, randomInt, timingSafeEqual } from 'node:crypto';
 import { cookies } from 'next/headers';
 import type { NextResponse } from 'next/server';
 import { authSecretFromEnv } from './session-crypto';
+import { accountProfiles } from './account-profiles';
 
 export const SESSION_COOKIE = 'bagseven_session';
 export const SESSION_MAX_AGE = 60 * 60 * 8;
@@ -142,7 +143,10 @@ export function decodeSession(token: string | undefined | null): Session | null 
 
 export async function getSession(): Promise<Session | null> {
   const jar = await cookies();
-  return decodeSession(jar.get(SESSION_COOKIE)?.value);
+  const session = decodeSession(jar.get(SESSION_COOKIE)?.value);
+  if (!session?.email) return null;
+  const profile = await accountProfiles().get(session.email);
+  return { ...session, wallet_address: profile?.walletAddress ?? null, onboarding_done_at: profile?.onboardingDoneAt ?? null };
 }
 
 export function attachSessionCookie(res: NextResponse, input: SessionIdentity): NextResponse {

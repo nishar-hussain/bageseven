@@ -35,7 +35,6 @@ async function main() {
   // Generated development keys need not be Anvil's prefunded accounts.
   const faucet = createWalletClient({ account: owner, chain, transport: http(cfg.RPC_URL) });
   const fundedAccounts = [executor.address];
-  if (cfg.BAGSEVEN_X402_PAYER_KEY) fundedAccounts.push(privateKeyToAccount(cfg.BAGSEVEN_X402_PAYER_KEY).address);
   for (const address of fundedAccounts) {
     if (await client.publicClient.getBalance({ address }) < 1_000_000_000_000_000_000n) {
       await wait(await faucet.sendTransaction({ to: address, value: 10_000_000_000_000_000_000n }));

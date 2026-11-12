@@ -11,6 +11,7 @@
     "test": "vitest run tests --passWithNoTests"
   },
   "dependencies": {
+    "@bagseven/db": "workspace:*",
     "@bagseven/notify": "workspace:*",
     "@bagseven/sdk": "workspace:*",
     "@rainbow-me/rainbowkit": "^2.2.11",

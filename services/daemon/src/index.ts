@@ -1,4 +1,6 @@
 import { Subscriptions } from './subscriptions.js';
+import { registerRegistryDeployment } from './registry-deployment.js';
+import { configureFeatureDatabase } from './feature-registry.js';
 import { PostgresSubscriptionStore } from './subscription-store.js';
 import { AvalancheSubscriptionChain } from './subscription-chain.js';
 import { registerSubscriptionRoutes, cancellationDraft } from './subscription-routes.js';
@@ -15,8 +17,10 @@ import type { FastifyInstance } from 'fastify';
 import { parseUnits } from 'viem';
 import { FETCH_FEATURE_ID, featureForAction, getGrantStore } from '@bagseven/entitlements';
 import { gte } from '@bagseven/money';
-import { decodeX402PaymentRequired, selectX402Requirements, validateX402AgainstPolicy, type X402Requirements } from './x402.js';
-import { x402PayerFromEnv, type X402Payer } from './x402-payer.js';
+import { decodeX402PaymentRequired, selectX402Requirements, validateX402AgainstPolicy } from './x402.js';
+import { X402Authorities } from './x402-authorities.js';
+import { X402Payments, type X402Funding } from './x402-payments.js';
+import { registerX402Routes } from './x402-routes.js';
 import { beginWorkerRequest } from './worker-request-ledger.js';
 import { registerWorkerManagement } from './worker-management.js';
 import { registerGrantRoutes, type GrantRouteDeps } from './grants.js';
@@ -167,7 +171,7 @@ async function verifyChallenge(config: NodeJS.ProcessEnv, url: URL, challenge: z
   if (signer.toLowerCase() !== providerAddress) throw new ApiError(502, 'PAYMENT_CHALLENGE_SIGNATURE_INVALID', 'provider payment challenge signature is invalid');
 }
 
-async function executeSpend(config: NodeJS.ProcessEnv, resolved: ResolvedWorker, amount: string, recipient: string, reason?: string, executionRecipient = recipient, providerGas?: ProviderGasManager): Promise<SpendResult> {
+async function executeSpend(config: NodeJS.ProcessEnv, resolved: ResolvedWorker, amount: string, recipient: string, reason?: string, executionRecipient = recipient, providerGas?: ProviderGasManager, hooks?: Parameters<X402Funding>[1]): Promise<SpendResult> {
   const signer = accountFromEnv(config, resolved.agent.operator_address);
   if (signer.address.toLowerCase() !== resolved.agent.operator_address.toLowerCase()) {
     throw new ApiError(403, 'DAEMON_OPERATOR_MISMATCH', 'daemon signer is not the worker operator');
@@ -193,38 +197,54 @@ async function executeSpend(config: NodeJS.ProcessEnv, resolved: ResolvedWorker,
     request_id: randomUUID(),
   }) as SpendResult & { authorization?: { contract_address: string; worker_id: `0x${string}`; amount: string; recipient: `0x${string}` } };
   if (result.decision !== 'allow' || !result.reservation_id || !result.authorization) return result;
+  await hooks?.reserved(result.reservation_id);
   const executorKey = providerGasEnabled(config)
-    ? await providerGas!.account(resolved.mandate.provider_id ?? '', 'avalanche')
+    ? await providerGas!.account(resolved.mandate.provider_id ?? '', 'avalanche', { journal: hooks?.journal })
     : config.DAEMON_EXECUTOR_KEY as `0x${string}`;
   const executor = new MandateClient(executorKey, { rpcUrl: config.RPC_URL ?? 'http://localhost:8545', chainId });
   try {
     if (!providerGasEnabled(config) && executor.address.toLowerCase() !== (config.DAEMON_EXECUTOR_ADDRESS ?? executor.address).toLowerCase()) throw new ApiError(403, 'DAEMON_EXECUTOR_MISMATCH', 'daemon executor does not match the configured contract enforcer');
     const txHash = await executor.execute(result.authorization.contract_address as `0x${string}`, parseUnits(amount, 6), executionRecipient as `0x${string}`, result.authorization.worker_id);
-    await daemonApi(config, 'POST', `/v1/reservations/${result.reservation_id}/settle`, { tx_hash: txHash, recipient });
+    if (!hooks) await daemonApi(config, 'POST', `/v1/reservations/${result.reservation_id}/settle`, { tx_hash: txHash, recipient });
     return { ...result, tx_hash: txHash };
   } catch (error) {
-    await daemonApi(config, 'POST', `/v1/reservations/${result.reservation_id}/release`, {}).catch(() => undefined);
+    if (!hooks) await daemonApi(config, 'POST', `/v1/reservations/${result.reservation_id}/release`, {}).catch(() => undefined);
     throw new ApiError(502, 'PAYMENT_EXECUTION_FAILED', (error as Error).message);
   }
 }
 
 export function buildRoutes(app: FastifyInstance, { config, redis, db }: ServiceDeps): void {
+  configureFeatureDatabase(db);
+  registerRegistryDeployment(app, db, config);
   const providerGas = new ProviderGasManager(db, config);
   const subscriptions = new Subscriptions(new PostgresSubscriptionStore(db), new AvalancheSubscriptionChain(providerGas, config), getGrantStore(config));
   registerSubscriptionRoutes(app, subscriptions);
+  const x402 = new X402Payments(new X402Authorities(db, config), getGrantStore(config), async (job, hooks) => {
+    const resolved = await resolveWorker(config, job.data.authority.worker_id);
+    if (resolved.mandate.id !== job.data.authority.mandate_id || resolved.mandate.provider_id !== job.data.authority.provider ||
+      resolved.agent.status !== 'active' || resolved.mandate.status !== 'active') throw Error('X402_MANDATE_BINDING_REQUIRED');
+    return executeSpend(config, resolved, fromAtomicUnits(job.data.amount), job.data.authority.payer,
+      'Isolated x402 funding', job.data.authority.payer, providerGas, hooks);
+  }, {
+    settle: async (id, hash, recipient) => { await daemonApi(config, 'POST', `/v1/reservations/${id}/settle`, { tx_hash: hash, recipient }); },
+    release: async id => { await daemonApi(config, 'POST', `/v1/reservations/${id}/release`, {}); },
+  });
+  registerX402Routes(app, x402, config);
+
   let ticking = false;
+  let planCursor = '';
   const tick = async () => {
     if (ticking) return;
     ticking = true;
     try {
       // Resume plan deployment from its committed signed transaction after restarts.
-      for (const plan of await getBillingStore(db).listPlans(true)) {
-        if (plan.interval === 'month') {
-          const saved = await subscriptions.store.plan(plan.id);
-          if (saved?.status === 'preparing') await subscriptions.prepare(plan).catch(error => app.log.warn({ plan: plan.id, error: String(error) }, 'subscription plan pending'));
-        }
+      const pendingPlans = await subscriptions.store.pendingPlans(planCursor, 100);
+      planCursor = pendingPlans.at(-1)?.id ?? '';
+      for (const saved of pendingPlans) {
+        const plan = await getBillingStore(db).getPlan(saved.id);
+        if (plan?.interval === 'month') await subscriptions.prepare(plan).catch(error => app.log.warn({ plan: plan.id, error: String(error) }, 'subscription plan pending'));
       }
-      await subscriptions.tick();
+      await Promise.all([subscriptions.tick(), x402.tick()]);
     } catch (error) { app.log.error({ error: String(error) }, 'subscription worker failed'); }
     finally { ticking = false; }
   };
@@ -252,8 +272,16 @@ export function buildRoutes(app: FastifyInstance, { config, redis, db }: Service
   app.post('/internal/workers/:worker/fetch', async (req) => {
     const { worker } = req.params as { worker: string };
     const body = fetchSchema.parse({ ...(req.body as object), worker });
+    if (body.url && body.idempotency_key) {
+      const prior = await x402.store.forRequest(worker, body.idempotency_key, body.url);
+      if (prior) { await x402.process(prior); return x402.view(prior); }
+    }
     const operation = await beginWorkerRequest(redis, worker, body);
-    if (operation.replay) return operation.result;
+    if (operation.replay) {
+      const prior = operation.result as { x402_job_id?: string } | undefined;
+      if (prior?.x402_job_id) return x402.view(prior.x402_job_id);
+      return operation.result;
+    }
     const perform = async () => {
     const resolved = await resolveWorker(config, worker);
     if (resolved.agent.status !== 'active' || resolved.mandate.status !== 'active') {
@@ -289,14 +317,12 @@ export function buildRoutes(app: FastifyInstance, { config, redis, db }: Service
     let recipient = body.recipient;
     let provider: { status: number; body: unknown } | undefined;
     let challenge: z.infer<typeof paymentChallengeSchema> | undefined;
-    let x402Requirement: X402Requirements | undefined;
-    let x402Payment: { required: ReturnType<typeof decodeX402PaymentRequired>; payer: X402Payer } | undefined;
 
     if (body.url) {
       const providerUrl = validateProviderUrl(config, body.url);
       let initial: Response;
       try {
-        initial = await fetch(providerUrl);
+        initial = await fetch(providerUrl, { redirect: 'error', signal: AbortSignal.timeout(15000) });
       } catch (error) {
         throw new ApiError(502, 'PROVIDER_FETCH_FAILED', `provider request failed: ${(error as Error).message}`, { url: providerUrl.toString() });
       }
@@ -323,74 +349,35 @@ export function buildRoutes(app: FastifyInstance, { config, redis, db }: Service
           remainingLifetime: parseUnits(resolved.remaining.remaining_lifetime, 6),
           vaultAvailable: parseUnits(resolved.remaining.vault_available, 6),
         });
-        let payer: X402Payer;
-        try {
-          if (providerGasEnabled(config)) throw new ApiError(409, 'PROVIDER_X402_NOT_CONFIGURED', 'Provider-funded x402 requires its own separate payer authorization; platform payer fallback is disabled');
-          payer = x402PayerFromEnv(config, resolved.agent.operator_address, config.DAEMON_EXECUTOR_ADDRESS ?? '');
-        } catch (error) {
-          throw new ApiError(503, 'X402_PAYER_UNCONFIGURED', (error as Error).message);
-        }
-        let payerBalance: bigint;
-        try {
-          payerBalance = await payer.balance();
-        } catch (error) {
-          throw new ApiError(503, 'X402_PAYER_RPC_FAILED', `could not read x402 payer balance: ${(error as Error).message}`);
-        }
-        if (config.BAGSEVEN_X402_PAYER_ALLOW_NONZERO !== 'true' && payerBalance !== 0n) {
-          throw new ApiError(409, 'X402_PAYER_NOT_EMPTY', 'isolated x402 payer has an existing USDC balance; set BAGSEVEN_X402_PAYER_ALLOW_NONZERO=true only for a controlled testnet payer');
-        }
-        x402Requirement = requirement;
-        x402Payment = { required, payer };
-        amount = fromAtomicUnits(requirement.amount);
-        recipient = requirement.payTo;
+        if (!providerGasEnabled(config)) throw new ApiError(409, 'X402_PROVIDER_GAS_REQUIRED', 'Authorize provider-funded gas and a separate isolated payer first');
+        if (!body.idempotency_key) throw new ApiError(400, 'X402_IDEMPOTENCY_KEY_REQUIRED', 'Supply a stable idempotency_key for this payment');
+        const id = await x402.prepare(resolved.mandate.provider_id ?? '', resolved.agent.id, providerUrl.toString(),
+          requirement, body.idempotency_key, grantConsume?.grant_id);
+        // The PostgreSQL job is authoritative even if this request or Redis is lost.
+        const pending = await x402.view(id);
+        await operation.complete(pending);
+        await x402.process(id);
+        return x402.view(id);
       }
-      if (!x402Requirement) {
-        challenge = paymentChallengeSchema.parse(parsed);
-        amount = challenge.amount;
-        recipient = challenge.payTo ?? challenge.recipient;
-        if (!recipient) throw new ApiError(502, 'INVALID_PAYMENT_CHALLENGE', 'payment challenge has no recipient');
-        await verifyChallenge(config, providerUrl, challenge);
-      }
-      const challengeKey = `bagseven:payment-challenge:${providerUrl.hostname}:${x402Requirement ? `${x402Requirement.network}:${x402Requirement.asset}:${x402Requirement.amount}:${x402Requirement.payTo}` : (challenge?.nonce ?? challenge?.signature)}`;
-      const expiresAt = x402Requirement
-        ? Math.floor(Date.now() / 1000) + x402Requirement.maxTimeoutSeconds
-        : challenge?.expires_at ?? Math.floor(Date.now() / 1000) + 120;
+      challenge = paymentChallengeSchema.parse(parsed);
+      amount = challenge.amount;
+      recipient = challenge.payTo ?? challenge.recipient;
+      if (!recipient) throw new ApiError(502, 'INVALID_PAYMENT_CHALLENGE', 'payment challenge has no recipient');
+      await verifyChallenge(config, providerUrl, challenge);
+      const challengeKey = `bagseven:payment-challenge:${providerUrl.hostname}:${challenge.nonce ?? challenge.signature}`;
+      const expiresAt = challenge.expires_at;
       const fresh = await redis.set(challengeKey, '1', 'EX', Math.max(1, expiresAt - Math.floor(Date.now() / 1000)), 'NX');
       if (fresh !== 'OK') throw new ApiError(409, 'PAYMENT_CHALLENGE_REPLAYED', 'provider payment challenge has already been used');
     }
 
     if (!amount || !recipient) throw new ApiError(400, 'PAYMENT_INPUT_REQUIRED', 'amount and recipient are required');
-    const payerAddress = x402Payment?.payer.account.address;
     await operation.checkpoint();
-    const result = await executeSpend(config, resolved, amount, recipient, body.reason, payerAddress ?? recipient, providerGas);
+    const result = await executeSpend(config, resolved, amount, recipient, body.reason, recipient, providerGas);
     if (body.url && result.decision === 'allow') {
       const providerUrl = validateProviderUrl(config, body.url);
-      if (x402Payment && x402Requirement) {
-        if (!result.reservation_id || !result.tx_hash) {
-          if (result.reservation_id) await daemonApi(config, 'POST', `/v1/reservations/${result.reservation_id}/release`, {}).catch(() => undefined);
-          throw new ApiError(503, 'X402_EXECUTOR_UNCONFIGURED', 'x402 payer requires a configured daemon executor and a confirmed BagMandate funding transaction');
-        }
-        try {
-          const payment = await x402Payment.payer.createPayment(x402Payment.required, x402Requirement);
-          const retry = await fetch(providerUrl, { headers: { 'PAYMENT-SIGNATURE': payment.header } });
-          const responseBody = (await retry.text()).slice(0, 10000);
-          if (!retry.ok) {
-            await x402Payment.payer.refund(resolved.mandate.contract_address as `0x${string}`, payment.amount);
-            await daemonApi(config, 'POST', `/v1/reservations/${result.reservation_id}/release`, {}).catch(() => undefined);
-            throw new ApiError(502, 'X402_SETTLEMENT_FAILED', `provider rejected x402 payment (${retry.status})`, { body: responseBody });
-          }
-          provider = { status: retry.status, body: responseBody };
-        } catch (error) {
-          if (error instanceof ApiError) throw error;
-          await x402Payment.payer.refund(resolved.mandate.contract_address as `0x${string}`, x402Payment.payer.account.address === payerAddress ? parseUnits(amount, 6) : 0n).catch(() => undefined);
-          await daemonApi(config, 'POST', `/v1/reservations/${result.reservation_id}/release`, {}).catch(() => undefined);
-          throw new ApiError(502, 'X402_SETTLEMENT_FAILED', (error as Error).message);
-        }
-      } else {
         const payment = JSON.stringify({ tx_hash: result.tx_hash, amount, recipient, chain_id: Number(config.CHAIN_ID ?? AVALANCHE_FUJI_CHAIN_ID), nonce: challenge?.nonce ?? null });
-        const retry = await fetch(providerUrl, { headers: { 'x-payment': payment, 'x-payment-response': payment } });
+        const retry = await fetch(providerUrl, { headers: { 'x-payment': payment, 'x-payment-response': payment }, redirect: 'error', signal: AbortSignal.timeout(15000) });
         provider = { status: retry.status, body: (await retry.text()).slice(0, 10000) };
-      }
     }
     let entitlement: unknown = null;
     if (grantConsume && result.decision === 'allow') {
@@ -436,7 +423,7 @@ export function buildRoutes(app: FastifyInstance, { config, redis, db }: Service
     resolveMandateCapacity: async (workerId: string, amount = '1') => {
       try {
         const resolved = await resolveWorker(config, workerId);
-        const client = new MandateClient(config.DAEMON_EXECUTOR_KEY as `0x${string}`, { rpcUrl: config.RPC_URL || avalancheConfig(config).rpcUrl, chainId: Number(config.CHAIN_ID || AVALANCHE_FUJI_CHAIN_ID) });
+        const client = MandateClient.readOnly({ rpcUrl: avalancheConfig(config).rpcUrl, chainId: avalancheConfig(config).chainId });
         const code = await client.checkWorker(resolved.mandate.contract_address as `0x${string}`, parseUnits(amount, 6), '0x0000000000000000000000000000000000000000', workerKey(resolved.agent.id));
         const ok = code === 0 && resolved.agent.status === 'active' && resolved.mandate.status === 'active'
           && gte(resolved.remaining.remaining_window, amount)

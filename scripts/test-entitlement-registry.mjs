@@ -81,6 +81,23 @@ try {
       const minted = await store.mint(input);
       assert.equal(minted.remaining, '5');
       assert.equal((await store.mint(input)).id, minted.id);
+      const interruptedInput = { ...input, id: crypto.randomUUID(), payment_tx: `0x${'51'.repeat(32)}` };
+      configureProviderGrantSigners(async id => {
+        const signer = await manager.account(id, 'registry');
+        return { ...signer, signTransaction: async (...args) => {
+          await signer.signTransaction(...args);
+          throw Error('simulated crash after durable signing before broadcast');
+        } };
+      });
+      await assert.rejects(store.mint(interruptedInput), /simulated crash/);
+      const reserved = (await manager.status(provider)).registry_reserved_wei;
+      configureProviderGrantSigners(async () => { throw Error('Recovery must never request a fresh signer'); });
+      store = new AvalancheGrantStore(db, env);
+      await assert.rejects(store.recoverMint(interruptedInput.id, { ...interruptedInput, holder: 'wrong@example.com' }), /CONFLICT/);
+      assert.equal((await store.recoverMint(interruptedInput.id, interruptedInput)).remaining, '5');
+      assert.equal((await manager.status(provider)).registry_reserved_wei, reserved);
+      console.log('PASS actual registry issue recovers exact signed bytes after restart without fresh signing or double fee reservation');
+      configureProviderGrantSigners(id => manager.account(id, 'registry'));
       await store.consume(minted.id, '1', 'persisted-request');
       store = new AvalancheGrantStore(db, env);
       assert.equal((await store.consume(minted.id, '1', 'persisted-request')).remaining, '4');

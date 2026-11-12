@@ -83,6 +83,9 @@ export class Subscriptions {
   private async fulfill(sub: Subscription, period: SubscriptionPeriod): Promise<Grant> {
     const id = period.grantId ?? uuidFor(period.id);
     let grant = await this.grants.get(id);
+    if (!grant && period.stage === 'minting') grant = await this.grants.recoverMint?.(id, {
+      holder: sub.holder, feature: sub.plan.feature, merchant: sub.providerId, payment_tx: period.hash,
+    }) ?? null;
     if (grant && (grant.payment_tx?.toLowerCase() !== period.hash.toLowerCase() || grant.holder !== sub.holder || grant.merchant !== sub.providerId)) throw Error('SUBSCRIPTION_GRANT_CONFLICT');
     if (!grant) {
       if (period.stage === 'minting' || period.stage === 'complete') throw Error('RECONCILIATION_REQUIRED: grant broadcast is unresolved; do not mint or charge again');

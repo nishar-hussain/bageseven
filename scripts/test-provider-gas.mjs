@@ -13,7 +13,9 @@ const db = createDb({ connectionString: process.env.DATABASE_URL });
 const results = [];
 function proof() {
   const payload = Buffer.from(JSON.stringify({ provider, expires: Date.now() + 60000 })).toString('base64url');
-  return `${payload}.${createHmac('sha256', process.env.PROVIDER_GAS_ENCRYPTION_KEY).update(`bagseven-provider-scope-v1:${payload}`).digest('base64url')}`;
+  const secret = process.env.PROVIDER_SCOPE_SIGNING_KEY || (process.env.NODE_ENV !== 'production' ? process.env.PROVIDER_GAS_ENCRYPTION_KEY : undefined);
+  if (!secret) throw Error('Provider scope signing key required');
+  return `${payload}.${createHmac('sha256', secret).update(`bagseven-provider-scope-v1:${payload}`).digest('base64url')}`;
 }
 async function request(path, { body, scoped = true, gateway = false } = {}) {
   const response = await fetch(`http://localhost:${gateway ? 4000 : 4001}${path}`, { method: body ? 'POST' : 'GET',

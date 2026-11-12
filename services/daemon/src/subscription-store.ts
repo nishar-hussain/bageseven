@@ -1,10 +1,11 @@
 import { billingSubscriptions, subscriptionPeriods, subscriptionPlans, type Database } from '@bagseven/db';
-import { and, asc, eq, lte, ne, or, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, lte, ne, or, sql } from 'drizzle-orm';
 import type { Subscription, SubscriptionPeriod, SubscriptionPlan } from './subscription-types.js';
 
 export interface SubscriptionStore {
   plan(id: string): Promise<SubscriptionPlan | null>;
   savePlan(plan: SubscriptionPlan): Promise<void>;
+  pendingPlans(after: string, limit: number): Promise<SubscriptionPlan[]>;
   get(id: string): Promise<Subscription | null>;
   save(subscription: Subscription): Promise<void>;
   list(holder?: string): Promise<Subscription[]>;
@@ -22,6 +23,10 @@ export class MemorySubscriptionStore implements SubscriptionStore {
   locks = new Set<string>();
   async plan(id: string) { return structuredClone(this.plans.get(id) ?? null); }
   async savePlan(plan: SubscriptionPlan) { this.plans.set(plan.id, structuredClone(plan)); }
+  async pendingPlans(after: string, limit: number) {
+    return structuredClone([...this.plans.values()].filter(p => p.status === 'preparing' && p.id > after)
+      .sort((a, b) => a.id.localeCompare(b.id)).slice(0, limit));
+  }
   async get(id: string) { return structuredClone(this.subscriptions.get(id) ?? null); }
   async save(sub: Subscription) { this.subscriptions.set(sub.id, structuredClone(sub)); }
   async list(holder?: string) { return structuredClone([...this.subscriptions.values()].filter(s => !holder || s.holder === holder)); }
@@ -43,6 +48,11 @@ export class MemorySubscriptionStore implements SubscriptionStore {
 export class PostgresSubscriptionStore implements SubscriptionStore {
   private locks = 0;
   constructor(private db: Database) {}
+  async pendingPlans(after: string, limit: number) {
+    const rows = await this.db.select().from(subscriptionPlans).where(and(gt(subscriptionPlans.id, after),
+      sql`${subscriptionPlans.data}->>'status' = 'preparing'`)).orderBy(asc(subscriptionPlans.id)).limit(limit);
+    return rows.map(row => row.data as SubscriptionPlan);
+  }
   async plan(id: string) {
     const [row] = await this.db.select().from(subscriptionPlans).where(eq(subscriptionPlans.id, id));
     return row ? row.data as SubscriptionPlan : null;

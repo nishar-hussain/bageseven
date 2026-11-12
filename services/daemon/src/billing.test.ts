@@ -4,7 +4,7 @@ import { ApiError, errorResponse } from '@bagseven/server';
 import { EntitlementPreflightError, getGrantStore, resetGrantStoreForTests } from '@bagseven/entitlements';
 import type { Redis } from 'ioredis';
 import { registerBillingRoutes } from './billing.js';
-import { resetBillingStoreForTests } from './billing-store.js';
+import { getBillingStore, resetBillingStoreForTests } from './billing-store.js';
 
 beforeEach(() => {
   vi.stubEnv('PROVIDER_FUNDED_GAS', 'false');
@@ -23,6 +23,27 @@ afterEach(() => {
 });
 
 describe('billing plans + checkout', () => {
+  it('recovers an issued grant after checkout persistence fails without minting again', async () => {
+    const holds = new Map<string, string>();
+    const redis = { set: async (k: string, v: string, nx?: string) => { if (nx && holds.has(k)) return null; holds.set(k, v); return 'OK'; },
+      get: async (k: string) => holds.get(k), getdel: async (k: string) => { const v = holds.get(k); holds.delete(k); return v; } };
+    const app = Fastify();
+    registerBillingRoutes(app, { redis: redis as unknown as Redis });
+    const store = getBillingStore();
+    const plan = await store.createPlan({ name: 'Recovery', feature: 'ocr', amount: '1', merchant_wallet: `0x${'33'.repeat(20)}` });
+    const session = await store.createCheckout({ plan_id: plan.id, holder: 'buyer' });
+    vi.spyOn(store, 'markPaid').mockRejectedValueOnce(Error('database disconnected'));
+    const mint = vi.spyOn(getGrantStore(), 'mint');
+    const payload = { payment_tx: `0x${'af'.repeat(32)}`, customer_wallet: `0x${'22'.repeat(20)}` };
+    try {
+      expect((await app.inject({ method: 'POST', url: `/v1/public/checkout/${session.id}/confirm`, payload })).statusCode).toBe(500);
+      expect((await getGrantStore().findLive({ holder: 'buyer' }))).toHaveLength(1);
+      const retry = await app.inject({ method: 'POST', url: `/v1/public/checkout/${session.id}/confirm`, payload });
+      expect(retry.statusCode).toBe(200);
+      expect(retry.json().session.status).toBe('PAID');
+      expect(mint).toHaveBeenCalledTimes(1);
+    } finally { await app.close(); }
+  });
   it.each([true, false])('retries only known pre-signing failures while preserving unknown payment holds (%s)', async safe => {
     const receipts = new Map<string, string>();
     const redis = {

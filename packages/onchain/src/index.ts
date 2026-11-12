@@ -131,7 +131,9 @@ export class MandateClient {
   readonly address: Address;
   private chainVerified?: Promise<void>;
 
-  constructor(privateKey: Hex | ReturnType<typeof privateKeyToAccount>, opts: MandateClientOpts) {
+  static readOnly(opts: MandateClientOpts) { return new MandateClient(null, opts); }
+
+  constructor(privateKey: Hex | ReturnType<typeof privateKeyToAccount> | null, opts: MandateClientOpts) {
     const chain = opts.chainId === 31337 ? localChain : chainForId(opts.chainId ?? AVALANCHE_FUJI_CHAIN_ID);
     const transport = opts.rpcFallbackUrl && opts.rpcFallbackUrl !== opts.rpcUrl
       ? fallback([
@@ -141,11 +143,12 @@ export class MandateClient {
       : http(opts.rpcUrl, { retryCount: 2, retryDelay: 500 });
     this.publicClient = createPublicClient({ chain, transport });
     const account = typeof privateKey === 'string' ? privateKeyToAccount(privateKey) : privateKey;
-    this.address = account.address;
-    this.wallet = createWalletClient({ account, chain, transport });
+    this.address = account?.address ?? '0x0000000000000000000000000000000000000000';
+    this.wallet = createWalletClient({ account: account ?? undefined, chain, transport });
   }
 
   async deploy(caps: MandateCaps): Promise<Address> {
+    if (!this.wallet.account) throw Error('READ_ONLY_MANDATE_CLIENT: use the provider-authorized signer');
     const hash = await this.wallet.deployContract({
       abi,
       bytecode: BagMandateBytecode,
@@ -249,6 +252,7 @@ export class MandateClient {
   }
 
   private async write(contract: Address, contractAbi: any, fn: string, args: unknown[]): Promise<Hex> {
+    if (!this.wallet.account) throw Error('READ_ONLY_MANDATE_CLIENT: use the provider-authorized signer');
     const hash = await this.wallet.writeContract({ address: contract, abi: contractAbi, functionName: fn, args } as any);
     return hash;
   }
@@ -380,3 +384,4 @@ export function canonicalWithdraw(input: { mandateId: string; amount: string; to
 
 export { SubscriptionAbi, SubscriptionBytecode, SubscriptionRuntime } from './subscription-artifact.js';
 export { EntitlementRegistryAbi, EntitlementRegistryBytecode, EntitlementRegistryRuntime } from './entitlement-registry-artifact.js';
+export { FUJI_DEPLOYMENT, assertPublicFuji, prepareFujiRegistry, validateRegistryPlan, validateSignedRegistry, verifyFujiRegistry, type RegistryDeploymentPlan } from './fuji-deployment.js';

@@ -10,10 +10,11 @@ import { BagMandateBytecode } from './bytecode.js';
 
 /** Console-to-service scope proof; the public SDK/service bearer is not sufficient. */
 export function verifyProviderScope(token: unknown, provider: string, env: NodeJS.ProcessEnv): boolean {
-  if (typeof token !== 'string' || !env.PROVIDER_GAS_ENCRYPTION_KEY) return false;
+  const secret = env.PROVIDER_SCOPE_SIGNING_KEY || (env.NODE_ENV !== 'production' ? env.PROVIDER_GAS_ENCRYPTION_KEY : undefined);
+  if (typeof token !== 'string' || !secret) return false;
   const [payload, signature, extra] = token.split('.');
   if (!payload || !signature || extra) return false;
-  const expected = createHmac('sha256', env.PROVIDER_GAS_ENCRYPTION_KEY).update(`bagseven-provider-scope-v1:${payload}`).digest();
+  const expected = createHmac('sha256', secret).update(`bagseven-provider-scope-v1:${payload}`).digest();
   const actual = Buffer.from(signature, 'base64url');
   if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return false;
   try { const claim = JSON.parse(Buffer.from(payload, 'base64url').toString()); return claim.provider === provider && Number.isSafeInteger(claim.expires) && claim.expires > Date.now() && claim.expires <= Date.now() + 120_000; } catch { return false; }
@@ -174,7 +175,9 @@ export class ProviderGasManager {
     if (terms?.avalancheId !== chainId || terms.registryId !== chainId) throw Error('PROVIDER_GAS_REAUTHORIZE_REQUIRED: sign a fresh authorization for this Avalanche network');
     return row;
   }
-  async account(provider: string, network: 'registry' | 'avalanche'): Promise<PrivateKeyAccount> {
+  async account(provider: string, network: 'registry' | 'avalanche', authorityOptions: {
+    journal?: (transaction: Database, signed: Hex) => Promise<void>;
+  } = {}): Promise<PrivateKeyAccount> {
     if (!provider) throw new Error('PROVIDER_GAS_REQUIRED: this operation has no provider binding');
     const row = await this.assertActive(provider);
     const raw = privateKeyToAccount(decryptGasKey(row.encryptedKey, provider, this.env), { nonceManager });
@@ -250,19 +253,23 @@ export class ProviderGasManager {
             const [existing] = await tx.select().from(providerSignedTransactions).where(and(
               eq(providerSignedTransactions.providerId, provider), eq(providerSignedTransactions.chainId, expectedChain),
               eq(providerSignedTransactions.intent, subscriptionIntent)));
-            if (existing) return existing.raw as Hex;
+            if (existing) {
+              await authorityOptions.journal?.(tx as unknown as Database, existing.raw as Hex);
+              return existing.raw as Hex;
+            }
           }
           const id = `${provider}:${expectedChain}:${transaction.nonce}`;
           const [existing] = await tx.select().from(providerSignedTransactions).where(eq(providerSignedTransactions.id, id));
           const signed = await raw.signTransaction(transaction, options);
           if (existing) {
-            if (existing.raw === signed) return signed;
+            if (existing.raw === signed) { await authorityOptions.journal?.(tx as unknown as Database, signed); return signed; }
             throw Error('PROVIDER_GAS_NONCE_BUSY: this nonce already belongs to another signed transaction; retry with a fresh pending nonce');
           }
           await sign(tx as unknown as Database, signed);
           // Both the fee reservation and exact signed bytes commit before the caller can broadcast.
           await tx.insert(providerSignedTransactions).values({ id, providerId: provider, chainId: expectedChain,
             nonce: transaction.nonce!, intent: subscriptionIntent, raw: signed });
+          await authorityOptions.journal?.(tx as unknown as Database, signed);
           return signed;
         });
       },

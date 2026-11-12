@@ -60,6 +60,14 @@ if (!existsSync(master)) {
 }
 
 const values = parseEnv(readFileSync(master, 'utf8'));
+for (const key of ['PROVIDER_SCOPE_SIGNING_KEY', 'X402_PAYMENT_ENCRYPTION_KEY']) {
+  if (!values[key] || values[key].startsWith('REPLACE_')) {
+    values[key] = randomBytes(32).toString('hex');
+    save(master, readFileSync(master, 'utf8').replace(new RegExp(`^${key}=.*\\n?`, 'm'), '') +
+      `\n${key}=${JSON.stringify(values[key])}\n`);
+  }
+  if (!/^[a-f0-9]{64}$/i.test(values[key])) throw new Error(`${key} must be 64 hexadecimal characters; existing value preserved.`);
+}
 const deploymentPath = resolve(root, '.railway/deployment.json');
 const embeddedMcp = existsSync(deploymentPath) ? JSON.parse(readFileSync(deploymentPath, 'utf8')).embeddedMcp === true : values.BAGSEVEN_MCP_EMBEDDED === 'true';
 values.BAGSEVEN_MCP_EMBEDDED = String(embeddedMcp);

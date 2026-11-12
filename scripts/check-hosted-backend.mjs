@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import console from 'node:console';
 import process from 'node:process';
+import { privateKeyToAccount } from 'viem/accounts';
 
 const env = process.env;
 async function check(name, url, options = {}, expected = 200) {
@@ -28,9 +29,10 @@ try {
   const mandates = await check('gateway -> policy -> database/cache', `${env.GATEWAY_URL}/v1/mandates?owner_address=0x0000000000000000000000000000000000000001`, { headers });
   assert.ok(Array.isArray(mandates.mandates));
   const config = await check('policy signing identity', `${env.GATEWAY_URL}/v1/mandate-config`, { headers });
-  assert.equal(config.operator_address.toLowerCase(), env.DAEMON_EXECUTOR_ADDRESS.toLowerCase());
+  assert.ok(/^0x[\da-f]{64}$/i.test(env.DAEMON_OPERATOR_KEY ?? ''), 'DAEMON_OPERATOR_KEY must be configured for the intended mandate operator');
+  assert.equal(config.operator_address.toLowerCase(), privateKeyToAccount(env.DAEMON_OPERATOR_KEY).address.toLowerCase());
   if (env.NEXT_PUBLIC_CONSOLE_URL) {
-    const response = await fetch(`${env.NEXT_PUBLIC_CONSOLE_URL}/app/login`);
+    const response = await globalThis.fetch(`${env.NEXT_PUBLIC_CONSOLE_URL}/app/login`);
     assert.equal(response.status, 200);
     assert.ok((await response.text()).includes('Email me a sign-in link'));
   }

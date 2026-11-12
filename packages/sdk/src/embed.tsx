@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import type { Entitlement, Subscription } from './types.js';
 import { authorizeAvalanchePayment, connectAvalancheWallet, payStablecoinOnAvalanche, subscribeOnAvalanche, cancelAvalancheSubscription, renewSubscriptionAllowance } from './wallet.js';
 import { resolveEmbedComponent, type EmbedComponentId } from './components.js';
+import { currentSubscriptionPlans } from './subscription-state.js';
 
 export type EmbedView = 'portal' | 'checkout' | 'consume' | 'credits' | 'unsubscribe' | 'pricing' | 'customer';
 
@@ -272,7 +273,7 @@ export type EmbedTheme = {
 export function BagsevenEmbed({
   accessToken,
   apiUrl = '/api/public',
-  initialView = 'portal',
+  initialView,
   mode = 'inline',
   publishableKey,
   checkoutSessionId,
@@ -305,10 +306,7 @@ export function BagsevenEmbed({
   walletSlot?: ReactNode;
 }) {
   const resolved = resolveEmbedComponent(component);
-  const startView: EmbedView =
-    resolved?.view === 'customer'
-      ? 'customer'
-      : (resolved?.view ?? (checkoutSessionId ? 'checkout' : initialView));
+  const startView: EmbedView = checkoutSessionId ? 'checkout' : (initialView ?? resolved?.view ?? 'portal');
   const [view, setView] = useState<EmbedView>(startView);
 
   // Keep in sync when host swaps `component=` (Builder preview / demo tabs).
@@ -469,7 +467,7 @@ export function BagsevenEmbed({
     setMsg('Renewal cancelled — access stays until the period ends');
   };
 
-  const ownedFeatures = useMemo(() => new Set(entitlements.filter((e) => e.enabled).map((e) => e.feature)), [entitlements]);
+  const subscribedPlans = useMemo(() => currentSubscriptionPlans(subscriptions), [subscriptions]);
 
   const hasMonth = plans.some((p) => p.interval === 'month');
   const hasOnce = plans.some((p) => p.interval === 'once');
@@ -539,8 +537,8 @@ export function BagsevenEmbed({
           }}
         >
           {visiblePlans.map((p) => {
-            const isBool = Number(p.credits) === 1;
-            const isCurrent = ownedFeatures.has(p.feature);
+            const isBool = entitlements.some(e => e.feature === p.feature && e.value_type === 'boolean');
+            const isCurrent = p.interval === 'month' && subscribedPlans.has(p.id);
             return (
               <li key={p.id} style={{ margin: 0 }}>
                 <Card highlight={isCurrent} style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -901,7 +899,7 @@ export function BagsevenEmbed({
   const showCustomer = view === 'customer';
 
   /** Full embed (no component=) gets tabs. Single-component embeds stay focused unless they navigate internally. */
-  const tabs: EmbedView[] = single
+  const tabs: EmbedView[] = single && resolved?.id !== 'cmp_customer'
     ? []
     : (['pricing', 'portal', 'checkout'] as EmbedView[]).filter((v) => v !== 'checkout' || sessionId || view === 'checkout');
 
@@ -920,9 +918,12 @@ export function BagsevenEmbed({
 
   const body = (
     <div className="bagseven-embed" style={themedRoot}>
-      {walletSlot ? (
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>{walletSlot}</div>
-      ) : null}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+        {walletSlot ?? <GhostBtn disabled={busy} onClick={() => void act(async () => {
+          const { address } = await connectAvalancheWallet(checkout?.chain_id ?? 43113);
+          setMsg(`Wallet connected: ${address}`);
+        })}>Connect wallet</GhostBtn>}
+      </div>
       {resolved ? (
         <div
           style={{
@@ -946,17 +947,17 @@ export function BagsevenEmbed({
               type="button"
               onClick={() => setView(v)}
               style={{
-                border: `1px solid ${view === v ? 'var(--bs-ink)' : 'var(--bs-line)'}`,
+                border: `1px solid ${view === v || (v === 'portal' && view === 'customer') ? 'var(--bs-ink)' : 'var(--bs-line)'}`,
                 borderRadius: 999,
                 padding: '7px 14px',
-                background: view === v ? 'var(--bs-ink)' : '#fff',
-                color: view === v ? '#fff' : 'var(--bs-muted)',
+                background: view === v || (v === 'portal' && view === 'customer') ? 'var(--bs-ink)' : '#fff',
+                color: view === v || (v === 'portal' && view === 'customer') ? '#fff' : 'var(--bs-muted)',
                 fontSize: 12,
                 fontWeight: 650,
                 cursor: 'pointer',
               }}
             >
-              {v === 'portal' ? 'Plan' : v === 'pricing' ? 'Pricing' : 'Checkout'}
+              {v === 'portal' ? 'My access' : v === 'pricing' ? 'Plans' : 'Checkout'}
             </button>
           ))}
         </div>

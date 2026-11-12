@@ -1,769 +1,164 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { EMBED_COMPONENTS, type EmbedComponentId } from '../../../lib/bagseven-sdk-react';
-import { PageHeader, PrimaryButton, SecondaryButton, SoftCard, StatusPill } from '../../../components/app/ui';
+import { Check, ChevronRight, Code2, Copy, CreditCard, ExternalLink, Globe2, LayoutTemplate, Loader2, Monitor, Palette, Plus, RotateCcw, Save, ShieldCheck, Smartphone, Trash2, Wallet, X } from 'lucide-react';
+import { BagsevenEmbed } from '../../../lib/bagseven-sdk-react';
 import { billingApi, type Plan } from '../../../lib/billing-client';
-import { useOperator } from '../../../lib/use-operator';
-import { featureLabel, useFeatures } from '../../../lib/use-features';
+import { designProps, iframeInstall, newDesign, PALETTES, reactInstall, validateDesign, type Design, type DesignConfig } from '../../../lib/builder-model';
+import styles from './builder.module.css';
 
-type SavedComponent = {
-  id: string;
-  componentId: EmbedComponentId;
-  name: string;
-  heading: string;
-  cta: string;
-  ink: string;
-  accent: string;
-  soft: string;
-  radius: string;
-  powered: boolean;
-  updatedAt: number;
-  /** Seeded starter — editable & deletable */
-  isDefault?: boolean;
-};
-
-const STORAGE_KEY = 'bagseven.builder.components.v2';
-const LEGACY_STORAGE_KEY = 'bagseven.builder.components.v1';
-
-const PRESETS = [
-  { id: 'ink', label: 'Ink', ink: '#0f172a', accent: '#0f172a', soft: '#f8fafc' },
-  { id: 'ocean', label: 'Ocean', ink: '#0c4a6e', accent: '#0284c7', soft: '#f0f9ff' },
-  { id: 'forest', label: 'Forest', ink: '#14532d', accent: '#15803d', soft: '#f0fdf4' },
-  { id: 'slate', label: 'Slate', ink: '#1e293b', accent: '#475569', soft: '#f1f5f9' },
-  { id: 'rose', label: 'Rose', ink: '#9f1239', accent: '#e11d48', soft: '#fff1f2' },
-] as const;
-
-function defaultLibrary(): SavedComponent[] {
-  const now = Date.now();
-  return EMBED_COMPONENTS.map((c, i) => ({
-    id: `default_${c.id}`,
-    componentId: c.id,
-    name: c.label,
-    heading: c.id === 'cmp_pricing' ? 'Plans' : c.id === 'cmp_checkout' ? 'Checkout' : 'Your plan',
-    cta: c.id === 'cmp_pricing' ? 'Choose plan' : c.id === 'cmp_checkout' ? 'Pay with wallet' : 'Manage',
-    ink: '#0f172a',
-    accent: '#0f172a',
-    soft: '#f8fafc',
-    radius: '16px',
-    powered: true,
-    updatedAt: now - i,
-    isDefault: true,
-  }));
+async function request<T>(url: string, body?: unknown, method = 'POST'): Promise<T> {
+  const response = await fetch(url, body === undefined ? { cache: 'no-store' } : { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await response.json();
+  if (!response.ok) throw Error(data.error?.message ?? 'The request could not be completed.');
+  return data as T;
 }
+const fields = [['Text color', 'ink'], ['Accent color', 'accent'], ['Background', 'soft']] as const;
 
-function loadSaved(): SavedComponent[] {
-  if (typeof window === 'undefined') return defaultLibrary();
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
-    if (!raw) {
-      const seeded = defaultLibrary();
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(seeded));
-      return seeded;
-    }
-    const parsed = JSON.parse(raw) as SavedComponent[];
-    if (!Array.isArray(parsed) || parsed.length === 0) {
-      const seeded = defaultLibrary();
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(seeded));
-      return seeded;
-    }
-    // Migrate legacy / wiped defaults: keep customs, re-attach starter pack when none remain.
-    const normalized = parsed.map((s) => ({
-      ...s,
-      isDefault: Boolean(s.isDefault || String(s.id || '').startsWith('default_')),
-    }));
-    const hasDefaults = normalized.some((s) => s.isDefault);
-    const next = hasDefaults ? normalized : [...defaultLibrary(), ...normalized.filter((s) => !s.isDefault)];
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    return next;
-  } catch {
-    return defaultLibrary();
-  }
-}
-
-function blankDraft(componentId: EmbedComponentId = 'cmp_pricing'): Omit<SavedComponent, 'id' | 'updatedAt' | 'isDefault'> {
-  const base = EMBED_COMPONENTS.find((c) => c.id === componentId)!;
-  return {
-    componentId,
-    name: `Custom ${base.label}`,
-    heading: componentId === 'cmp_pricing' ? 'Plans' : componentId === 'cmp_checkout' ? 'Checkout' : 'Your plan',
-    cta: 'Choose plan',
-    ink: '#0f172a',
-    accent: '#0f172a',
-    soft: '#f8fafc',
-    radius: '16px',
-    powered: true,
-  };
-}
-
-function draftEqualsSaved(
-  draft: Omit<SavedComponent, 'id' | 'updatedAt' | 'isDefault'>,
-  item: SavedComponent | undefined,
-): boolean {
-  if (!item) return false;
-  return (
-    item.componentId === draft.componentId &&
-    item.name === draft.name &&
-    item.heading === draft.heading &&
-    item.cta === draft.cta &&
-    item.ink === draft.ink &&
-    item.accent === draft.accent &&
-    item.soft === draft.soft &&
-    item.radius === draft.radius &&
-    item.powered === draft.powered
-  );
-}
-
-/**
- * Schematic-style Builder: defaults you can edit/delete, create custom components, live preview.
- */
 export default function BuilderPage() {
-  const op = useOperator();
-  const { features } = useFeatures();
+  const [designs, setDesigns] = useState<Design[]>([]);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [draft, setDraft] = useState<DesignConfig>(() => newDesign());
   const [plans, setPlans] = useState<Plan[]>([]);
-  const [saved, setSaved] = useState<SavedComponent[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [draft, setDraft] = useState(blankDraft());
-  const [token, setToken] = useState('');
-  const [msg, setMsg] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState<'react' | 'iframe' | null>(null);
-  const [hydrated, setHydrated] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
-  const pk = process.env.NEXT_PUBLIC_BAGSEVEN_PUBLISHABLE_KEY || 'pk_test_…';
-
-  useEffect(() => {
-    const items = loadSaved();
-    setSaved(items);
-    const first = items[0];
-    if (first) {
-      setSelectedId(first.id);
-      setDraft({
-        componentId: first.componentId,
-        name: first.name,
-        heading: first.heading,
-        cta: first.cta,
-        ink: first.ink,
-        accent: first.accent,
-        soft: first.soft,
-        radius: first.radius,
-        powered: first.powered,
-      });
-      setCreating(false);
-    }
-    setHydrated(true);
+  const [step, setStep] = useState<'design' | 'install'>('design');
+  const [section, setSection] = useState<'content' | 'style'>('content');
+  const [device, setDevice] = useState<'desktop' | 'mobile'>('desktop');
+  const [codeTab, setCodeTab] = useState<'react' | 'iframe'>('react');
+  const [preview, setPreview] = useState<{ token: string; holder: string } | null>(null);
+  const [previewError, setPreviewError] = useState('');
+  const [previewKey, setPreviewKey] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [copied, setCopied] = useState(false);
+  const [pending, setPending] = useState<{ title: string; action: () => void } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [legacy, setLegacy] = useState<unknown[]>([]);
+  const [origin, setOrigin] = useState('');
+  const [hostedPreview, setHostedPreview] = useState(false);
+  const hostedFrame = useRef<HTMLIFrameElement>(null);
+  const current = designs.find(d => d.id === selected);
+  const dirty = !loading && (!current || JSON.stringify(current.config) !== JSON.stringify(draft));
+  const pk = process.env.NEXT_PUBLIC_BAGSEVEN_PUBLISHABLE_KEY || '';
+  const open = useCallback((design: Design) => { setSelected(design.id); setDraft(design.config); setNotice(''); setError(''); setPreviewKey(k => k + 1); }, []);
+  const refreshPreview = useCallback(async () => {
+    try { setPreview(await request<{ token: string; holder: string }>('/api/embed-token', {})); setPreviewError(''); }
+    catch (e) { setPreviewError(e instanceof Error ? e.message : 'Preview unavailable.'); }
   }, []);
-
-  useEffect(() => {
-    void billingApi
-      .listPlans()
-      .then((r) => setPlans(r.plans.filter((p) => p.active)))
-      .catch((e) => setMsg(e instanceof Error ? e.message : String(e)));
-  }, []);
-
-  const persist = (next: SavedComponent[]) => {
-    setSaved(next);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-  };
-
-  const selectedMeta = EMBED_COMPONENTS.find((c) => c.id === draft.componentId)!;
-  const selectedSaved = saved.find((s) => s.id === selectedId);
-  const dirty = hydrated && !draftEqualsSaved(draft, selectedSaved) && (selectedId !== null || creating);
-
-  const openSaved = (item: SavedComponent) => {
-    setCreating(false);
-    setSelectedId(item.id);
-    setDraft({
-      componentId: item.componentId,
-      name: item.name,
-      heading: item.heading,
-      cta: item.cta,
-      ink: item.ink,
-      accent: item.accent,
-      soft: item.soft,
-      radius: item.radius,
-      powered: item.powered,
-    });
-    setMsg(item.isDefault ? `Editing default “${item.name}” — save to keep your changes` : `Editing “${item.name}”`);
-  };
-
-  const startCustom = (componentId: EmbedComponentId = 'cmp_pricing') => {
-    setCreating(true);
-    setSelectedId(null);
-    setDraft(blankDraft(componentId));
-    setMsg('New custom component — edit basics, then Save.');
-  };
-
-  const saveComponent = () => {
-    const name = draft.name.trim() || selectedMeta.label;
-    const now = Date.now();
-    const nextDraft = { ...draft, name };
-    if (selectedId) {
-      const next = saved.map((s) =>
-        s.id === selectedId
-          ? {
-              ...s,
-              ...nextDraft,
-              updatedAt: now,
-              // After first edit of a default, keep id but drop “untouched starter” feel
-              isDefault: s.isDefault,
-            }
-          : s,
-      );
-      persist(next);
-      setDraft(nextDraft);
-      setMsg(`Saved “${name}”`);
-      return;
-    }
-    const id = `cmp_custom_${now.toString(36)}`;
-    const item: SavedComponent = { id, ...nextDraft, updatedAt: now, isDefault: false };
-    persist([item, ...saved]);
-    setSelectedId(id);
-    setCreating(false);
-    setDraft(nextDraft);
-    setMsg(`Created “${name}”`);
-  };
-
-  const deleteSelected = () => {
-    if (!selectedId) return;
-    const victim = saved.find((s) => s.id === selectedId);
-    const next = saved.filter((s) => s.id !== selectedId);
-    persist(next);
-    if (next[0]) {
-      openSaved(next[0]);
-    } else {
-      setSelectedId(null);
-      setCreating(true);
-      setDraft(blankDraft());
-    }
-    setMsg(victim?.isDefault ? `Removed default “${victim.name}”` : 'Component removed');
-  };
-
-  const duplicateSelected = () => {
-    const now = Date.now();
-    const id = `cmp_custom_${now.toString(36)}`;
-    const item: SavedComponent = {
-      id,
-      ...draft,
-      name: `${draft.name.trim() || selectedMeta.label} copy`,
-      updatedAt: now,
-      isDefault: false,
-    };
-    persist([item, ...saved]);
-    setCreating(false);
-    setSelectedId(id);
-    setDraft({
-      componentId: item.componentId,
-      name: item.name,
-      heading: item.heading,
-      cta: item.cta,
-      ink: item.ink,
-      accent: item.accent,
-      soft: item.soft,
-      radius: item.radius,
-      powered: item.powered,
-    });
-    setMsg(`Duplicated as “${item.name}”`);
-  };
-
-  const restoreDefaults = () => {
-    const defaults = defaultLibrary();
-    const customs = saved.filter((s) => !s.isDefault && !s.id.startsWith('default_'));
-    const next = [...defaults, ...customs];
-    persist(next);
-    openSaved(defaults[0]!);
-    setMsg('Restored starter components (your custom ones were kept)');
-  };
-
-  const issueToken = async () => {
-    setBusy(true);
-    setMsg('');
+  const load = useCallback(async () => {
+    setLoading(true); setError('');
     try {
-      const res = await fetch('/api/embed-token', { method: 'POST' });
-      const json = (await res.json()) as { token?: string; error?: { message?: string } };
-      if (!res.ok || !json.token) throw new Error(json.error?.message ?? `token ${res.status}`);
-      setToken(json.token);
-      setMsg('Customer access token ready — subscribe / portal actions work in the preview.');
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
+      const [saved, catalog, me] = await Promise.all([request<{ designs: Design[] }>('/api/builder/designs'), billingApi.listPlans(), request<{ holder: string }>('/api/me')]);
+      const owned = catalog.plans.filter(p => p.active && p.provider_id === me.holder);
+      setDesigns(saved.designs); setPlans(owned);
+      if (saved.designs[0]) open(saved.designs[0]); else { setSelected(null); setDraft(newDesign('cmp_customer', owned.map(p => p.id))); }
+      await refreshPreview();
+    } catch (e) { setError(e instanceof Error ? e.message : 'Builder unavailable.'); }
+    finally { setLoading(false); }
+  }, [open, refreshPreview]);
+  useEffect(() => {
+    setOrigin(window.location.origin); void load();
+    try {
+      const value = JSON.parse(localStorage.getItem('bagseven.builder.components.v2') ?? localStorage.getItem('bagseven.builder.components.v1') ?? '[]');
+      if (Array.isArray(value)) setLegacy(value.filter(v => v && typeof v === 'object'));
+    } catch { /* Invalid browser-only designs never replace account designs. */ }
+  }, [load]);
+  useEffect(() => { const timer = setInterval(() => void refreshPreview(), 14 * 60000); return () => clearInterval(timer); }, [refreshPreview]);
+  useEffect(() => {
+    if (!hostedPreview || !preview || !origin) return;
+    const authorize = (event: MessageEvent) => {
+      if (event.origin === origin && event.source === hostedFrame.current?.contentWindow && event.data?.type === 'bagseven:ready')
+        hostedFrame.current?.contentWindow?.postMessage({ type: 'bagseven:authorize', ...preview }, origin);
+    };
+    window.addEventListener('message', authorize);
+    hostedFrame.current?.contentWindow?.postMessage({ type: 'bagseven:authorize', ...preview }, origin);
+    return () => window.removeEventListener('message', authorize);
+  }, [hostedPreview, preview, origin]);
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
+  const record = (design: Design) => { setDesigns(items => [design, ...items.filter(d => d.id !== design.id)]); setSelected(design.id); setDraft(design.config); return design; };
+  const save = async (): Promise<Design> => {
+    const config = validateDesign(draft);
+    const result = selected && current ? await request<{ design: Design }>(`/api/builder/designs/${selected}`, { action: 'save', config, revision: current.revision }, 'PATCH') : await request<{ design: Design }>('/api/builder/designs', { config });
+    return record(result.design);
+  };
+  const act = async (label: string, action: () => Promise<void>) => {
+    if (busy) return; setBusy(label); setError(''); setNotice('');
+    try { await action(); } catch (e) { setError(e instanceof Error ? e.message : 'Please try again.'); } finally { setBusy(''); }
+  };
+  const guarded = (title: string, action: () => void) => { if (dirty) setPending({ title, action }); else action(); };
+  const publish = () => act('Publishing', async () => {
+    const saved = dirty || !current ? await save() : current;
+    record((await request<{ design: Design }>(`/api/builder/designs/${saved.id}`, { action: 'publish', revision: saved.revision }, 'PATCH')).design);
+    setNotice('Published. Your hosted embed now uses this version.'); setStep('install');
+  });
+  const unpublish = () => act('Unpublishing', async () => {
+    if (!current) return;
+    const changed = (await request<{ design: Design }>(`/api/builder/designs/${current.id}`, { action: 'unpublish', revision: current.revision }, 'PATCH')).design;
+    setDesigns(items => items.map(d => d.id === changed.id ? changed : d)); setNotice('Unpublished. The hosted page is no longer available.');
+  });
+  const code = useMemo(() => codeTab === 'react' ? reactInstall(draft, origin, pk) : iframeInstall(current?.id ?? 'PUBLISH_YOUR_PAGE_FIRST', origin), [draft, origin, pk, codeTab, current?.id]);
+  const copy = async () => { await navigator.clipboard.writeText(code); setCopied(true); setTimeout(() => setCopied(false), 2000); };
+  const importLegacy = () => act('Importing', async () => {
+    let count = 0;
+    for (const value of legacy) {
+      const config = validateDesign({ ...(value as Record<string, unknown>), planIds: plans.map(p => p.id) });
+      record((await request<{ design: Design }>('/api/builder/designs', { config })).design); count++;
     }
-  };
+    setLegacy([]); setNotice(`Imported ${count} browser designs as private drafts. Your originals were kept.`);
+  });
 
-  const themeQuery = useMemo(() => {
-    const q = new URLSearchParams({
-      component: draft.componentId,
-      ink: draft.ink,
-      accent: draft.accent,
-      soft: draft.soft,
-      radius: draft.radius,
-      heading: draft.heading,
-      cta: draft.cta,
-    });
-    if (!draft.powered) q.set('powered', '0');
-    if (token) q.set('token', token);
-    if (pk) q.set('pk', pk);
-    if (op.holder) q.set('holder', op.holder);
-    return q;
-  }, [draft, token, pk, op.holder]);
-
-  const iframeSrc = `${origin}/embed?${themeQuery.toString()}`;
-
-  const reactSnippet = `import { BagsevenProvider, BagsevenEmbed } from "@bagseven/sdk/react";
-
-<BagsevenProvider publishableKey="${pk}">
-  <BagsevenEmbed
-    component="${draft.componentId}"
-    accessToken={accessToken}
-    holder={customerId}
-    apiUrl="/api/public"
-    heading="${draft.heading.replace(/"/g, '\\"')}"
-    ctaLabel="${draft.cta.replace(/"/g, '\\"')}"
-    showPoweredBy={${draft.powered}}
-    theme={{
-      ink: "${draft.ink}",
-      accent: "${draft.accent}",
-      soft: "${draft.soft}",
-      radius: "${draft.radius}",
-    }}
-  />
-</BagsevenProvider>`;
-
-  const iframeSnippet = `<iframe
-  src="${iframeSrc}"
-  style="border:0;width:100%;min-height:560px;border-radius:${draft.radius}"
-  title="Bagseven ${draft.name}"
-></iframe>`;
-
-  const copy = async (kind: 'react' | 'iframe') => {
-    const text = kind === 'react' ? reactSnippet : iframeSnippet;
-    await navigator.clipboard.writeText(text);
-    setCopied(kind);
-    setTimeout(() => setCopied(null), 1600);
-  };
-
-  const payConfigured = Boolean(op.status?.tracks.avalanche.usdt);
-  const defaults = saved.filter((s) => s.isDefault);
-  const customs = saved.filter((s) => !s.isDefault);
-
-  return (
-    <div className="mx-auto max-w-6xl space-y-5">
-      <PageHeader
-        title="Builder"
-        description="Starter embeds you can edit or delete — plus create your own. Preview live, then drop into your product."
-        action={
-          <>
-            <SecondaryButton href="/app/developers">API keys</SecondaryButton>
-            <SecondaryButton href="/app/plans">Plans</SecondaryButton>
-            <PrimaryButton onClick={() => startCustom('cmp_pricing')}>New component</PrimaryButton>
-          </>
-        }
-      />
-
-      {!op.loading && !payConfigured ? (
-        <SoftCard className="border-[var(--warn)]/40 bg-[var(--warn-soft,#fffbeb)] p-4 text-[13px]">
-          <strong>Payment token missing.</strong> Configure{' '}
-          <code className="fi-mono text-xs">AVALANCHE_USDC</code>. Check{' '}
-          <Link href="/app/settings" className="font-semibold text-[var(--blue)]">
-            Tracks
-          </Link>
-          .
-        </SoftCard>
-      ) : null}
-
-      {!op.loading && payConfigured ? (
-        <div className="flex flex-wrap items-center gap-2 text-[12px] text-[var(--muted)]">
-          <StatusPill tone="good">Avalanche ready</StatusPill>
-          <span>
-            Each checkout pays its plan’s merchant wallet.
-            {op.status?.tracks.avalanche.demo_settle ? ' · demo settle' : ' · live verify'}
-          </span>
-        </div>
-      ) : null}
-
-      <div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)_minmax(0,1.15fr)]">
-        {/* Library */}
-        <SoftCard className="space-y-4 p-4">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">Library</div>
-            <span className="fi-mono text-[10px] text-[var(--muted)]">{saved.length}</span>
-          </div>
-
-          <div>
-            <div className="mb-1.5 flex items-center justify-between">
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">Defaults</div>
-              {defaults.length < EMBED_COMPONENTS.length ? (
-                <button
-                  type="button"
-                  onClick={restoreDefaults}
-                  className="text-[11px] font-semibold text-[var(--blue)] hover:underline"
-                >
-                  Restore starters
-                </button>
-              ) : null}
-            </div>
-            {defaults.length === 0 ? (
-              <p className="rounded-xl border border-dashed border-[var(--line)] px-3 py-3 text-[12px] text-[var(--muted)]">
-                All starters deleted.{' '}
-                <button type="button" className="font-semibold text-[var(--blue)]" onClick={restoreDefaults}>
-                  Restore
-                </button>
-              </p>
-            ) : (
-              <ul className="space-y-1.5">
-                {defaults.map((s) => (
-                  <li key={s.id}>
-                    <button
-                      type="button"
-                      onClick={() => openSaved(s)}
-                      className={`w-full rounded-xl border px-3 py-2.5 text-left transition ${
-                        selectedId === s.id && !creating
-                          ? 'border-[var(--ink)] bg-[var(--soft)] shadow-[0_0_0_1px_var(--ink)]'
-                          : 'border-[var(--line)] hover:border-[var(--ink)]/30'
-                      }`}
-                    >
-                      <div className="flex items-start gap-2.5">
-                        <span
-                          className="mt-0.5 h-8 w-8 shrink-0 rounded-lg border border-black/5"
-                          style={{ background: `linear-gradient(135deg, ${s.soft} 0%, ${s.accent} 100%)` }}
-                          aria-hidden
-                        />
-                        <span className="min-w-0 flex-1">
-                          <span className="flex items-center gap-1.5">
-                            <span className="truncate text-[13px] font-semibold">{s.name}</span>
-                            <span className="rounded-full bg-[var(--soft)] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[var(--muted)]">
-                              Default
-                            </span>
-                          </span>
-                          <span className="mt-0.5 block truncate text-[11px] text-[var(--muted)]">{s.componentId}</span>
-                        </span>
-                      </div>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          <div className="border-t border-[var(--line)] pt-3">
-            <div className="mb-1.5 flex items-center justify-between">
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">Your custom</div>
-              <button
-                type="button"
-                onClick={() => startCustom('cmp_pricing')}
-                className="text-[11px] font-semibold text-[var(--blue)] hover:underline"
-              >
-                + Create
-              </button>
-            </div>
-            {customs.length === 0 ? (
-              <p className="rounded-xl border border-dashed border-[var(--line)] bg-[var(--soft)]/40 px-3 py-3 text-[12px] text-[var(--muted)]">
-                No custom components yet. Duplicate a default or create from scratch.
-              </p>
-            ) : (
-              <ul className="space-y-1.5">
-                {customs.map((s) => (
-                  <li key={s.id}>
-                    <button
-                      type="button"
-                      onClick={() => openSaved(s)}
-                      className={`w-full rounded-xl border px-3 py-2.5 text-left transition ${
-                        selectedId === s.id && !creating
-                          ? 'border-[var(--ink)] bg-[var(--soft)] shadow-[0_0_0_1px_var(--ink)]'
-                          : 'border-[var(--line)] hover:border-[var(--ink)]/30'
-                      }`}
-                    >
-                      <div className="flex items-start gap-2.5">
-                        <span
-                          className="mt-0.5 h-8 w-8 shrink-0 rounded-lg border border-black/5"
-                          style={{ background: `linear-gradient(135deg, ${s.soft} 0%, ${s.accent} 100%)` }}
-                          aria-hidden
-                        />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[13px] font-semibold">{s.name}</span>
-                          <span className="mt-0.5 block truncate text-[11px] text-[var(--muted)]">
-                            {EMBED_COMPONENTS.find((c) => c.id === s.componentId)?.label ?? s.componentId}
-                          </span>
-                        </span>
-                      </div>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          <div className="border-t border-[var(--line)] pt-3">
-            <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">
-              Create from type
-            </div>
-            <div className="grid gap-1.5">
-              {EMBED_COMPONENTS.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => startCustom(c.id)}
-                  className={`rounded-xl border border-dashed px-3 py-2 text-left text-[12px] hover:border-[var(--ink)]/40 hover:bg-[var(--soft)]/50 ${
-                    creating && draft.componentId === c.id && !selectedId
-                      ? 'border-[var(--ink)] bg-[var(--soft)]'
-                      : 'border-[var(--line)]'
-                  }`}
-                >
-                  <span className="font-semibold">{c.label}</span>
-                  <span className="mt-0.5 block text-[11px] leading-snug text-[var(--muted)]">{c.blurb}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        </SoftCard>
-
-        {/* Editor */}
-        <SoftCard className="space-y-4 p-5">
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <StatusPill tone="neutral">Edit</StatusPill>
-                {dirty ? <StatusPill tone="warn">Unsaved</StatusPill> : null}
-                {creating ? (
-                  <StatusPill tone="neutral">New draft</StatusPill>
-                ) : selectedSaved?.isDefault ? (
-                  <StatusPill tone="neutral">Default</StatusPill>
-                ) : selectedId ? (
-                  <StatusPill tone="good">Custom</StatusPill>
-                ) : null}
-              </div>
-              <h2 className="mt-2 text-[16px] font-semibold">{draft.name || selectedMeta.label}</h2>
-              <p className="mt-1 text-[12px] text-[var(--muted)]">{selectedMeta.blurb}</p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {selectedId ? (
-                <>
-                  <SecondaryButton onClick={duplicateSelected}>Duplicate</SecondaryButton>
-                  <SecondaryButton onClick={deleteSelected}>Delete</SecondaryButton>
-                </>
-              ) : null}
-              <PrimaryButton onClick={saveComponent}>{selectedId ? 'Save changes' : 'Save component'}</PrimaryButton>
-            </div>
-          </div>
-
-          <div className="grid gap-3">
-            <label className="block space-y-1.5">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">Display name</span>
-              <input
-                value={draft.name}
-                onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
-                placeholder="e.g. Pricing — marketing site"
-                className="w-full rounded-xl border border-[var(--line)] bg-white px-3 py-2 text-sm"
-              />
-            </label>
-
-            <label className="block space-y-1.5">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">Component type</span>
-              <select
-                value={draft.componentId}
-                onChange={(e) => {
-                  const componentId = e.target.value as EmbedComponentId;
-                  setDraft((d) => ({
-                    ...d,
-                    componentId,
-                    heading:
-                      d.heading === blankDraft(d.componentId).heading
-                        ? blankDraft(componentId).heading
-                        : d.heading,
-                  }));
-                }}
-                className="w-full rounded-xl border border-[var(--line)] bg-white px-3 py-2 text-sm"
-              >
-                {EMBED_COMPONENTS.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.label} ({c.id})
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          <div className="rounded-2xl border border-[var(--line)] bg-[var(--soft)]/40 p-4">
-            <div className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">Copy</div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="block space-y-1.5">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">Heading</span>
-                <input
-                  value={draft.heading}
-                  onChange={(e) => setDraft((d) => ({ ...d, heading: e.target.value }))}
-                  className="w-full rounded-xl border border-[var(--line)] bg-white px-3 py-2 text-sm"
-                />
-              </label>
-              <label className="block space-y-1.5">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">CTA label</span>
-                <input
-                  value={draft.cta}
-                  onChange={(e) => setDraft((d) => ({ ...d, cta: e.target.value }))}
-                  className="w-full rounded-xl border border-[var(--line)] bg-white px-3 py-2 text-sm"
-                />
-              </label>
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-[var(--line)] bg-[var(--soft)]/40 p-4">
-            <div className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">Look</div>
-            <div className="mb-3 flex flex-wrap gap-2">
-              {PRESETS.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => setDraft((d) => ({ ...d, ink: p.ink, accent: p.accent, soft: p.soft }))}
-                  className="rounded-full border border-[var(--line)] px-3 py-1.5 text-[12px] font-semibold hover:border-[var(--ink)]/40"
-                  style={{ background: p.soft, color: p.ink }}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {(
-                [
-                  ['Ink', 'ink'],
-                  ['Accent', 'accent'],
-                  ['Soft bg', 'soft'],
-                ] as const
-              ).map(([label, key]) => (
-                <label key={key} className="block space-y-1.5">
-                  <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">{label}</span>
-                  <div className="flex gap-2">
-                    <input
-                      type="color"
-                      value={draft[key]}
-                      onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.value }))}
-                      className="h-10 w-12 cursor-pointer rounded-lg border border-[var(--line)] bg-white p-1"
-                    />
-                    <input
-                      value={draft[key]}
-                      onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.value }))}
-                      className="fi-mono w-full rounded-xl border border-[var(--line)] bg-white px-3 py-2 text-xs"
-                    />
-                  </div>
-                </label>
-              ))}
-              <label className="block space-y-1.5">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">Radius</span>
-                <select
-                  value={draft.radius}
-                  onChange={(e) => setDraft((d) => ({ ...d, radius: e.target.value }))}
-                  className="w-full rounded-xl border border-[var(--line)] bg-white px-3 py-2 text-sm"
-                >
-                  <option value="8px">8px — tight</option>
-                  <option value="12px">12px</option>
-                  <option value="16px">16px — default</option>
-                  <option value="20px">20px — soft</option>
-                  <option value="24px">24px — round</option>
-                </select>
-              </label>
-            </div>
-            <label className="mt-3 flex items-center gap-2 text-[13px]">
-              <input
-                type="checkbox"
-                checked={draft.powered}
-                onChange={(e) => setDraft((d) => ({ ...d, powered: e.target.checked }))}
-                className="rounded border-[var(--line)]"
-              />
-              Show “Powered by Bagseven”
-            </label>
-          </div>
-
-          {msg ? <p className="text-[13px] text-[var(--muted)]">{msg}</p> : null}
-
-          <div className="border-t border-[var(--line)] pt-4">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">Drop-in code</div>
-              <div className="flex gap-2">
-                <SecondaryButton onClick={() => void copy('react')}>
-                  {copied === 'react' ? 'Copied' : 'Copy React'}
-                </SecondaryButton>
-                <SecondaryButton onClick={() => void copy('iframe')}>
-                  {copied === 'iframe' ? 'Copied' : 'Copy iframe'}
-                </SecondaryButton>
-              </div>
-            </div>
-            <pre className="max-h-40 overflow-auto rounded-xl bg-[var(--hero)] p-3 font-mono text-[10px] leading-relaxed text-white/90">
-              {reactSnippet}
-            </pre>
-          </div>
-        </SoftCard>
-
-        {/* Preview */}
-        <SoftCard className="space-y-3 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">Live preview</div>
-              <p className="mt-1 text-[12px] text-[var(--muted)]">
-                {plans.length} active plan{plans.length === 1 ? '' : 's'} · {selectedMeta.id}
-                {dirty ? ' · unsaved edits shown' : ''}
-              </p>
-            </div>
-            <PrimaryButton disabled={busy || !op.holder} onClick={() => void issueToken()}>
-              {busy ? 'Issuing…' : token ? 'Refresh token' : 'Customer token'}
-            </PrimaryButton>
-          </div>
-
-          {plans.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-[var(--line)] bg-[var(--soft)]/50 px-4 py-8 text-center text-[13px] text-[var(--muted)]">
-              No plans yet —{' '}
-              <Link href="/app/plans" className="font-semibold text-[var(--blue)]">
-                create one
-              </Link>{' '}
-              so pricing preview has content.
-            </div>
-          ) : (
-            <div className="overflow-x-auto rounded-xl border border-[var(--line)]">
-              <table className="w-full min-w-[280px] text-left text-[12px]">
-                <thead>
-                  <tr className="border-b border-[var(--line)] bg-[var(--soft)]/60 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)]">
-                    <th className="px-3 py-2">Plan</th>
-                    <th className="px-3 py-2">Entitles</th>
-                    <th className="px-3 py-2">Price</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {plans.slice(0, 4).map((p) => {
-                    const ft = features.find((f) => f.id === p.feature);
-                    return (
-                      <tr key={p.id} className="border-b border-[var(--line)] last:border-0">
-                        <td className="px-3 py-2 font-medium">{p.name}</td>
-                        <td className="px-3 py-2 text-[var(--muted)]">
-                          {featureLabel(p.feature, features)}
-                          {ft?.value_type === 'boolean' ? '' : ` · ${p.credits}`}
-                        </td>
-                        <td className="px-3 py-2">
-                          {p.amount} / {p.interval === 'month' ? 'mo' : 'once'}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          <div
-            className="overflow-hidden rounded-2xl border border-[var(--line)]"
-            style={{ background: draft.soft, borderRadius: draft.radius }}
-          >
-            <iframe
-              key={iframeSrc}
-              title={`preview-${draft.componentId}`}
-              src={iframeSrc}
-              className="h-[520px] w-full bg-transparent"
-            />
-          </div>
-          <a href={iframeSrc} target="_blank" rel="noreferrer" className="text-[12px] font-semibold text-[var(--blue)]">
-            Open preview full page →
-          </a>
-        </SoftCard>
-      </div>
+  return <div className={styles.builder}>
+    <header className={styles.header}><div><div className={styles.eyebrow}><LayoutTemplate size={14} /> CUSTOMER EXPERIENCE</div><h1>Make billing feel like your product.</h1><p>One embed for plans, wallet connection, checkout and customer access. Make it yours, then add it to your app.</p></div><Link href="/app/developers" className={styles.docs}>Integration guide <ExternalLink size={14} /></Link></header>
+    <div className={styles.toolbar}>
+      <div className={styles.designPicker}><LayoutTemplate size={17} /><label className={styles.srOnly} htmlFor="saved-design">Saved page</label><select id="saved-design" value={selected ?? ''} disabled={loading || !!busy} onChange={e => { const target = designs.find(d => d.id === e.target.value); if (target) guarded('Switch pages?', () => open(target)); }}><option value="" disabled>New billing page</option>{designs.map(d => <option key={d.id} value={d.id}>{d.config.name}</option>)}</select><span className={styles.saveState}>{dirty ? 'Unsaved changes' : current?.published ? current.published_revision === current.revision ? 'Published' : 'Draft changes' : 'Private draft'}</span></div>
+      <div className={styles.actions}><button className={styles.iconButton} aria-label="New billing page" disabled={!!busy || loading} onClick={() => guarded('Create a new page?', () => { setSelected(null); setDraft(newDesign('cmp_customer', plans.map(p => p.id))); setStep('design'); })}><Plus size={17} /></button>{current && <button className={styles.iconButton} aria-label="Delete page" disabled={!!busy} onClick={() => setDeleting(true)}><Trash2 size={16} /></button>}<button className={styles.secondary} disabled={!!busy || loading || !dirty} onClick={() => void act('Saving', async () => { await save(); setNotice('Draft saved to your account.'); })}><Save size={14} /> Save draft</button><button className={styles.primary} disabled={!!busy || loading} onClick={() => void publish()}>{busy ? <Loader2 size={15} className={styles.spin} /> : <Globe2 size={15} />}{busy || (current?.published ? 'Publish changes' : 'Publish embed')}</button></div>
     </div>
-  );
+    <nav className={styles.steps} aria-label="Builder steps"><button className={step === 'design' ? styles.stepActive : ''} onClick={() => setStep('design')}><span>1</span> Design your embed</button><ChevronRight size={14} /><button className={step === 'install' ? styles.stepActive : ''} onClick={() => setStep('install')}><span>2</span> Add to your app</button><div className={styles.included}><Wallet size={13} /> Wallets <CreditCard size={13} /> Checkout <ShieldCheck size={13} /> Access & renewals</div></nav>
+    {error && <div role="alert" className={styles.error}>{error}<button onClick={() => void load()}>Reload saved designs</button></div>}
+    {notice && <div role="status" className={styles.notice}><Check size={15} />{notice}<button aria-label="Dismiss notice" onClick={() => setNotice('')}><X size={14} /></button></div>}
+    {loading ? <div className={styles.loading}><Loader2 className={styles.spin} size={22} /> Loading your workspace…</div> : <>
+      {legacy.length > 0 && !designs.length && <div className={styles.importNotice}>Have designs saved in this browser? Bring them into this account as private drafts.<button disabled={!!busy} onClick={() => void importLegacy()}>Import {legacy.length} designs</button></div>}
+      {step === 'design' ? <div className={styles.workspace}>
+        <aside className={styles.inspector}><fieldset disabled={!!busy} className={styles.inspectorFields}>
+          <div className={styles.inspectorTabs}><button className={section === 'content' ? styles.tabActive : ''} onClick={() => setSection('content')}><LayoutTemplate size={15} /> Content</button><button className={section === 'style' ? styles.tabActive : ''} onClick={() => setSection('style')}><Palette size={15} /> Appearance</button></div>
+          {section === 'content' ? <div className={styles.controls}>
+            <div className={styles.controlHeading}><h2>Your billing page</h2><p>Customers move between plans, checkout and their account in this same embed.</p></div>
+            <label>Page name<input maxLength={80} value={draft.name} onChange={e => setDraft(d => ({ ...d, name: e.target.value }))} /><small>For your team. Customers won’t see this name.</small></label>
+            <label>Heading<input maxLength={120} value={draft.heading} onChange={e => setDraft(d => ({ ...d, heading: e.target.value }))} /></label>
+            <label>Plan button text<input maxLength={60} value={draft.cta} onChange={e => setDraft(d => ({ ...d, cta: e.target.value }))} /></label>
+            {draft.componentId !== 'cmp_customer' && <div className={styles.legacyType}><p>This design uses an earlier standalone component.</p><button onClick={() => setDraft(d => ({ ...d, componentId: 'cmp_customer' }))}>Use the complete billing embed <ChevronRight size={13} /></button></div>}
+            <div className={styles.planHeading}><div><h3>Plans to show</h3><p>Choose the plans your customers can buy.</p></div><Link href="/app/plans">Manage <ExternalLink size={12} /></Link></div>
+            {plans.length ? <div className={styles.planList}>{plans.map(plan => <label key={plan.id} className={styles.planOption}><input type="checkbox" checked={draft.planIds.includes(plan.id)} onChange={e => setDraft(d => ({ ...d, planIds: e.target.checked ? [...d.planIds, plan.id] : d.planIds.filter(id => id !== plan.id) }))} /><span><strong>{plan.name}</strong><small>{plan.credits} {plan.feature} credits</small></span><span className={styles.planPrice}>{plan.amount}<small>{plan.interval === 'month' ? '/ 30 days' : 'one-time'}</small></span></label>)}</div> : <div className={styles.empty}><CreditCard size={24} /><strong>Add your first plan</strong><p>Your pricing section will use real plans from this workspace.</p><Link href="/app/plans">Create a plan <ChevronRight size={14} /></Link></div>}
+            {plans.length > 0 && !draft.planIds.length && <p className={styles.hint}>Select at least one plan to publish your billing page.</p>}
+          </div> : <div className={styles.controls}>
+            <div className={styles.controlHeading}><h2>Match your brand</h2><p>Your styling applies across plans, checkout and account management.</p></div>
+            <fieldset className={styles.palettes}><legend>Start with a palette</legend>{PALETTES.map(p => <button key={p.label} aria-label={`Use ${p.label} palette`} aria-pressed={draft.accent === p.accent && draft.soft === p.soft} style={{ background: p.soft }} onClick={() => setDraft(d => ({ ...d, ink: p.ink, accent: p.accent, soft: p.soft }))}><span style={{ background: p.accent }} /><small>{p.label}</small></button>)}</fieldset>
+            {fields.map(([label, key]) => <label key={key}>{label}<div className={styles.colorField}><input aria-label={`${label} picker`} type="color" value={/^#[a-f\d]{6}$/i.test(draft[key]) ? draft[key] : '#000000'} onChange={e => setDraft(d => ({ ...d, [key]: e.target.value }))} /><input aria-label={label} maxLength={7} value={draft[key]} onChange={e => setDraft(d => ({ ...d, [key]: e.target.value }))} /></div></label>)}
+            <label>Corner style<select value={draft.radius} onChange={e => setDraft(d => ({ ...d, radius: e.target.value }))}><option value="0px">Square</option><option value="8px">Subtle</option><option value="12px">Soft</option><option value="16px">Rounded</option><option value="20px">Extra rounded</option><option value="24px">Pillowy</option></select></label>
+            <label className={styles.checkRow}><input type="checkbox" checked={draft.powered} onChange={e => setDraft(d => ({ ...d, powered: e.target.checked }))} /><span>Show “Powered by Bagseven”</span></label>
+          </div>}
+          <div className={styles.inspectorFooter}><ShieldCheck size={16} /><p>Design changes don’t alter prices, credits or payment permissions.</p></div>
+        </fieldset></aside>
+        <section className={styles.preview} aria-label="Live embed preview">
+          <div className={styles.previewToolbar}><div><span className={styles.liveDot} /> Live preview <span className={styles.previewTag}>Your account</span></div><div className={styles.deviceSwitch}><button aria-label="Desktop preview" aria-pressed={device === 'desktop'} onClick={() => setDevice('desktop')}><Monitor size={16} /></button><button aria-label="Mobile preview" aria-pressed={device === 'mobile'} onClick={() => setDevice('mobile')}><Smartphone size={16} /></button><button aria-label="Refresh preview" onClick={() => { setPreviewKey(k => k + 1); void refreshPreview(); }}><RotateCcw size={15} /></button></div></div>
+          <div className={styles.previewCanvas}><div className={`${styles.previewFrame} ${device === 'mobile' ? styles.mobileFrame : ''}`}><div className={styles.browserBar}><i /><i /><i /><span>your-app.com / billing</span><ShieldCheck size={12} /></div><div className={styles.previewContent}>
+            {previewError ? <div className={styles.empty}><strong>Preview couldn’t connect</strong><p>{previewError}</p><button onClick={() => void refreshPreview()}>Try again</button></div> : preview ? <BagsevenEmbed key={previewKey} {...designProps(draft)} accessToken={preview.token} holder={preview.holder} publishableKey={pk} apiUrl="/api/public" /> : <div className={styles.loading}>Connecting to your account…</div>}
+          </div></div></div>
+          <div className={styles.previewFooter}><ShieldCheck size={14} /><span>Uses your real workspace data. Payments and renewal changes require wallet approval.</span></div>
+        </section>
+      </div> : <section className={styles.install}>
+        <div className={styles.installIntro}><div className={styles.codeIcon}><Code2 size={25} /></div><h2>One integration. The whole billing experience.</h2><p>Add the embed once. Your customers can choose plans, connect their wallet, pay and manage access without leaving your app.</p><div className={styles.installChecks}><span><Check size={14} /> Your plans</span><span><Check size={14} /> Wallet & checkout</span><span><Check size={14} /> Credits & renewals</span></div></div>
+        <div className={styles.installGrid}><div className={styles.codePanel}><div className={styles.codeTabs}><button aria-pressed={codeTab === 'react'} onClick={() => setCodeTab('react')}>React</button><button aria-pressed={codeTab === 'iframe'} onClick={() => setCodeTab('iframe')}>Website / iframe</button><button className={styles.copy} disabled={codeTab === 'iframe' && !current?.published} onClick={() => void act('Copying', copy)}>{copied ? <Check size={14} /> : <Copy size={14} />}{copied ? 'Copied' : 'Copy code'}</button></div>{codeTab === 'iframe' && !current?.published ? <div className={styles.empty}><Globe2 size={26} /><strong>Publish to get your hosted embed</strong><p>Publishing creates a public page with your saved design. Customer credentials stay private.</p><button onClick={() => void publish()} disabled={!!busy}>Publish embed</button></div> : <pre><code>{code}</code></pre>}</div>
+          <aside className={styles.installNotes}><h3>Connect your customer</h3><ol><li><span>1</span><div><strong>Use the workspace SDK</strong><p>The React code uses <code>@bagseven/sdk/react</code>. Keep secret keys in your backend.</p></div></li><li><span>2</span><div><strong>Issue a customer access token</strong><p>Your authenticated backend calls <code>identify</code> for its signed-in customer. Pass the returned holder and short-lived token to this embed.</p></div></li><li><span>3</span><div><strong>Let the embed handle billing</strong><p>Plan selection creates checkout. The customer approves payments in their wallet. Paid access and renewals then appear in My access.</p></div></li></ol><Link href="/app/developers">Read the integration guide <ExternalLink size={14} /></Link>{current?.published && <div className={styles.publishedBox}><Globe2 size={16} /><strong>Hosted embed published</strong><p>Updates go live when you publish again.</p><a href={`/embed?design=${current.id}`} target="_blank" rel="noreferrer">Open published page <ExternalLink size={13} /></a><button onClick={() => setHostedPreview(value => !value)}>{hostedPreview ? 'Hide published preview' : 'Preview published embed'}</button><button disabled={!!busy} onClick={() => void unpublish()}>Unpublish hosted page</button></div>}</aside></div>
+        {hostedPreview && current?.published && <div className={styles.hostedTest}><p>Published embed · authenticated as your current account</p><iframe ref={hostedFrame} title="Published billing embed" src={`/embed?design=${current.id}&parent=${encodeURIComponent(origin)}`} referrerPolicy="no-referrer" /></div>}
+      </section>}
+    </>}
+    {(pending || deleting) && <div className={styles.modalBackdrop}><section role="dialog" aria-modal="true" aria-labelledby="builder-dialog-title" className={styles.modal}><h2 id="builder-dialog-title">{deleting ? 'Delete this page?' : pending?.title}</h2><p>{deleting ? 'Its hosted embed will stop working. Plans, subscriptions and customer access are kept.' : 'Your design has unsaved changes. Save them or discard them before continuing.'}</p><div className={styles.actions}><button className={styles.secondary} onClick={() => { setPending(null); setDeleting(false); }}>Keep editing</button>{deleting ? <button className={styles.danger} disabled={!!busy} onClick={() => void act('Deleting', async () => { if (!current) return; await request(`/api/builder/designs/${current.id}`, { action: 'delete', revision: current.revision }, 'PATCH'); const remaining = designs.filter(d => d.id !== current.id); setDesigns(remaining); if (remaining[0]) open(remaining[0]); else { setSelected(null); setDraft(newDesign('cmp_customer', plans.map(p => p.id))); } setDeleting(false); })}>Delete page</button> : <><button className={styles.secondary} onClick={() => { const action = pending?.action; setPending(null); action?.(); }}>Discard changes</button><button className={styles.primary} disabled={!!busy} onClick={() => void act('Saving', async () => { await save(); const action = pending?.action; setPending(null); action?.(); })}>Save and continue</button></>}</div></section></div>}
+  </div>;
 }

@@ -6,7 +6,7 @@
  * calls the policy/mandate services.
  */
 import { registerManagementTools } from './mcp-management-tools.ts';
-import { scopedDaemon, principalKey, type McpPrincipal } from './mcp-principal.ts';
+import { scopedDaemon, type McpPrincipal } from './mcp-principal.ts';
 import { readFileSync } from 'node:fs';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -125,6 +125,16 @@ export function buildServer(worker = WORKER, callDaemon = daemon, principal?: Mc
           };
       return text(await callDaemon('POST', `/internal/workers/${encodeURIComponent(worker)}/fetch`, request));
     },
+  );
+
+  server.registerTool(
+    'bagseven_x402_payment',
+    {
+      title: 'Bagseven payment status',
+      description: 'Reconcile an isolated x402 payment using on-chain evidence. Does not create a new payment or grant wallet access.',
+      inputSchema: { payment_id: z.string().uuid() },
+    },
+    async ({ payment_id }) => text(await callDaemon('POST', `/internal/workers/${encodeURIComponent(worker)}/x402/${payment_id}`, {})),
   );
 
   server.registerTool(
@@ -324,31 +334,38 @@ export function buildServer(worker = WORKER, callDaemon = daemon, principal?: Mc
   return server;
 }
 
-function isInitializeRequest(body: unknown): boolean {
-  if (!body || typeof body !== 'object') return false;
-  const msg = body as { method?: string };
-  return msg.method === 'initialize';
+/** Each HTTP request authenticates independently; no process-local transport session is needed. */
+export async function handleStatelessMcp(req: import('express').Request, res: import('express').Response, server: McpServer) {
+  if (req.method !== 'POST') {
+    await server.close();
+    res.setHeader('Allow', 'POST');
+    res.status(405).json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed' }, id: null });
+    return;
+  }
+  const { StreamableHTTPServerTransport } = await import('@modelcontextprotocol/sdk/server/streamableHttp.js');
+  const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true, sessionIdGenerator: undefined });
+  res.on('close', () => { void transport.close(); void server.close(); });
+  try { await server.connect(transport); await transport.handleRequest(req, res, req.body); }
+  catch (error) { await transport.close(); await server.close(); throw error; }
 }
 
 async function main(): Promise<void> {
   if (!WORKER) throw new Error('BAGSEVEN_MCP_WORKER is required');
   const httpPort = process.env.PORT ?? process.env.BAGSEVEN_MCP_PORT ?? process.env.MCP_HTTP_PORT;
   if (httpPort) {
-    const { randomUUID } = await import('node:crypto');
-    const { StreamableHTTPServerTransport } = await import('@modelcontextprotocol/sdk/server/streamableHttp.js');
     const express = (await import('express')).default;
     const { mountMcpOAuth, verifyMcpAccessToken, oauthChallenge } = await import('./mcp-oauth-as.ts');
     const app = express();
     app.use(express.json({ limit: '2mb' }));
     app.use(express.urlencoded({ extended: false }));
-    /** ChatGPT / remote clients: one transport per MCP session id. */
-    const transports = new Map<string, InstanceType<typeof StreamableHTTPServerTransport>>();
-    const sessionOwners = new Map<string, string>();
     const { isCorsOriginAllowed } = await import('@bagseven/server');
     const corsEnv = { ...process.env, CORS_ORIGIN: process.env.BAGSEVEN_MCP_CORS_ORIGIN ?? process.env.CORS_ORIGIN };
     const publicUrl = (process.env.BAGSEVEN_MCP_PUBLIC_URL ?? '').replace(/\/$/, '');
     const oauthRequired =
       (process.env.MCP_OAUTH_REQUIRED ?? (publicUrl ? 'true' : 'false')).toLowerCase() === 'true';
+    if (process.env.NODE_ENV === 'production' && (!oauthRequired || !publicUrl.startsWith('https://'))) {
+      throw Error('MCP_PRODUCTION_AUTH_REQUIRED: configure OAuth and an HTTPS public URL');
+    }
 
     app.use((req, res, next) => {
       res.vary('Origin');
@@ -397,10 +414,9 @@ async function main(): Promise<void> {
       });
     };
 
-    const requireBearer = (req: import('express').Request, res: import('express').Response): boolean => {
+    const requireBearer = (req: import('express').Request, res: import('express').Response, tok: McpPrincipal | null): boolean => {
       if (!(oauthRequired || process.env.MCP_AUTH_TOKEN)) return true;
       const base = publicUrl || `${req.protocol}://${req.headers.host}`;
-      const tok = verifyMcpAccessToken(req.headers.authorization);
       if (tok) return true;
       res.setHeader('WWW-Authenticate', oauthChallenge(base));
       res.status(401).json({
@@ -414,76 +430,9 @@ async function main(): Promise<void> {
 
     const mcpHandler = async (req: import('express').Request, res: import('express').Response) => {
       try {
-        if (!requireBearer(req, res)) return;
-        const principal = verifyMcpAccessToken(req.headers.authorization);
-        const owner = principalKey(principal);
-
-        const sessionHeader = req.headers['mcp-session-id'];
-        const sessionId = Array.isArray(sessionHeader) ? sessionHeader[0] : sessionHeader;
-        if (sessionId && transports.has(sessionId) && sessionOwners.get(sessionId) !== owner) {
-          res.status(403).json({ error: 'forbidden', message: 'MCP session belongs to another authenticated account or client' });
-          return;
-        }
-
-        if (req.method === 'GET' || req.method === 'DELETE') {
-          if (!sessionId || !transports.has(sessionId)) {
-            res.status(400).json({
-              jsonrpc: '2.0',
-              error: { code: -32000, message: 'Invalid or missing mcp-session-id' },
-              id: null,
-            });
-            return;
-          }
-          await transports.get(sessionId)!.handleRequest(req, res);
-          if (req.method === 'DELETE') {
-            transports.delete(sessionId);
-            sessionOwners.delete(sessionId);
-          }
-          return;
-        }
-
-        // POST
-        if (sessionId && transports.has(sessionId)) {
-          await transports.get(sessionId)!.handleRequest(req, res, req.body);
-          return;
-        }
-
-        // After MCP restarts the in-memory session map is empty. ChatGPT often
-        // retries with a stale mcp-session-id on initialize — accept it as a
-        // fresh session instead of 400ing forever.
-        if (isInitializeRequest(req.body)) {
-          if (sessionId) {
-            console.error(`[bagseven-mcp] stale session ${sessionId} on initialize — minting new session`);
-          }
-          const transport = new StreamableHTTPServerTransport({
-            // JSON responses avoid SSE hangs behind ngrok / some MCP hosts.
-            enableJsonResponse: true,
-            sessionIdGenerator: () => randomUUID(),
-            onsessioninitialized: (sid) => {
-              transports.set(sid, transport);
-              sessionOwners.set(sid, owner);
-              console.error(`[bagseven-mcp] session initialized ${sid}`);
-            },
-          });
-          transport.onclose = () => {
-            const sid = transport.sessionId;
-            if (sid) { transports.delete(sid); sessionOwners.delete(sid); }
-          };
-          await buildServer(WORKER, daemon, principal ?? undefined).connect(transport);
-          await transport.handleRequest(req, res, req.body);
-          return;
-        }
-
-        res.status(400).json({
-          jsonrpc: '2.0',
-          error: {
-            code: -32000,
-            message: sessionId
-              ? 'Unknown mcp-session-id — re-initialize the MCP session'
-              : 'mcp-session-id required (send initialize first)',
-          },
-          id: (req.body as { id?: unknown })?.id ?? null,
-        });
+        const principal = await verifyMcpAccessToken(req.headers.authorization);
+        if (!requireBearer(req, res, principal)) return;
+        await handleStatelessMcp(req, res, buildServer(WORKER, daemon, principal ?? undefined));
       } catch (error) {
         console.error('[bagseven-mcp] request failed', error);
         if (!res.headersSent) {

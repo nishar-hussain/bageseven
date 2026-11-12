@@ -10,15 +10,15 @@ export const HOLDER = process.env.DEMO_HOLDER || "demo-subscriber@acme.test";
 export const DAEMON = (
   process.env.BAGSEVEN_API_URL || "http://127.0.0.1:4001"
 ).replace(/\/$/, "");
-export const PLAN_NAMES = [
-  "Bagseven OCR Starter",
-  "Bagseven Research Pro",
-  "Bagseven Pro Access",
-];
+export function receiptPlanIds(plans, provider) {
+  return plans.filter(p => p.provider_id === provider && p.active && FEATURES.some(f => f.id === p.feature)).map(p => p.id);
+}
 
 export async function internal(method, path, body) {
   const provider = process.env.DEMO_PROVIDER_ID;
-  const secret = process.env.PROVIDER_GAS_ENCRYPTION_KEY;
+  const secret = process.env.PROVIDER_SCOPE_SIGNING_KEY ||
+    (process.env.NODE_ENV !== "production" ? process.env.PROVIDER_GAS_ENCRYPTION_KEY : undefined);
+  if (provider && !secret) throw new Error("PROVIDER_SCOPE_SIGNING_KEY is required for merchant requests");
   const headers = {
     authorization: `Bearer ${process.env.DAEMON_AUTH_TOKEN}`,
     "content-type": "application/json",

@@ -56,6 +56,8 @@ export type GrantStoreDescribe = {
 };
 
 export interface GrantStore {
+  /** Recover only an already-journaled issue transaction; never sign a new mint. */
+  recoverMint?(id: string, evidence: Pick<Grant, 'holder' | 'feature' | 'merchant' | 'payment_tx'>): Promise<Grant | null>;
   mint(input: MintGrantInput): Promise<Grant>;
   get(id: string): Promise<Grant | null>;
   findLive(query: { holder?: string; feature?: string; worker_id?: string }): Promise<Grant[]>;

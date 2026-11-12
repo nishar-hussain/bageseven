@@ -1,4 +1,5 @@
 import type { Subscriptions } from './subscriptions.js';
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import { ApiError } from '@bagseven/server';
@@ -216,10 +217,20 @@ export function registerBillingRoutes(
           throw new ApiError(402, 'PAYMENT_UNVERIFIED', error instanceof Error ? error.message : String(error));
         }
       }
+      // Stable fulfillment identity survives a crash between registry issue and markPaid.
+      const digest = createHash('sha256').update(`checkout:${session.chain_id}:${session.id}`).digest('hex');
+      const fulfillmentId = `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-8${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+      const recovered = plan.interval === 'once' ? await grants.get(fulfillmentId) ?? await grants.recoverMint?.(fulfillmentId, {
+        holder: session.holder, feature: plan.feature, merchant: plan.provider_id, payment_tx: body.payment_tx,
+      }) ?? null : null;
+      if (recovered && (recovered.payment_tx?.toLowerCase() !== body.payment_tx.toLowerCase() ||
+        recovered.holder !== session.holder || recovered.feature !== plan.feature || recovered.merchant !== plan.provider_id)) {
+        throw new ApiError(409, 'CHECKOUT_FULFILLMENT_CONFLICT', 'Stored access does not match this checkout payment');
+      }
       const paymentKey = `avalanche:payment:${session.chain_id}:${body.payment_tx.toLowerCase()}`;
       if (deps.redis) {
         const fresh = await deps.redis.set(paymentKey, id, 'NX');
-        if (!fresh && (await deps.redis.get(paymentKey) !== id || (plan.interval !== 'month' && await deps.redis.getdel(`${paymentKey}:preflight-retry`) !== id))) {
+        if (!fresh && (await deps.redis.get(paymentKey) !== id || (plan.interval !== 'month' && !recovered && await deps.redis.getdel(`${paymentKey}:preflight-retry`) !== id))) {
           throw new ApiError(409, 'PAYMENT_REUSED', 'This payment is already redeemed or awaiting reconciliation; check its existing entitlement');
         }
       } else if (process.env.NODE_ENV === 'production') {
@@ -233,7 +244,8 @@ export function registerBillingRoutes(
       const prior = live[0];
       const grant = plan.interval === 'month'
         ? await (deps.subscriptions ?? (() => { throw new ApiError(503, 'SUBSCRIPTIONS_UNAVAILABLE', 'Recurring billing is not configured'); })()).completeCheckout({ ...session, plan }, body.customer_wallet, body.payment_tx, prior)
-        : await grants.mint({
+        : recovered ?? await grants.mint({
+        id: fulfillmentId,
         merchant: plan.provider_id,
         feature: plan.feature,
         holder: session.holder,

@@ -1,14 +1,16 @@
+import { verifySettlement } from './settlement-proof.js';
 import { readMandateAvailability, readMandateSnapshot, type ChainState } from './mandate-state.js';
+import { privateKeyToAccount } from 'viem/accounts';
 import { toUnits, fromUnits } from './usdt-units.js';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { agents, mandates, providers, refusals, reservations, transactions, vaults } from '@bagseven/db';
 import { validateMoney, sub, min, max } from '@bagseven/money';
 import { ApiError, idempotencyOnSend, idempotencyPreHandler, type ServiceDeps } from '@bagseven/server';
 import { canonicalMandate, canonicalSpawn, canonicalWithdraw, MandateClient, ProviderGasManager, providerGasEnabled, verifyProviderScope, avalancheConfig, recoverEip191, recoverSpendIntentSigner, workerKey } from '@bagseven/onchain';
-import { encodeFunctionData, parseAbi, recoverMessageAddress, type Address } from 'viem';
+import { createPublicClient, http, encodeFunctionData, parseAbi, recoverMessageAddress, type Address } from 'viem';
 
 const BOUNDS: Record<number, string> = {
   1: 'MandateInactive',
@@ -82,6 +84,8 @@ const providerSchema = z.object({
 });
 
 function mandateClient(config: NodeJS.ProcessEnv): MandateClient {
+  if (providerGasEnabled(config)) return MandateClient.readOnly({ rpcUrl: avalancheConfig(config).rpcUrl,
+    rpcFallbackUrl: config.RPC_FALLBACK_URL, chainId: avalancheConfig(config).chainId });
   // Keep the policy and daemon configuration names compatible. The daemon's
   // production-facing name is DAEMON_EXECUTOR_KEY; ENFORCER_DEV_KEY remains
   // accepted for existing local environments.
@@ -162,8 +166,11 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
 
   app.get('/v1/mandate-config', async () => {
     const rail = avalancheConfig(config);
+    const operatorKey = config.DAEMON_OPERATOR_KEY || (config.NODE_ENV !== 'production' ? config.OPERATOR_DEV_KEY : undefined);
+    if (providerGasEnabled(config) && !operatorKey) throw new ApiError(503, 'OPERATOR_UNCONFIGURED', 'Configure the agent operator signer before creating spending permissions');
     return { chain_id: rail.chainId, token: rail.usdt, rpc_url: rail.rpcUrl,
-      operator_address: mandateClient(config).address, deployer_address: deploymentClient(config).address };
+      operator_address: operatorKey ? privateKeyToAccount(operatorKey as `0x${string}`).address : mandateClient(config).address,
+      deployer_address: providerGasEnabled(config) ? null : deploymentClient(config).address };
   });
 
   app.post('/v1/mandates/prepare', async req => {
@@ -454,11 +461,27 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
     const body = settlementSchema.parse(req.body);
     const reservation = await db.query.reservations.findFirst({ where: eq(reservations.id, id) });
     if (!reservation) throw new ApiError(404, 'NOT_FOUND', 'reservation not found');
-    if (reservation.status === 'settled') return { status: 'settled', tx_hash: body.tx_hash };
+    if (!reservation.recipient || reservation.recipient.toLowerCase() !== body.recipient.toLowerCase()) throw new ApiError(409, 'RESERVATION_RECIPIENT_MISMATCH', 'The reservation must bind the actual payment recipient');
+    if (reservation.status === 'settled') {
+      if (reservation.settlementHash !== body.tx_hash.toLowerCase()) throw new ApiError(409, 'SETTLEMENT_CONFLICT', 'Reservation already settled with a different transaction');
+      return { status: 'settled', tx_hash: reservation.settlementHash };
+    }
     const mandate = await getMandate(reservation.mandateId);
     const client = mandateClient(config);
+    const network = avalancheConfig(config);
+    await verifySettlement(createPublicClient({ chain: network.chain, transport: http(network.rpcUrl) }), {
+      chain: network.chainId, confirmations: network.confirmations, hash: body.tx_hash as `0x${string}`,
+      vault: mandate.contractAddress as `0x${string}`, token: network.usdt as `0x${string}`, recipient: reservation.recipient as `0x${string}`,
+      worker: reservation.agentId, amount: toUnits(reservation.amount),
+    });
     await db.transaction(async (tx) => {
-      await tx.update(reservations).set({ status: 'settled' }).where(eq(reservations.id, id));
+      const [locked] = await tx.select().from(reservations).where(eq(reservations.id, id)).for('update');
+      if (!locked) throw new ApiError(404, 'NOT_FOUND', 'Reservation removed');
+      if (locked.status === 'settled') {
+        if (locked.settlementHash !== body.tx_hash.toLowerCase()) throw new ApiError(409, 'SETTLEMENT_CONFLICT', 'Different transaction');
+        return;
+      }
+      await tx.update(reservations).set({ status: 'settled', settlementHash: body.tx_hash.toLowerCase() }).where(eq(reservations.id, id));
       await tx.insert(transactions).values({ mandateId: mandate.id, agentId: reservation.agentId, txHash: body.tx_hash, amount: reservation.amount, type: 'commit' });
       const [w, l, s] = await Promise.all([client.spendState(mandate.contractAddress as Address), client.lifetimeSpent(mandate.contractAddress as Address), client.sellerSpent(mandate.contractAddress as Address, body.recipient as Address)]);
       const sellerSpent = { ...((mandate.sellerSpent as Record<string, string>) ?? {}) };
@@ -471,7 +494,7 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
   app.post('/v1/reservations/:id/release', async (req) => {
     if (!config.POLICY_INTERNAL_TOKEN || req.headers.authorization !== `Bearer ${config.POLICY_INTERNAL_TOKEN}`) throw new ApiError(401, 'UNAUTHORIZED', 'internal authorization required');
     const { id } = req.params as { id: string };
-    await db.update(reservations).set({ status: 'released' }).where(eq(reservations.id, id));
+    await db.update(reservations).set({ status: 'released' }).where(and(eq(reservations.id, id), eq(reservations.status, 'reserved')));
     return { status: 'released' };
   });
 
@@ -513,7 +536,7 @@ export function buildPolicyRoutes(app: FastifyInstance, { db, redis, config }: S
 
     const [reservation] = await db
       .insert(reservations)
-      .values({ mandateId: mandate.id, agentId: agent.id, amount: body.amount, status: 'reserved', expiresAt: new Date(Date.now() + 60_000) })
+      .values({ mandateId: mandate.id, agentId: agent.id, amount: body.amount, recipient: body.recipient.toLowerCase(), status: 'reserved', expiresAt: new Date(Date.now() + 60_000) })
       .returning();
     if (!reservation) throw new ApiError(500, 'RESERVE_FAILED', 'reservation insert returned no row');
 

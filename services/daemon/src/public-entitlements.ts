@@ -69,8 +69,8 @@ export function isPublicEntitlementPath(url: string): boolean {
   return false;
 }
 
-export function entitlementView(grant: Grant | null, feature: string) {
-  const valueType = getFeatureValueType(feature);
+export async function entitlementView(grant: Grant | null, feature: string) {
+  const valueType = await getFeatureValueType(feature);
   const notExpired = Boolean(grant) && new Date(grant!.paid_through).getTime() > Date.now();
   const live =
     Boolean(grant) &&
@@ -123,7 +123,7 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
     assertCanRead(principal, holder);
     const live = await store.findLive({ feature: q.feature, holder });
     const grant = [...live].sort((a, b) => Number(b.remaining) - Number(a.remaining))[0] ?? null;
-    return { ...entitlementView(grant, q.feature), total_remaining: getFeatureValueType(q.feature) === 'boolean' ? (grant ? '1' : '0') : live.reduce((sum, g) => add(sum, g.remaining), '0') };
+    return { ...await entitlementView(grant, q.feature), total_remaining: (await getFeatureValueType(q.feature)) === 'boolean' ? (grant ? '1' : '0') : live.reduce((sum, g) => add(sum, g.remaining), '0') };
   });
 
   app.get('/v1/entitlements', async (req) => {
@@ -134,7 +134,7 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
     const grants = await store.findLive({ holder, feature: q.feature || undefined });
     return {
       holder,
-      entitlements: grants.map((g) => entitlementView(g, g.feature)),
+      entitlements: await Promise.all(grants.map((g) => entitlementView(g, g.feature))),
       grants,
     };
   });
@@ -153,7 +153,7 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
     if (draft) return draft;
     const next = await store.cancelRenewal(id);
     return {
-      entitlement: entitlementView(next, next.feature),
+      entitlement: await entitlementView(next, next.feature),
       grant: next,
       note: 'Renewal off; access remains until paid_through',
     };
@@ -192,8 +192,8 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
     if (grant.holder !== holder) throw new ApiError(403, 'HOLDER_MISMATCH', 'grant holder does not match');
 
     // Boolean features are on/off until TTL — check/access, do not burn credits.
-    if (getFeatureValueType(body.feature) === 'boolean') {
-      const view = entitlementView(grant, grant.feature);
+    if ((await getFeatureValueType(body.feature)) === 'boolean') {
+      const view = await entitlementView(grant, grant.feature);
       if (!view.enabled) throw new ApiError(403, 'FEATURE_OFF', `${body.feature} is not active`);
       return {
         entitlement: view,
@@ -208,7 +208,7 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
     const key = (body.idempotencyKey ?? body.idempotency_key)!.trim();
     const next = await store.consume(grantId, body.amount, key);
     return {
-      entitlement: entitlementView(next, next.feature),
+      entitlement: await entitlementView(next, next.feature),
       grant: next,
       dual_gate: { mandate: 'not_required', grant: 'ok' },
     };
@@ -252,6 +252,6 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
       mandate_id: prior.mandate_id,
       renewal_enabled: true,
     });
-    return { grant, entitlement: entitlementView(grant, grant.feature), settlement };
+    return { grant, entitlement: await entitlementView(grant, grant.feature), settlement };
   });
 }

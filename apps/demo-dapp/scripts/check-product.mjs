@@ -74,3 +74,19 @@ assert.equal(
   after.entitlements.ocr.total_remaining,
 );
 console.log("PASS invalid image uses no credit");
+const jsonId = randomUUID();
+const exported = await request("export", { format: "json", requestId: jsonId });
+assert.ok(JSON.parse(exported.content).some(r => r.merchant === "HARBOR COFFEE"));
+await request("export", { format: "json", requestId: jsonId });
+const csv = await request("export", { format: "csv", requestId: randomUUID() });
+assert.ok(csv.content.startsWith("merchant,date,currency,total,tax,category,notes"));
+const insightId = randomUUID();
+const insight = await request("insights", { requestId: insightId });
+assert.ok(insight.count >= 1);
+await request("insights", { requestId: insightId });
+const final = await request("bootstrap");
+for (const feature of ["api_access", "research_fetch"]) {
+  assert.equal(Number(final.entitlements[feature].total_remaining), Number(after.entitlements[feature].total_remaining) - 1);
+}
+assert.equal(final.entitlements.pro_notes.total_remaining, after.entitlements.pro_notes.total_remaining);
+console.log("PASS actual Pro CSV access, metered JSON export and insights; retries charge each feature once");

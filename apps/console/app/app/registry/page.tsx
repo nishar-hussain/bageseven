@@ -6,6 +6,7 @@ import { PageHeader, PrimaryButton, SecondaryButton, SoftCard, StatusPill } from
 import { entitlementsApi, type Grant, type MumbaiStatus } from '../../../lib/entitlements-client';
 import { shortId } from '../../../lib/use-operator';
 import { featureLabel, useFeatures } from '../../../lib/use-features';
+import { FujiRegistryDeployment } from '../../../components/app/FujiRegistryDeployment';
 
 const REGISTRY_DOCS = 'https://build.avax.network/docs/primary-network';
 
@@ -73,6 +74,7 @@ export default function RegistryStudioPage() {
         }
       />
 
+      <FujiRegistryDeployment />
       <div className="grid gap-4 md:grid-cols-3">
         <SoftCard className="p-4">
           <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">Store</div>

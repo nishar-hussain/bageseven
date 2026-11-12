@@ -48,6 +48,8 @@ Nav: transparent over hero, white “Open app” pill → dashboard `:3000`.
 
 ## Dashboard rhythm (Fianto Overview)
 
+Builder uses a compact page toolbar, two clear steps (Design your embed / Add to your app), and a dedicated inspector beside a large live canvas. Content and Appearance have separate tabs. Desktop/mobile previews render the actual unified SDK component. Keep installation instructions in the install step, show provider-scoped saving/publication state, and do not mix customer tokens into the editor or copied iframe URLs. The primary accent remains Bagseven blue; preview styling belongs to the provider's design.
+
 - Canvas: `#f2f2f2` / `--soft`
 - Left sidebar ~260px, white/transparent, blue wordmark “Bagseven Beta”
 - Workspace chip + network badge (Mock / Live)

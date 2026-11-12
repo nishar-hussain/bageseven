@@ -1,4 +1,5 @@
 import { providerScopeHeaders } from '../../../../lib/provider-gas-scope';
+import { verifiedDeploymentOwner } from '../../../../lib/deployment-wallet';
 import { NextRequest, NextResponse } from 'next/server';
 import { daemonFetch } from '../../../../lib/daemon-bff';
 import { getSession, sessionHolder, sessionIsValid } from '../../../../lib/auth';
@@ -7,6 +8,9 @@ type Ctx = { params: Promise<{ path: string[] }> };
 
 /** Product BFF surface — never proxy arbitrary daemon internals. */
 const ALLOWED: Array<{ method: string; match: (parts: string[]) => boolean }> = [
+  { method: 'POST', match: p => p.length === 3 && p[0] === 'deployments' && p[1] === 'registry' && ['prepare', 'confirm'].includes(p[2] ?? '') },
+  { method: 'GET', match: p => p[0] === 'x402' && ((p.length === 2 && ['authorities', 'payments'].includes(p[1] ?? '')) || (p.length === 3 && p[1] === 'payments')) },
+  { method: 'POST', match: p => p[0] === 'x402' && ((p.length === 2 && ['prepare', 'authorize', 'revoke'].includes(p[1] ?? '')) || (p.length === 4 && p[1] === 'payments' && ['reconcile', 'recovery-draft'].includes(p[3] ?? ''))) },
   { method: 'GET', match: (p) => p[0] === 'mumbai' && p[1] === 'status' && p.length === 2 },
   { method: 'GET', match: (p) => p[0] === 'features' && p.length === 1 },
   { method: 'POST', match: (p) => p[0] === 'features' && p.length === 1 },
@@ -54,6 +58,12 @@ async function proxy(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   const init: RequestInit = { method: req.method, headers };
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     init.body = await req.text();
+    if (path[0] === 'deployments') {
+      const owner = verifiedDeploymentOwner(req, session);
+      if (!owner) return NextResponse.json({ error: { message: 'Verify the connected deployment wallet before preparing or confirming a deployment' } }, { status: 403 });
+      try { init.body = JSON.stringify({ ...JSON.parse(init.body || '{}'), owner }); }
+      catch { return NextResponse.json({ error: { message: 'Invalid request body' } }, { status: 400 }); }
+    }
     if (
       path[0] === 'grants' &&
       (path[1] === 'mint' || path[1] === 'buy-credits' || path[1] === 'paid-run' || path[1] === 'explain-denial')

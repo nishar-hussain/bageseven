@@ -39,23 +39,29 @@ export class AvalancheGrantStore implements GrantStore {
   private async network() {
     if (await this.client.getChainId() !== this.config.chainId) throw Error('AVALANCHE_RPC_CHAIN_MISMATCH');
   }
-  private async write(provider: string, data: Hex) {
+  private async write(provider: string, data: Hex, recoveryOnly = false) {
     await this.network();
-    const account = await providerGrantSigner(provider);
-    const wallet = createWalletClient({ account, chain: this.config.chain, transport: http(this.config.rpcUrl) });
     const gas = new ProviderGasManager(this.db, this.env);
     const prior = await gas.signedSubscription(provider, this.config.chainId, data, this.registry);
-    const raw = prior ?? await wallet.signTransaction(await wallet.prepareTransactionRequest({
-      account, to: this.registry, data, value: 0n,
-    }));
+    if (recoveryOnly && !prior) return false;
+    let raw = prior;
+    if (!raw) {
+      const account = await providerGrantSigner(provider);
+      const wallet = createWalletClient({ account, chain: this.config.chain, transport: http(this.config.rpcUrl) });
+      raw = await wallet.signTransaction(await wallet.prepareTransactionRequest({ account, to: this.registry, data, value: 0n }));
+    }
     const tx = keccak256(raw);
     const mined = await this.client.getTransactionReceipt({ hash: tx }).catch(() => null);
-    if (!mined) await this.client.sendRawTransaction({ serializedTransaction: raw });
+    if (!mined) {
+      try { await this.client.sendRawTransaction({ serializedTransaction: raw }); }
+      catch (error) { if (!/already known|known transaction|nonce too low/i.test(String(error))) throw error; }
+    }
     const receipt = await this.client.waitForTransactionReceipt({ hash: tx, confirmations: this.config.confirmations });
     if (receipt.status !== 'success') {
       await gas.revertedSubscription(provider, this.config.chainId, raw);
       throw Error('ENTITLEMENT_TRANSACTION_REVERTED');
     }
+    return true;
   }
   private subject(value: string): Hex {
     return `0x${createHmac('sha256', this.env.ENTITLEMENT_SUBJECT_SECRET!).update(value).digest('hex')}`;
@@ -86,6 +92,22 @@ export class AvalancheGrantStore implements GrantStore {
     if (!row || row.kind !== 'grant') return null;
     await this.network();
     return this.readGrant(GrantSchema.parse(row.data));
+  }
+  async recoverMint(id: string, evidence: Pick<Grant, 'holder' | 'feature' | 'merchant' | 'payment_tx'>): Promise<Grant | null> {
+    const row = await this.row(hash(id));
+    if (!row || row.kind !== 'grant') return null;
+    const grant = GrantSchema.parse(row.data);
+    if (grant.holder !== evidence.holder || grant.feature !== evidence.feature || grant.merchant !== evidence.merchant ||
+      grant.payment_tx?.toLowerCase() !== evidence.payment_tx?.toLowerCase()) throw Error('GRANT_ID_CONFLICT');
+    const current = await this.get(id);
+    if (current) return current;
+    const status = await new ProviderGasManager(this.db, this.env).status(row.providerId);
+    if (!status.configured || !status.address) return null;
+    const data = encodeFunctionData({ abi, functionName: 'issue', args: [hash(id), status.address as Hex,
+      this.subject(grant.holder), hash(grant.feature), parseUnits(grant.remaining, 18),
+      BigInt(Math.floor(Date.parse(grant.paid_through) / 1000)), grant.renewal_enabled] });
+    if (!await this.write(row.providerId, data, true)) return null;
+    return this.get(id);
   }
   private async readGrant(metadata: Grant): Promise<Grant | null> {
     const id = metadata.id;

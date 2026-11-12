@@ -42,7 +42,7 @@ export function scopedDaemon(principal: McpPrincipal, call: Daemon): Daemon {
     }
     if (url.pathname === '/v1/checkout-sessions' && method === 'GET') url.searchParams.set('holder', actor);
     if (url.pathname === '/v1/plans' && method === 'POST') {
-      const secret = process.env.PROVIDER_GAS_ENCRYPTION_KEY;
+      const secret = process.env.PROVIDER_SCOPE_SIGNING_KEY || (process.env.NODE_ENV !== 'production' ? process.env.PROVIDER_GAS_ENCRYPTION_KEY : undefined);
       if (!secret) throw Error('PROVIDER_SCOPE_REQUIRED');
       const data = Buffer.from(JSON.stringify({ provider: actor, expires: Date.now() + 60000 })).toString('base64url');
       headers['x-bagseven-provider'] = actor;

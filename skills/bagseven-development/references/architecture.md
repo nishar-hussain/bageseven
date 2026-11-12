@@ -11,7 +11,7 @@
 | Public SDK API/key scopes | `services/daemon/src/public-entitlements.ts`, `api-keys.ts` |
 | Plans, checkout, provider fees | `services/daemon/src/billing.ts`, `billing-store.ts` |
 | Avalanche receipts and replay | `avalanche-payment.ts`, `avalanche-settle.ts`, `payment-ledger.ts` in daemon |
-| New payment executor and x402 | `services/daemon/src/index.ts`, `x402.ts`, `x402-payer.ts`, request ledger |
+| New payment executor and x402 | `services/daemon/src/index.ts`, `x402.ts`, `x402-authorities.ts`, `x402-payments.ts`, `x402-job-store.ts`, request ledger |
 | Agent/mandate discovery | `services/daemon/src/worker-management.ts` |
 | Gateway authentication/proxy | `services/gateway/src/index.ts` |
 | Spend permissions and chain reads | `services/policy/src/routes.ts`, `mandate-state.ts`, `usdt-units.ts` |

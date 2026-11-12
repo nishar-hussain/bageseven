@@ -4,6 +4,7 @@
  * Email and signed Avalanche wallet ownership approve the connection.
  * Bagseven issues access_token → ChatGPT calls /mcp with Bearer.
  */
+import { mcpCredentials } from './mcp-credential-store.ts';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { Express, Request, Response } from 'express';
 import { accountConsentMarkup, startAccountConsent, finishAccountConsent } from './mcp-account-auth.ts';
@@ -29,8 +30,12 @@ type AccessToken = {
   exp: number;
 };
 
-const codes = new Map<string, AuthCode>();
-const tokens = new Map<string, AccessToken>();
+const credentials = mcpCredentials<AuthCode | AccessToken>('oauth');
+const codes = {
+  get: async (key: string) => await credentials.get(`code:${key}`) as AuthCode | undefined,
+  set: (key: string, row: AuthCode) => credentials.set(`code:${key}`, row),
+};
+const tokens = credentials;
 
 function b64url(buf: Buffer): string {
   return buf.toString('base64url');
@@ -63,31 +68,22 @@ function resourceUrl(base: string): string {
   return `${base}/mcp`;
 }
 
-function prune(): void {
-  const now = Date.now();
-  for (const [k, v] of codes) if (v.exp < now) codes.delete(k);
-  for (const [k, v] of tokens) if (v.exp < now) tokens.delete(k);
+let nextPrune = 0;
+async function prune() {
+  if (Date.now() < nextPrune) return;
+  nextPrune = Date.now() + 15000;
+  await credentials.prune();
 }
 
-export function verifyMcpAccessToken(authHeader: string | undefined): AccessToken | null {
-  prune();
+export async function verifyMcpAccessToken(authHeader: string | undefined): Promise<AccessToken | null> {
   if (!authHeader?.startsWith('Bearer ')) return null;
   const token = authHeader.slice('Bearer '.length).trim();
-  // Legacy static token still accepted when set.
   if (process.env.MCP_AUTH_TOKEN && safeEqual(token, process.env.MCP_AUTH_TOKEN)) {
-    return {
-      humanId: 'static-token',
-      accountWallet: 'operator:static-token',
-      clientId: 'static',
-      scope: 'bagseven',
-      exp: Date.now() + 86_400_000,
-    };
+    return { humanId: 'static-token', accountWallet: 'operator:static-token', clientId: 'static', scope: 'bagseven', exp: Date.now() + 86400000 };
   }
-  // Refresh credentials are accepted only by the token endpoint.
-  if (token.startsWith('refresh:')) return null;
-  const row = tokens.get(token);
-  if (!row || row.exp < Date.now()) return null;
-  return row;
+  if (token.startsWith('refresh:') || token.startsWith('code:')) return null;
+  const row = await tokens.get(token) as AccessToken | undefined;
+  return row && row.exp > Date.now() ? row : null;
 }
 
 function html(value: string): string {
@@ -254,9 +250,9 @@ export function mountMcpOAuth(app: Express): void {
       humanId = consent.accountId; accountWallet = consent.wallet;
     } catch (error) { return fail(error instanceof Error ? error.message : 'Account verification failed'); }
 
-    prune();
+    await prune();
     const code = b64url(randomBytes(24));
-    codes.set(code, {
+    await codes.set(code, {
       clientId: client_id,
       redirectUri: redirect_uri,
       codeChallenge: code_challenge,
@@ -275,8 +271,8 @@ export function mountMcpOAuth(app: Express): void {
     res.redirect(302, redirect.toString());
   });
 
-  app.post('/oauth/token', (req, res) => {
-    prune();
+  app.post('/oauth/token', async (req, res) => {
+    await prune();
     const body = req.body as Record<string, string>;
     const grant = body.grant_type;
     if (grant !== 'authorization_code' && grant !== 'refresh_token') {
@@ -304,24 +300,25 @@ export function mountMcpOAuth(app: Express): void {
 
     if (grant === 'refresh_token') {
       const key = `refresh:${body.refresh_token || ''}`;
-      const previous = tokens.get(key);
+      const previous = await tokens.get(key) as AccessToken | undefined;
       if (!previous || previous.exp < Date.now() || previous.clientId !== cid ||
           (body.resource && body.resource !== previous.resource) ||
           (body.scope && body.scope !== previous.scope)) {
         res.status(400).json({ error: 'invalid_grant' });
         return;
       }
-      tokens.delete(key);
       const access = b64url(randomBytes(32));
       const refresh = b64url(randomBytes(32));
-      tokens.set(access, { ...previous, exp: Date.now() + 3600_000 });
-      tokens.set(`refresh:${refresh}`, { ...previous, exp: Date.now() + 30 * 86_400_000 });
+      if (!await credentials.exchange(key, [
+        { key: access, data: { ...previous, exp: Date.now() + 3600000 } },
+        { key: `refresh:${refresh}`, data: { ...previous, exp: Date.now() + 30 * 86400000 } },
+      ])) { res.status(400).json({ error: 'invalid_grant' }); return; }
       res.set('Cache-Control', 'no-store').json({ access_token: access, token_type: 'Bearer',
         expires_in: 3600, refresh_token: refresh, scope: previous.scope });
       return;
     }
 
-    const row = codes.get(body.code || '');
+    const row = await codes.get(body.code || '');
     if (!row || row.exp < Date.now() || row.clientId !== cid) {
       res.status(400).json({ error: 'invalid_grant' });
       return;
@@ -351,27 +348,15 @@ export function mountMcpOAuth(app: Express): void {
       }
     }
 
-    codes.delete(body.code);
     const access = b64url(randomBytes(32));
     const refresh = b64url(randomBytes(32));
     const expiresIn = 3600;
-    tokens.set(access, {
-      humanId: row.humanId,
-      accountWallet: row.accountWallet,
-      clientId: row.clientId || cid,
-      scope: row.scope,
-      resource: row.resource,
-      exp: Date.now() + expiresIn * 1000,
-    });
-    // refresh reuse map: store under refresh key pointing at same identity
-    tokens.set(`refresh:${refresh}`, {
-      humanId: row.humanId,
-      accountWallet: row.accountWallet,
-      clientId: row.clientId || cid,
-      scope: row.scope,
-      resource: row.resource,
-      exp: Date.now() + 30 * 86_400_000,
-    });
+    const identity = { humanId: row.humanId, accountWallet: row.accountWallet,
+      clientId: row.clientId || cid, scope: row.scope, resource: row.resource };
+    if (!await credentials.exchange(`code:${body.code}`, [
+      { key: access, data: { ...identity, exp: Date.now() + expiresIn * 1000 } },
+      { key: `refresh:${refresh}`, data: { ...identity, exp: Date.now() + 30 * 86400000 } },
+    ])) { res.status(400).json({ error: 'invalid_grant' }); return; }
 
     res.set('Cache-Control', 'no-store').json({
       access_token: access,

@@ -126,7 +126,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
         require_grant: (process.env.BAGSEVEN_REQUIRE_GRANT ?? 'true').toLowerCase() !== 'false',
         /** @deprecated Prefer `features` — scalar kept for older clients. */
         feature: process.env.BAGSEVEN_GRANT_FEATURE ?? DEFAULT_FEATURE_ID,
-        features: listFeatures().map((f) => ({
+        features: (await listFeatures()).map((f) => ({
           id: f.id,
           label: f.label,
           actions: f.actions,
@@ -139,7 +139,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
   });
 
   /** Built-in + operator-created feature SKUs (Schematic / ArcenPay-style catalog). */
-  app.get('/internal/features', async () => ({ features: listFeatures() }));
+  app.get('/internal/features', async () => ({ features: await listFeatures() }));
 
   app.post('/internal/features', async (req) => {
     const body = z
@@ -152,7 +152,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
       })
       .parse(req.body ?? {});
     try {
-      const feature = createFeature(body);
+      const feature = await createFeature(body);
       return { feature };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -179,7 +179,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
         access: 'Registry-queryable grant until paid_through / ExpirationTime',
       },
       store: store.describe(),
-      features: listFeatures().map((f) => f.id),
+      features: (await listFeatures()).map((f) => f.id),
     };
   });
 
@@ -212,7 +212,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
       }
 
 
-      const valueType = getFeatureValueType(body.feature);
+      const valueType = await getFeatureValueType(body.feature);
       // Boolean = on/off access on Registry until TTL. Numeric = metered credits.
       const remaining = valueType === 'boolean' ? '1' : body.remaining;
       const settleAmount = valueType === 'boolean' ? (body.remaining === '1' ? '1' : body.remaining) : body.remaining;
@@ -390,7 +390,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: GrantRouteDeps =
       if (new Date(grant.paid_through).getTime() <= now) {
         throw new ApiError(403, 'DUAL_GATE', 'GRANT_EXPIRED: access left the query surface');
       }
-      const valueType = getFeatureValueType(grant.feature);
+      const valueType = await getFeatureValueType(grant.feature);
       if (grant.worker_id && body.worker_id && grant.worker_id !== body.worker_id) throw new ApiError(403, 'GRANT_WORKER_MISMATCH', 'This entitlement is bound to another agent');
 
       // This endpoint consumes already-paid service credits. Credit units are

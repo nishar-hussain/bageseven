@@ -11,6 +11,8 @@ const auth = vi.hoisted(() => ({
   attachSessionCookie: (response: Response) => response,
 }));
 vi.mock('../lib/auth', () => auth);
+vi.mock('../lib/account-profiles', () => ({ accountProfiles: () => ({ bind: async () => ({}) }) }));
+vi.mock('../lib/auth-challenges', () => ({ saveAuthChallenge: async () => {}, consumeAuthChallenge: async () => true }));
 const account = privateKeyToAccount(`0x${'01'.repeat(32)}`);
 const other = privateKeyToAccount(`0x${'02'.repeat(32)}`);
 const origin = 'http://localhost:3000';
