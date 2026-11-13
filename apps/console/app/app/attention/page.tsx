@@ -10,6 +10,7 @@ type Item = { title: string; detail: string; href: string; tone: 'warn' | 'info'
 
 export default function AttentionPage() {
   const [items, setItems] = useState<Item[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     void (async () => {
@@ -30,15 +31,15 @@ export default function AttentionPage() {
         if (!me?.email_verified) {
           next.push({
             title: 'Verify email',
-            detail: 'Optional — used for receipts and recovery. You can skip and add it later from Account.',
+            detail: 'Verify your account email for sign-in, billing records and account recovery.',
             href: '/app/account#email',
             tone: 'info',
           });
         }
         if (!me?.wallet_address) {
           next.push({
-            title: 'Add payout wallet',
-            detail: 'Optional — connect a Avalanche wallet for plan payouts.',
+            title: 'Verify wallet ownership',
+            detail: 'Connect your Avalanche wallet and sign the ownership message to complete your account.',
             href: '/app/account#wallet',
             tone: 'info',
           });
@@ -53,24 +54,24 @@ export default function AttentionPage() {
         }
         if ((mandates.mandates ?? []).length === 0) {
           next.push({
-            title: 'No funded mandate',
-            detail: 'Fund a mandate for agent spend ceilings, then connect MCP.',
+            title: 'Agent payments are not enabled',
+            detail: 'Optional: create a spending mandate when an agent needs to make new payments. Prepaid access and MCP connection do not require one.',
             href: '/app/mandate',
-            tone: 'warn',
+            tone: 'info',
           });
         }
         if (!s.tracks.registry.live) {
           next.push({
-            title: 'Registry on local store',
-            detail: 'Set AVALANCHE_ENTITLEMENT_REGISTRY and ENTITLEMENT_SUBJECT_SECRET, then restart the daemon.',
+            title: 'Review the registry connection',
+            detail: 'Your entitlement registry is unavailable. Check the connection in Network & gas.',
             href: '/app/settings',
             tone: 'info',
           });
         }
         if (s.tracks.avalanche.demo_settle) {
           next.push({
-            title: 'Avalanche settle not wired',
-            detail: 'Set AVALANCHE_PRIVATE_KEY and AVALANCHE_PAY_TO for live settlement.',
+            title: 'Review payment configuration',
+            detail: 'Live payment verification is not enabled. Review the payment token and provider authorization in Network & gas.',
             href: '/app/settings',
             tone: 'info',
           });
@@ -85,13 +86,13 @@ export default function AttentionPage() {
             tone: 'warn',
           },
         ]);
-      }
+      } finally { setLoading(false); }
     })();
   }, []);
 
   return (
     <div className="mx-auto max-w-3xl space-y-5">
-      <PageHeader title="Needs attention" description={items.length === 0 ? 'All clear.' : `${items.length} open`} />
+      <PageHeader title="Needs attention" description={loading ? 'Checking your account and workspace…' : items.length === 0 ? 'Your workspace checks are clear.' : `${items.length} items to review`} />
 
       <div className="space-y-3">
         {items.map((it) => (
@@ -115,7 +116,7 @@ export default function AttentionPage() {
             </div>
           </SoftCard>
         ))}
-        {items.length === 0 ? (
+        {loading ? <p role="status" className="text-sm text-[var(--muted)]">Checking workspace…</p> : items.length === 0 ? (
           <SoftCard className="p-10 text-center">
             <p className="text-[var(--muted)]">Nothing queued.</p>
             <Link href="/app" className="mt-4 inline-block text-sm font-semibold text-[var(--blue)]">

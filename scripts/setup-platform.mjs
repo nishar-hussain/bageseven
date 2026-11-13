@@ -9,6 +9,8 @@
  * - turbo build
  * - db migrate
  */
+import process from 'node:process';
+import console from 'node:console';
 import { execSync, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
@@ -21,6 +23,7 @@ const envPath = resolve(root, '.env');
 const examplePath = resolve(root, '.env.example');
 
 const FORCE = process.argv.includes('--force');
+const ANVIL_TEST = process.argv.includes('--anvil');
 const SKIP_DOCKER = process.argv.includes('--skip-docker');
 const SKIP_BUILD = process.argv.includes('--skip-build');
 let privateKeyToAccount;
@@ -145,6 +148,11 @@ async function main() {
 
   ({ privateKeyToAccount } = await import('viem/accounts'));
 
+  if ((!existsSync(envPath) || FORCE) && !ANVIL_TEST) throw Error('Public Fuji setup never creates development signing keys. Prepare/deploy the registry, run pnpm fuji:prepare, then pnpm fuji:activate --apply. Anvil fixtures require explicit --anvil in a separate test checkout.');
+  if (FORCE && existsSync(envPath)) {
+    const {parseEnv}=await import('node:util');
+    if(parseEnv(readFileSync(envPath,'utf8')).DEV_MODE !== 'true') throw Error('Refusing to overwrite an active public runtime with development keys or rotate its subject secret. Use a separate test checkout.');
+  }
   if (!existsSync(envPath) || FORCE) {
     log(FORCE && existsSync(envPath) ? 'Rewriting .env (--force)' : 'Creating .env from .env.example + dev keys');
     writeFileSync(envPath, buildEnvContents());
@@ -157,12 +165,14 @@ async function main() {
   writeFileSync(resolve(root, 'apps/console/.env.local'), readFileSync(envPath));
 
   if (!SKIP_DOCKER) {
-    log('Starting postgres + redis + anvil');
-    run('docker compose -f deploy/docker-compose.yml up -d postgres redis anvil');
-    log('Waiting for postgres/redis/anvil healthy…');
-    const healthy = await Promise.all(['postgres', 'redis', 'anvil'].map((service) => waitHealthy(service, 90)));
+    const dataServices = ['postgres','redis'];
+    if (process.env.DEV_MODE === 'true' && process.env.RPC_URL === 'http://localhost:58545') dataServices.push('anvil');
+    log(`Starting ${dataServices.join(' + ')}`);
+    run(`docker compose -f deploy/docker-compose.yml up -d ${dataServices.join(' ')}`);
+    log('Waiting for selected data services to become healthy…');
+    const healthy = await Promise.all(dataServices.map((service) => waitHealthy(service, 90)));
     if (healthy.some((ok) => !ok)) {
-      throw new Error('Postgres/Redis/Anvil did not become healthy. Check: docker compose -f deploy/docker-compose.yml logs');
+      throw new Error('Selected data services did not become healthy. Check: docker compose -f deploy/docker-compose.yml logs');
     }
   }
 
@@ -180,6 +190,10 @@ async function main() {
     writeFileSync(resolve(root, 'apps/console/.env.local'), readFileSync(envPath));
   }
 
+  if (process.env.DEV_MODE !== 'true') {
+    console.log('Public Avalanche runtime setup complete. No development keys, seed grants, mandates or Anvil service were created. Start with pnpm start:local and pnpm mcp:local.');
+    return;
+  }
   const operator = privateKeyToAccount(KEYS.operator);
   const owner = privateKeyToAccount(KEYS.owner);
 
@@ -206,7 +220,7 @@ MCP (optional):
   Local setup saves BAGSEVEN_MCP_WORKER in .env
   pnpm mcp:local
 
-Options: --force  --skip-docker  --skip-build
+Options: --anvil (explicit isolated fixtures)  --force (development only)  --skip-docker  --skip-build
 `);
 }
 

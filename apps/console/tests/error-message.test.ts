@@ -18,3 +18,7 @@ describe('user-facing wallet errors', () => {
     expect(errorMessage(new Error(''), 'Could not authorize')).toBe('Could not authorize');
   });
 });
+
+it('turns missing contract data into a useful deployment recovery message', () => {
+  expect(errorMessage(new Error('The contract function "grants" returned no data ("0x"). Contract Call: address 0x123 Docs: https://viem.sh'))).toBe('Contract data is unavailable on the selected network. Check the deployment and contract address in Network & gas, then retry.');
+});

@@ -4,8 +4,8 @@ import { z } from 'zod';
 import { assertKnownFeature } from '@bagseven/entitlements';
 import { AVALANCHE_FUJI_CHAIN_ID, avalancheConfig } from '@bagseven/onchain';
 import { usdtUnits } from './avalanche-payment.js';
-import { billingPlans, checkoutSessions, type Database } from '@bagseven/db';
-import { desc, eq } from 'drizzle-orm';
+import { billingPlans, checkoutSessions, issueBillingDocument, recordDocumentPayment, billingDocuments, type Database } from '@bagseven/db';
+import { and, desc, eq } from 'drizzle-orm';
 
 export const PlanSchema = z.object({
   id: z.string().min(1),
@@ -35,6 +35,7 @@ export const CheckoutSessionSchema = z.object({
   chain_id: z.number().int().default(AVALANCHE_FUJI_CHAIN_ID),
   customer_wallet: z.string().optional(),
   payment_tx: z.string().optional(),
+  payment_token: z.string().optional(),
   grant_id: z.string().optional(),
   success_url: z.string().optional(),
   expires_at: z.string(),
@@ -79,7 +80,7 @@ export class MemoryBillingStore {
   private sessions = new Map<string, CheckoutSession>();
   private payments = new Map<string, string>();
 
-  claimPayment(hash: string, checkoutId: string): void {
+  claimPayment(hash: string, checkoutId: string, _payer?: string): void {
     const key = hash.toLowerCase();
     const prior = this.payments.get(key);
     if (prior && prior !== checkoutId) throw new Error('PAYMENT_REUSED: this transaction belongs to another checkout');
@@ -129,6 +130,7 @@ export class MemoryBillingStore {
       status: 'PENDING',
       amount: plan.amount,
       chain_id: avalancheConfig().chainId,
+      payment_token: avalancheConfig().usdt,
       platform_fee_bps: 10,
       platform_fee_amount: platformFee(plan.amount),
       success_url: input.success_url,
@@ -211,37 +213,52 @@ export class PostgresBillingStore implements BillingStore {
     const input = CreateCheckoutInput.parse(raw);
     const plan = await this.getPlan(input.plan_id);
     if (!plan?.active) throw new Error('PLAN_NOT_FOUND');
-    const session: CheckoutSession = { id: `cs_${randomUUID().replace(/-/g, '')}`, plan_id: plan.id, holder: input.holder, worker_id: input.worker_id, status: 'PENDING', amount: plan.amount, chain_id: avalancheConfig().chainId, platform_fee_bps: 10, platform_fee_amount: platformFee(plan.amount), success_url: input.success_url, expires_at: new Date(Date.now() + input.expires_in * 1000).toISOString(), created_at: nowIso(), plan };
-    await this.db.insert(checkoutSessions).values({ id: session.id, planId: plan.id, holder: session.holder, workerId: session.worker_id, status: session.status, amount: session.amount, chainId: session.chain_id, platformFeeBps: session.platform_fee_bps, platformFeeAmount: session.platform_fee_amount, successUrl: session.success_url, expiresAt: new Date(session.expires_at) });
+    const session: CheckoutSession = { id: `cs_${randomUUID().replace(/-/g, '')}`, plan_id: plan.id, holder: input.holder, worker_id: input.worker_id, status: 'PENDING', amount: plan.amount, chain_id: avalancheConfig().chainId, payment_token: avalancheConfig().usdt, platform_fee_bps: 10, platform_fee_amount: platformFee(plan.amount), success_url: input.success_url, expires_at: new Date(Date.now() + input.expires_in * 1000).toISOString(), created_at: nowIso(), plan };
+    await this.db.transaction(async tx => {
+      await tx.insert(checkoutSessions).values({ id: session.id, planId: plan.id, holder: session.holder, workerId: session.worker_id, status: session.status, amount: session.amount, chainId: session.chain_id, paymentToken: avalancheConfig().usdt, platformFeeBps: session.platform_fee_bps, platformFeeAmount: session.platform_fee_amount, successUrl: session.success_url, expiresAt: new Date(session.expires_at) });
+      await issueBillingDocument(tx, { source: `checkout:${session.id}`, provider: plan.provider_id, holder: session.holder,
+        createdAt: new Date(session.created_at), expiresAt: new Date(session.expires_at), terms: {
+          planId: plan.id, planName: plan.name, feature: plan.feature, amount: session.amount, chainId: session.chain_id,
+          token: avalancheConfig().usdt, merchant: plan.merchant_wallet, kind: plan.interval === 'month' ? 'subscription' : 'once',
+        } });
+    });
     return session;
   }
   async getCheckout(id: string): Promise<CheckoutSession | null> {
     const [s] = await this.db.select().from(checkoutSessions).where(eq(checkoutSessions.id, id));
     if (!s) return null;
     const status = s.status === 'PENDING' && s.expiresAt.getTime() <= Date.now() ? 'EXPIRED' : s.status;
-    return CheckoutSessionSchema.parse({ ...s, status, plan_id: s.planId, worker_id: s.workerId || undefined, chain_id: s.chainId, platform_fee_bps: s.platformFeeBps, platform_fee_amount: s.platformFeeAmount, customer_wallet: s.customerWallet || undefined, payment_tx: s.paymentTx || undefined, grant_id: s.grantId || undefined, success_url: s.successUrl || undefined, expires_at: s.expiresAt.toISOString(), created_at: s.createdAt.toISOString(), plan: await this.getPlan(s.planId) });
+    return CheckoutSessionSchema.parse({ ...s, status, plan_id: s.planId, worker_id: s.workerId || undefined, chain_id: s.chainId, payment_token: s.paymentToken || undefined, platform_fee_bps: s.platformFeeBps, platform_fee_amount: s.platformFeeAmount, customer_wallet: s.customerWallet || undefined, payment_tx: s.paymentTx || undefined, grant_id: s.grantId || undefined, success_url: s.successUrl || undefined, expires_at: s.expiresAt.toISOString(), created_at: s.createdAt.toISOString(), plan: await this.getPlan(s.planId) });
   }
   async listCheckouts(opts?: { holder?: string; plan_id?: string }): Promise<CheckoutSession[]> {
     const rows = await this.db.select().from(checkoutSessions).orderBy(desc(checkoutSessions.createdAt));
     const filtered = rows.filter((s) => (!opts?.holder || s.holder === opts.holder) && (!opts?.plan_id || s.planId === opts.plan_id));
     return (await Promise.all(filtered.map((s) => this.getCheckout(s.id)))).filter((s): s is CheckoutSession => s !== null);
   }
-  async claimPayment(hash: string, id: string): Promise<void> {
+  async claimPayment(hash: string, id: string, payer?: string): Promise<void> {
     const rows = await this.db.select().from(checkoutSessions).where(eq(checkoutSessions.paymentTx, hash.toLowerCase()));
     if (rows.some(row => row.id !== id)) throw new Error('PAYMENT_REUSED');
-    if (rows.length) return; // Receipt remains bound to the same checkout on a safe retry.
-    await this.db.update(checkoutSessions).set({ paymentTx: hash.toLowerCase() }).where(eq(checkoutSessions.id, id));
+    await this.db.transaction(async tx => {
+      await tx.update(checkoutSessions).set({ paymentTx: hash.toLowerCase() }).where(eq(checkoutSessions.id, id));
+      if (payer) await recordDocumentPayment(tx, `checkout:${id}`, hash, payer);
+    });
   }
   async markPaid(id: string, input: { payment_tx: string; customer_wallet: string; grant_id: string; allow_expired?: boolean }): Promise<CheckoutSession> {
     const session = await this.getCheckout(id);
     if (!session) throw new Error('CHECKOUT_NOT_FOUND');
     if (session.status === 'PAID') return session;
     if (session.status !== 'PENDING' && !(session.status === 'EXPIRED' && input.allow_expired)) throw new Error(`CHECKOUT_${session.status}`);
-    await this.db.update(checkoutSessions).set({ status: 'PAID', paymentTx: input.payment_tx.toLowerCase(), customerWallet: input.customer_wallet.toLowerCase(), grantId: input.grant_id }).where(eq(checkoutSessions.id, id));
+    await this.db.transaction(async tx => {
+      await tx.update(checkoutSessions).set({ status: 'PAID', paymentTx: input.payment_tx.toLowerCase(), customerWallet: input.customer_wallet.toLowerCase(), grantId: input.grant_id }).where(eq(checkoutSessions.id, id));
+      await recordDocumentPayment(tx, `checkout:${id}`, input.payment_tx, input.customer_wallet);
+    });
     return (await this.getCheckout(id))!;
   }
   async markFailed(id: string): Promise<CheckoutSession> {
-    await this.db.update(checkoutSessions).set({ status: 'FAILED' }).where(eq(checkoutSessions.id, id));
+    await this.db.transaction(async tx => {
+      await tx.update(checkoutSessions).set({ status: 'FAILED' }).where(eq(checkoutSessions.id, id));
+      await tx.update(billingDocuments).set({ status: 'VOID' }).where(and(eq(billingDocuments.source, `checkout:${id}`), eq(billingDocuments.status, 'OPEN')));
+    });
     const session = await this.getCheckout(id);
     if (!session) throw new Error('CHECKOUT_NOT_FOUND');
     return session;

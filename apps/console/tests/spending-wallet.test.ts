@@ -62,10 +62,28 @@ describe('verified ownership for connected spending wallets', () => {
       email: 'human@example.com', email_verified_at: 1, wallet_address: other.address,
     });
     const response = await GET(new NextRequest(`${origin}/api/auth/wallet/verify?owner=${account.address}`));
+    expect(response.status).toBe(409);
+    expect((await response.json()).error.code).toBe('EMAIL_RECONFIRM_REQUIRED');
+    expect(response.cookies.get(WALLET_CHALLENGE_COOKIE)).toBeUndefined();
+  });
+  it('can reconnect the same linked wallet without another inbox confirmation', async () => {
+    auth.getSession.mockResolvedValue({ email: 'human@example.com', email_verified_at: 1, wallet_address: account.address.toUpperCase() });
+    const response = await GET(new NextRequest(origin + '/api/auth/wallet/verify?owner=' + account.address));
+    expect(response.status).toBe(200);
     const { message } = await response.json();
-    const challenge = response.cookies.get(WALLET_CHALLENGE_COOKIE)!.value;
+    expect((await submit(await account.signMessage({ message }), response.cookies.get(WALLET_CHALLENGE_COOKIE)!.value)).status).toBe(200);
+  });
+  it('allows deliberate replacement after email proof and rechecks freshness at submission', async () => {
+    const session = { email: 'human@example.com', email_verified_at: 1, wallet_address: other.address, wallet_rebind_verified_at: Math.floor(Date.now() / 1000) };
+    auth.getSession.mockResolvedValue(session);
+    const response = await GET(new NextRequest(origin + '/api/auth/wallet/verify?owner=' + account.address));
+    expect(response.status).toBe(200);
+    const { message } = await response.json();
     const signature = await account.signMessage({ message });
-    expect((await submit(signature, challenge)).status).toBe(409);
+    auth.getSession.mockResolvedValue({ ...session, wallet_rebind_verified_at: session.wallet_rebind_verified_at - 601 });
+    expect((await submit(signature, response.cookies.get(WALLET_CHALLENGE_COOKIE)!.value)).status).toBe(409);
+    auth.getSession.mockResolvedValue(session);
+    expect((await submit(signature, response.cookies.get(WALLET_CHALLENGE_COOKIE)!.value)).status).toBe(200);
   });
   it('does not accept a challenge token as wallet ownership or reuse ownership on another site', () => {
     const challenge = walletChallenge('human@example.com', origin, account.address);

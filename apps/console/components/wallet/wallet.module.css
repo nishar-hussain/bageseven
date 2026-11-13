@@ -1,0 +1,27 @@
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; max-width: 100%; }
+.connect,.network,.account,.wrongNetwork,.verify { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 40px; padding: 10px 14px; border-radius: 9px; font: 500 12px/1.4 Switzer,Arial,sans-serif; cursor: pointer; transition: background .15s,border-color .15s; }
+.connect { color: white; background: #112d94; border: 1px solid #112d94; }
+.connect:hover { background: #0a1f72; }
+.network { color: #667086; background: #fafaf8; border: 1px solid #e1e3e9; }
+.network:hover { background: #f0f1f6; border-color: #c4cbdc; }
+.account { color: #1d2433; background: white; border: 1px solid #d9dde6; font-variant-numeric: tabular-nums; }
+.account:hover { background: #f4f5f9; border-color: #112d94; }
+.account span { font-family: 'Chivo Mono',ui-monospace,monospace; font-size: 11px; }
+.networkDot { width: 6px; height: 6px; border-radius: 50%; background: #112d94; }
+.wrongNetwork { background: #fff1e4; color: #a8480f; border: 1px solid #f0d7c3; }
+.verify { margin-top: 14px; border: 1px solid #e1e3e9; color: #112d94; background: transparent; }
+.verify:hover { background: #f4f5f9; }
+.verify:disabled { cursor: default; color: #667086; }
+.connect:disabled { opacity: .55; cursor: wait; }
+.message,.error { margin: 10px 0 0; max-width: 420px; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.message { color: #667086; }
+.error { color: #ad302e; background: #fff3f1; border-radius: 8px; padding: 12px; }
+.replacement { margin-top: 14px; padding: 16px; border: 1px solid #e1e3e9; border-radius: 10px; background: #fafaf8; font-size: 12px; line-height: 1.8; color: #667086; overflow-wrap: anywhere; }
+.replacement h3 { color: #1d2433; font-size: 14px; font-weight: 600; margin: 0 0 8px; }
+.replacement p { margin: 0 0 12px; }
+.replacement code { font-size: 10px; overflow-wrap: anywhere; }
+.replacement label { display: block; color: #1d2433; margin: 16px 0; }
+.replacement input { display: block; width: 100%; padding: 12px; border: 1px solid #d9dde6; border-radius: 8px; background: white; font-size: 16px; letter-spacing: 4px; }
+.replacement .verify { margin-left: 8px; }
+.connect:focus-visible,.network:focus-visible,.account:focus-visible,.wrongNetwork:focus-visible,.verify:focus-visible { outline: 2px solid #112d94; outline-offset: 3px; }
+@media(prefers-reduced-motion:reduce) { .connect,.network,.account,.wrongNetwork,.verify { transition: none; } }

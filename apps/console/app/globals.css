@@ -4,31 +4,31 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
-  Fianto.xyz visual system (extracted live):
+  Bagseven product tokens:
   hero/night #0c0a0b · ink #0e0e10 · soft #f7f6f3/#f6f6f8
-  signature blue #0002f8 · line #ececf0 · gray #63636d
+  signature cobalt #112d94 · line #ececf0 · gray #63636d
   brand: Space Grotesk / Switzer · mono: Chivo Mono
 */
 
 :root {
-  --hero: #0c0a0b;
+  --hero: #101d48;
   --night: #04041a;
   --night2: #0a0a2e;
-  --ink: #0e0e10;
-  --ink2: #3a3a40;
+  --ink: #1d2433;
+  --ink2: #414b61;
   --paper: #ffffff;
-  --soft: #f6f6f8;
-  --soft2: #f7f6f3;
-  --dash-bg: #f2f2f2;
-  --muted: #63636d;
-  --faint: #6f6f78;
-  --line: #ececf0;
+  --soft: #f4f5f9;
+  --soft2: #f6f5f1;
+  --dash-bg: #f5f4f0;
+  --muted: #667086;
+  --faint: #707b91;
+  --line: #e1e3e9;
   --line2: #f3f3f6;
-  --blue: #0002f8;
-  --blue-d: #0001c8;
-  --blue-t: #eef;
-  --lilac: #e3e4ff;
-  --tint: #f2f3ff;
+  --blue: #112d94;
+  --blue-d: #0a1f72;
+  --blue-t: #e9edf9;
+  --lilac: #e0e7fa;
+  --tint: #eef2fc;
   --good: #1a7a45;
   --good-t: #e6f6ec;
   --warn: #a8480f;
@@ -42,16 +42,16 @@
   --r-s: 10px;
   --r-m: 16px;
   --r-l: 28px;
-  --sh: 0 1px 2px #0e0e100d, 0 18px 40px -18px #0e0e102e;
+  --sh: 0 1px 3px #17244a06;
 
-  /* shadcn bridge → Fianto */
+  /* Component token bridge → Bagseven */
   --background: var(--soft);
   --foreground: var(--ink);
   --card: var(--paper);
   --card-foreground: var(--ink);
   --popover: var(--paper);
   --popover-foreground: var(--ink);
-  --primary: var(--ink);
+  --primary: var(--blue);
   --primary-foreground: var(--paper);
   --secondary: var(--soft2);
   --secondary-foreground: var(--ink);

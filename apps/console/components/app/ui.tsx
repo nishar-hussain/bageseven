@@ -1,3 +1,4 @@
+import styles from './dashboard.module.css';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 
@@ -11,10 +12,12 @@ export function PageHeader({
   action?: ReactNode;
 }) {
   return (
-    <div className="flex flex-wrap items-start justify-between gap-4">
+    <div className={`${styles.pageHeader} flex flex-wrap items-start justify-between gap-4`}>
       <div className="min-w-0 max-w-2xl">
-        <h1 className="text-[1.75rem] font-semibold tracking-tight text-[var(--ink)] md:text-[2rem]">{title}</h1>
-        {description ? <p className="mt-1.5 break-words text-[13.5px] leading-relaxed text-[var(--muted)]">{description}</p> : null}
+        <h1 className={styles.pageTitle}>{title}</h1>
+        {description ? (
+          <p className={`${styles.pageDescription} mt-2 break-words text-[var(--muted)]`}>{description}</p>
+        ) : null}
       </div>
       {action ? <div className="flex shrink-0 flex-wrap items-center gap-2">{action}</div> : null}
     </div>
@@ -31,7 +34,10 @@ export function SoftCard({
   id?: string;
 }) {
   return (
-    <section id={id} className={`rounded-2xl border border-[var(--line)] bg-white shadow-[var(--sh)] ${className}`}>
+    <section
+      id={id}
+      className={`${styles.card} rounded-2xl border border-[var(--line)] bg-white shadow-[var(--sh)] ${className}`}
+    >
       {children}
     </section>
   );
@@ -76,7 +82,9 @@ export function Segmented<T extends string>({
           type="button"
           onClick={() => onChange(o.value)}
           className={`rounded-full px-3 py-1.5 transition ${
-            value === o.value ? 'bg-[var(--ink)] text-white shadow-sm' : 'text-[var(--muted)] hover:text-[var(--ink)]'
+            value === o.value
+              ? 'bg-[var(--ink)] text-white shadow-sm'
+              : 'text-[var(--muted)] hover:text-[var(--ink)]'
           }`}
         >
           {o.label}
@@ -99,8 +107,7 @@ export function PrimaryButton({
   disabled?: boolean;
   type?: 'button' | 'submit';
 }) {
-  const className =
-    'inline-flex items-center justify-center rounded-full bg-[var(--ink)] px-3.5 py-2 text-[13px] font-semibold text-white hover:bg-black disabled:opacity-50';
+  const className = `${styles.primary} inline-flex items-center justify-center rounded-full bg-[var(--ink)] px-3.5 py-2 text-[13px] font-semibold text-white hover:bg-black disabled:opacity-50`;
   if (href) {
     return (
       <Link href={href} className={className}>
@@ -128,8 +135,7 @@ export function SecondaryButton({
   disabled?: boolean;
   type?: 'button' | 'submit';
 }) {
-  const className =
-    'inline-flex items-center justify-center rounded-full border border-[var(--line)] bg-white px-3.5 py-2 text-[13px] font-medium text-[var(--ink)] hover:bg-[var(--soft)] disabled:opacity-50';
+  const className = `${styles.secondary} inline-flex items-center justify-center rounded-full border border-[var(--line)] bg-white px-3.5 py-2 text-[13px] font-medium text-[var(--ink)] hover:bg-[var(--soft)] disabled:opacity-50`;
   if (href) {
     return (
       <Link href={href} className={className}>

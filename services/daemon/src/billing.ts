@@ -5,7 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import { ApiError } from '@bagseven/server';
 import { EntitlementPreflightError, getGrantStore } from '@bagseven/entitlements';
 import type { Redis } from 'ioredis';
-import type { Database } from '@bagseven/db';
+import { billingDocumentId, type Database } from '@bagseven/db';
 import { ProviderGasManager, providerGasEnabled, verifyProviderScope, avalancheConfig } from '@bagseven/onchain';
 import { assertProviderReady } from './provider-gas.js';
 import { verifyPaymentAuthorization, verifyAvalanchePayment } from './avalanche-payment.js';
@@ -154,6 +154,7 @@ export function registerBillingRoutes(
     const session = await store.getCheckout(id);
     if (!session) throw new ApiError(404, 'CHECKOUT_NOT_FOUND', 'checkout session not found');
     if (session.status === 'PENDING') {
+      if (session.payment_token && session.payment_token.toLowerCase() !== avalancheConfig().usdt.toLowerCase()) throw new ApiError(409, 'CHECKOUT_TOKEN_CHANGED', 'Create a new checkout for the configured payment token');
       const plan = session.plan ?? await store.getPlan(session.plan_id);
       if (!plan) throw new ApiError(404, 'PLAN_NOT_FOUND', 'plan missing');
       await ready(plan.provider_id);
@@ -162,11 +163,12 @@ export function registerBillingRoutes(
       session: {
         id: session.id,
         status: session.status,
+        billing_document_url: `${process.env.CONSOLE_URL || 'http://localhost:3000'}/app/invoices/${billingDocumentId(`checkout:${session.id}`)}`,
         amount: session.amount,
         chain_id: session.chain_id,
         worker_id: session.worker_id,
-        subscription_plan: session.plan?.interval === 'month' && deps.subscriptions ? await deps.subscriptions.planView(session.plan_id, session.id, session.expires_at) : null,
-        payment: { chain_id: session.chain_id, usdt: avalancheConfig().usdt, rpc_url: avalancheConfig().rpcUrl, explorer: avalancheConfig().explorer },
+        subscription_plan: session.plan?.interval === 'month' && deps.subscriptions ? await deps.subscriptions.planView(session.plan, session.id, session.expires_at) : null,
+        payment: { chain_id: session.chain_id, usdt: session.payment_token ?? avalancheConfig().usdt, rpc_url: avalancheConfig().rpcUrl, explorer: avalancheConfig().explorer },
         holder: session.holder,
         expires_at: session.expires_at,
         customer_wallet: session.customer_wallet,
@@ -200,6 +202,7 @@ export function registerBillingRoutes(
     if (!plan) throw new ApiError(404, 'PLAN_NOT_FOUND', 'plan missing');
     await ready(plan.provider_id);
     if (session.chain_id !== avalancheConfig().chainId) throw new ApiError(409, 'CHECKOUT_NETWORK_CHANGED', 'Create a new checkout for the configured network');
+    if (session.payment_token && session.payment_token.toLowerCase() !== avalancheConfig().usdt.toLowerCase()) throw new ApiError(409, 'CHECKOUT_TOKEN_CHANGED', 'Create a new checkout for the configured payment token');
 
     const pending = confirmations.get(id);
     if (pending) return pending;
@@ -236,8 +239,10 @@ export function registerBillingRoutes(
       } else if (process.env.NODE_ENV === 'production') {
         throw new ApiError(503, 'PAYMENT_LEDGER_UNAVAILABLE', 'Payment replay protection is not configured');
       }
-      try { await store.claimPayment(body.payment_tx, id); } catch {
-        throw new ApiError(409, 'PAYMENT_REUSED', 'This payment already belongs to another checkout');
+      try { await store.claimPayment(body.payment_tx, id, plan.interval === 'once' ? body.customer_wallet : undefined); } catch (error) {
+        if (error instanceof Error && /PAYMENT_REUSED|BILLING_DOCUMENT_PAYMENT_CONFLICT/.test(error.message))
+          throw new ApiError(409, 'PAYMENT_REUSED', 'This payment conflicts with an existing checkout record; reconcile it before paying again');
+        throw new ApiError(503, 'PAYMENT_RECORD_UNAVAILABLE', 'Payment evidence could not be saved. Retry with the same transaction; do not pay again.');
       }
 
       const live = await grants.findLive({ holder: session.holder, feature: plan.feature });

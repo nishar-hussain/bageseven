@@ -56,7 +56,7 @@ export default function McpPage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-5">
-      <PageHeader title="Connect an agent" description="MCP slot for agents. They never hold account credentials." />
+      <PageHeader title="Connect an agent" description="Connect ChatGPT or another MCP client with scoped access. Your wallet keys stay private." />
 
       <section className="space-y-4 rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
         <div className="flex flex-wrap items-center justify-between gap-3">

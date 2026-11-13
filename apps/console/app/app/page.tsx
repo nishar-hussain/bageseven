@@ -1,193 +1,431 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { GrantList } from '../../components/app/GrantList';
-import { PageHeader, SoftCard, StatusPill } from '../../components/app/ui';
-import { entitlementsApi, type Grant, type MumbaiStatus } from '../../lib/entitlements-client';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  ArrowUpRight,
+  RefreshCw,
+  Check,
+  AlertCircle,
+  ShoppingBag,
+  CreditCard,
+  Users,
+  Layers,
+} from 'lucide-react';
+import type { ProviderOverview } from '../../lib/provider-overview';
+import styles from './overview.module.css';
 
-function Sparkline({ points }: { points: number[] }) {
-  const max = Math.max(...points, 1);
-  const w = 560;
-  const h = 160;
-  const step = w / Math.max(points.length - 1, 1);
-  const d = points
-    .map((p, i) => {
-      const x = Math.round(i * step * 1000) / 1000;
-      const y = Math.round((h - (p / max) * (h - 16) - 8) * 1000) / 1000;
-      return `${i === 0 ? 'M' : 'L'}${x},${y}`;
-    })
-    .join(' ');
-  return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="h-40 w-full" preserveAspectRatio="none" aria-hidden>
-      <path d={d} fill="none" stroke="var(--blue)" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function creditsSeries(grants: Grant[], days: number): number[] {
-  const now = Date.now();
-  const dayMs = 86_400_000;
-  return Array.from({ length: days }, (_, i) => {
-    const t = now + i * dayMs;
-    return grants.reduce((sum, g) => {
-      const end = new Date(g.paid_through).getTime();
-      if (Number.isNaN(end) || end <= t) return sum;
-      return sum + Number(g.remaining || 0);
-    }, 0);
-  });
-}
+const labels: Record<string, string> = {
+  PAID: 'Paid',
+  PENDING: 'Awaiting payment',
+  EXPIRED: 'Expired',
+  FAILED: 'Failed',
+  CANCELLED: 'Cancelled',
+  PAST_DUE: 'Past due',
+  RECONCILIATION_REQUIRED: 'Reconcile payment',
+};
+const date = (value: string) =>
+  new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 
 export default function OverviewPage() {
-  const [status, setStatus] = useState<MumbaiStatus | null>(null);
-  const [grants, setGrants] = useState<Grant[]>([]);
-  const [range, setRange] = useState<'7' | '30' | '180'>('30');
-  const [setup, setSetup] = useState<{ email: boolean; wallet: boolean }>({ email: false, wallet: false });
-  const [msg, setMsg] = useState('');
-
+  const [days, setDays] = useState(30);
+  const [data, setData] = useState<ProviderOverview | null>(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [selected, setSelected] = useState<string | null>(null);
+  const requestId = useRef({ value: 0 }).current;
   const refresh = useCallback(async () => {
+    const id = ++requestId.value;
+    setBusy(true);
+    setError('');
     try {
-      const [s, me] = await Promise.all([
-        entitlementsApi.status().catch(() => null),
-        fetch('/api/me', { signal: AbortSignal.timeout(8_000) })
-          .then(async (r) =>
-            r.ok
-              ? ((await r.json()) as { email_verified?: boolean; wallet_address?: string | null })
-              : null,
-          )
-          .catch(() => null),
-      ]);
-      setStatus(s);
-      setSetup({
-        email: !me?.email_verified,
-        wallet: !me?.wallet_address,
+      const response = await fetch(`/api/overview?days=${days}`, {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(12000),
       });
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : String(e));
+      const result = await response.json();
+      if (!response.ok) throw Error(result.error || 'Could not load provider activity.');
+      if (id === requestId.value) {
+        setData(result);
+        setSelected(null);
+      }
+    } catch (cause) {
+      if (id === requestId.value) setError(cause instanceof Error ? cause.message : 'Activity unavailable.');
+    } finally {
+      if (id === requestId.value) setBusy(false);
     }
-  }, []);
-
+  }, [days, requestId]);
   useEffect(() => {
     void refresh();
-    const id = window.setInterval(() => void refresh(), 45_000);
-    return () => window.clearInterval(id);
-  }, [refresh]);
-
-  const remaining = useMemo(
-    () => grants.reduce((acc, g) => acc + Number(g.remaining || 0), 0),
-    [grants],
-  );
-
-  const days = range === '7' ? 7 : range === '30' ? 30 : 180;
-  const spark = useMemo(() => creditsSeries(grants, days), [grants, days]);
-
-  const attentionBits: string[] = [];
-  if (grants.length === 0) attentionBits.push('no live entitlements yet');
-  if (status && !status.tracks.registry.live) attentionBits.push('Registry on local store');
-  if (status?.tracks.avalanche.demo_settle) attentionBits.push('Avalanche settle offline');
-  if (setup.email) attentionBits.push('email unverified');
-  if (setup.wallet) attentionBits.push('wallet not set');
-
+    const timer = setInterval(() => {
+      if (!document.hidden) void refresh();
+    }, 60000);
+    return () => {
+      requestId.value++;
+      clearInterval(timer);
+    };
+  }, [refresh, requestId]);
+  const current = data?.days === days ? data : null;
+  const metrics = current?.metrics;
+  const chart = current?.activity ?? [];
+  const max = Math.max(1, ...chart.map((d) => d.opened));
+  const focused = chart.find((d) => d.day === selected);
+  const attention = (metrics?.pastDue ?? 0) + (metrics?.reconciliation ?? 0);
   return (
-    <div className="mx-auto max-w-6xl space-y-5">
-      <PageHeader
-        title="Overview"
-        description="Living entitlements for your features — credits, TTL, and agent spend under mandate."
-      />
-
-      {attentionBits.length > 0 ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[var(--line)] bg-white px-4 py-3 shadow-[var(--sh)]">
-          <p className="text-sm text-[var(--ink)]">
-            <strong className="text-[var(--blue)]">{attentionBits.length} need attention</strong>
-            <span className="text-[var(--muted)]"> · {attentionBits.join(', ')}</span>
-          </p>
-          <Link
-            href="/app/attention"
-            className="rounded-full border border-[var(--line)] px-3 py-1.5 text-sm font-medium hover:bg-[var(--soft)]"
+    <div className={styles.overview}>
+      <header className={styles.intro}>
+        <div>
+          <div className={styles.eyebrow}>PROVIDER WORKSPACE</div>
+          <h1>Overview</h1>
+          <p>Sales activity, recurring payments and the next things to take care of.</p>
+        </div>
+        <div className={styles.toolbar}>
+          <select
+            aria-label="Reporting period"
+            value={days}
+            onChange={(e) => setDays(Number(e.target.value))}
           >
-            Review
+            <option value={7}>Last 7 days</option>
+            <option value={30}>Last 30 days</option>
+            <option value={90}>Last 90 days</option>
+          </select>
+          <button onClick={() => void refresh()} disabled={busy} aria-label="Refresh provider overview">
+            <RefreshCw size={15} className={busy ? styles.spinning : ''} />
+          </button>
+          <Link href="/app/plans">
+            Manage plans <ArrowUpRight size={14} />
           </Link>
         </div>
-      ) : null}
-
-      <SoftCard className="p-5 md:p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-[15px] font-semibold">Credits remaining</h2>
-          <div className="flex rounded-full border border-[var(--line)] bg-[var(--soft)] p-0.5 text-xs font-medium">
-            {(['7', '30', '180'] as const).map((r) => (
-              <button
-                key={r}
-                type="button"
-                onClick={() => setRange(r)}
-                className={`rounded-full px-3 py-1.5 ${range === r ? 'bg-white shadow-sm' : 'text-[var(--muted)]'}`}
-              >
-                {r === '7' ? '7 days' : r === '30' ? '30 days' : '180 days'}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="mt-4 flex flex-wrap items-end gap-3">
-          <div className="text-4xl font-semibold tracking-tight tabular-nums">{remaining.toFixed(2)}</div>
-          <div className="mb-1 text-sm text-[var(--muted)]">across living entitlements</div>
-          {grants.length === 0 ? (
-            <StatusPill tone="neutral">No live entitlements yet</StatusPill>
-          ) : (
-            <StatusPill tone="good">{grants.length} live</StatusPill>
-          )}
-        </div>
-        <div className="mt-4">
-          <Sparkline points={spark.length ? spark : [0, 0]} />
-        </div>
-      </SoftCard>
-
-      <div className="grid gap-4 md:grid-cols-2">
-        <SoftCard className="p-5">
-          <h2 className="text-[15px] font-semibold">Workspace</h2>
-          <dl className="mt-4 grid grid-cols-2 gap-4">
-            <div>
-              <dt className="text-xs uppercase tracking-wide text-[var(--muted)]">Entitlements</dt>
-              <dd className="mt-1 text-2xl font-semibold tabular-nums">{grants.length}</dd>
-            </div>
-            <div>
-              <dt className="text-xs uppercase tracking-wide text-[var(--muted)]">Credits</dt>
-              <dd className="mt-1 text-2xl font-semibold tabular-nums">{remaining.toFixed(0)}</dd>
-            </div>
-            <div>
-              <dt className="text-xs uppercase tracking-wide text-[var(--muted)]">Account</dt>
-              <dd className="mt-1 text-lg font-medium capitalize">Email + wallet</dd>
-            </div>
-            <div>
-              <dt className="text-xs uppercase tracking-wide text-[var(--muted)]">Registry</dt>
-              <dd className="mt-1 text-lg font-medium">{status?.tracks.registry.live ? 'Live' : 'Local'}</dd>
-            </div>
-          </dl>
-          <div className="mt-5 flex flex-wrap gap-2">
-            <Link href="/app/mint" className="rounded-full bg-[var(--ink)] px-3.5 py-2 text-sm font-semibold text-white">
-              Create entitlement
-            </Link>
-            <Link href="/app/features" className="rounded-full border border-[var(--line)] px-3.5 py-2 text-sm font-medium">
-              Features
-            </Link>
-            <Link href="/app/credits" className="rounded-full border border-[var(--line)] px-3.5 py-2 text-sm font-medium">
-              Buy credits
-            </Link>
-          </div>
-        </SoftCard>
-
-        <SoftCard className="p-5">
-          <h2 className="text-[15px] font-semibold">Mandate</h2>
-          <p className="mt-1 text-sm text-[var(--muted)]">
-            Spend ceiling for agents. Dual-gate needs this and a living entitlement.
+      </header>
+      {error && (
+        <div className={styles.error} role="alert">
+          <AlertCircle size={17} />
+          <p>
+            {error} {current && 'Previously loaded data is shown below and may be out of date.'}
           </p>
-          <Link href="/app/mandate" className="mt-4 inline-flex rounded-full border border-[var(--line)] px-3.5 py-2 text-sm font-medium">
-            Open mandate →
+          <button onClick={() => void refresh()}>Retry</button>
+        </div>
+      )}
+      <div className={styles.stats} aria-busy={busy}>
+        {[
+          {
+            label: 'Paid checkouts',
+            value: metrics?.paid,
+            sub: `From checkouts opened in this period`,
+            icon: ShoppingBag,
+            href: `/app/checkouts?status=PAID&days=${days}`,
+          },
+          {
+            label: 'Paying customers',
+            value: metrics?.customers,
+            sub: 'Distinct checkout holders in this period',
+            icon: Users,
+            href: `/app/checkouts?status=PAID&days=${days}`,
+          },
+          {
+            label: 'Active subscriptions',
+            value: metrics?.activeSubscriptions,
+            sub: 'Current recurring permissions · all periods',
+            icon: CreditCard,
+            href: '/app/plans#subscriptions',
+          },
+          {
+            label: 'Active plans',
+            value: metrics?.activePlans,
+            sub: 'Currently available in your catalog',
+            icon: Layers,
+            href: '/app/plans',
+          },
+        ].map((m) => (
+          <Link key={m.label} className={styles.stat} href={m.href}>
+            <div>
+              <span>{m.label}</span>
+              <m.icon size={15} />
+            </div>
+            <strong>{m.value ?? '—'}</strong>
+            <p>{m.sub}</p>
+            <ArrowUpRight className={styles.statArrow} size={14} />
           </Link>
-        </SoftCard>
+        ))}
       </div>
-
-      <GrantList onGrantsChange={setGrants} />
-
-      {msg ? <p className="fi-mono text-xs text-[var(--deny)]">{msg}</p> : null}
+      <div className={styles.primaryGrid}>
+        <section className={styles.panel}>
+          <div className={styles.panelHead}>
+            <div>
+              <h2>Checkout activity</h2>
+              <p>Opened in this period · grouped by creation date, UTC</p>
+            </div>
+            <span className={styles.liveLabel}>
+              {busy
+                ? 'Updating…'
+                : current
+                  ? `Updated ${new Date(current.asOf).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`
+                  : 'Not loaded'}
+            </span>
+          </div>
+          <div className={styles.chartSummary}>
+            <strong>
+              {metrics?.checkouts ?? '—'}
+              <span>checkouts opened</span>
+            </strong>
+            <div>
+              <span>
+                <i />
+                Opened
+              </span>
+              <span>
+                <i />
+                Now paid
+              </span>
+            </div>
+          </div>
+          {current ? (
+            <>
+              <div
+                className={styles.chart}
+                role="group"
+                aria-label="Daily checkouts, select a day for details"
+              >
+                {chart.map((day) => (
+                  <button
+                    key={day.day}
+                    className={`${styles.bar} ${selected === day.day ? styles.selectedBar : ''}`}
+                    tabIndex={selected === day.day || (!selected && day.day === chart[0]?.day) ? 0 : -1}
+                    onKeyDown={(event) => {
+                      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+                      event.preventDefault();
+                      const buttons = event.currentTarget.parentElement?.querySelectorAll('button');
+                      if (!buttons) return;
+                      const index = chart.findIndex((item) => item.day === day.day);
+                      const next =
+                        event.key === 'Home'
+                          ? 0
+                          : event.key === 'End'
+                            ? chart.length - 1
+                            : Math.max(
+                                0,
+                                Math.min(chart.length - 1, index + (event.key === 'ArrowRight' ? 1 : -1)),
+                              );
+                      buttons[next]?.focus();
+                    }}
+                    onFocus={() => setSelected(day.day)}
+                    onMouseEnter={() => setSelected(day.day)}
+                    onClick={() => setSelected(day.day)}
+                    aria-label={`${day.day}: ${day.opened} opened, ${day.paid} now paid`}
+                    aria-pressed={selected === day.day}
+                  >
+                    <span style={{ height: `${day.opened ? Math.max(3, (day.opened / max) * 100) : 1}%` }} />
+                    <span style={{ height: `${day.paid ? Math.max(3, (day.paid / max) * 100) : 0}%` }} />
+                  </button>
+                ))}
+              </div>
+              <div className={styles.chartAxis}>
+                <span>{chart[0]?.day}</span>
+                <span>{chart.at(-1)?.day}</span>
+              </div>
+              <p className={styles.chartDetail} aria-live="polite">
+                {focused
+                  ? `${focused.day} · ${focused.opened} opened · ${focused.paid} now paid`
+                  : metrics?.checkouts
+                    ? 'Select a day to inspect checkout activity.'
+                    : 'No checkouts opened in this period. Share your billing embed to start accepting purchases.'}
+              </p>
+            </>
+          ) : (
+            <p className={styles.empty}>
+              {busy ? 'Loading checkout activity…' : 'Checkout activity could not be loaded.'}
+            </p>
+          )}
+          <div className={styles.outcomes}>
+            <div>
+              <strong>{metrics?.paid ?? '—'}</strong>
+              <span>Paid</span>
+            </div>
+            <div>
+              <strong>{metrics?.pending ?? '—'}</strong>
+              <span>Awaiting payment</span>
+            </div>
+            <div>
+              <strong>{metrics?.expired ?? '—'}</strong>
+              <span>Expired</span>
+            </div>
+            <div>
+              <strong>{metrics?.failed ?? '—'}</strong>
+              <span>Failed</span>
+            </div>
+          </div>
+        </section>
+        <aside className={styles.rightColumn}>
+          <section className={styles.panel}>
+            <div className={styles.panelHead}>
+              <div>
+                <h2>Needs your attention</h2>
+                <p>Current subscription issues</p>
+              </div>
+              <span className={attention ? styles.countWarn : styles.count}>{metrics ? attention : '—'}</span>
+            </div>
+            {metrics ? (
+              attention ? (
+                <>
+                  <div className={styles.issueSummary}>
+                    {metrics.pastDue > 0 && (
+                      <p>
+                        <strong>{metrics.pastDue}</strong> past-due subscription
+                        {metrics.pastDue === 1 ? '' : 's'}
+                      </p>
+                    )}
+                    {metrics.reconciliation > 0 && (
+                      <p>
+                        <strong>{metrics.reconciliation}</strong> payment
+                        {metrics.reconciliation === 1 ? '' : 's'} needing reconciliation
+                      </p>
+                    )}
+                  </div>
+                  {current?.subscriptions.map((sub) => (
+                    <Link key={sub.id} href="/app/plans#subscriptions" className={styles.issue}>
+                      <AlertCircle size={15} />
+                      <span>
+                        <strong>{sub.plan}</strong>
+                        <small>{labels[sub.status] ?? sub.status}</small>
+                      </span>
+                      <ArrowUpRight size={13} />
+                    </Link>
+                  ))}
+                  <p className={styles.note}>
+                    Resolve uncertain payments before charging or issuing access again.
+                  </p>
+                </>
+              ) : (
+                <div className={styles.allClear}>
+                  <Check size={20} />
+                  <strong>No subscription issues reported</strong>
+                  <p>
+                    {metrics.activeSubscriptions
+                      ? 'No past-due or reconciliation states at the last refresh.'
+                      : 'No active recurring subscriptions yet. Customer approval is required before recurring collection.'}
+                  </p>
+                </div>
+              )
+            ) : (
+              <p className={styles.empty}>Waiting for subscription status.</p>
+            )}
+          </section>
+          <section className={`${styles.panel} ${styles.setup}`}>
+            <div className={styles.eyebrow}>CUSTOMER CHECKOUT</div>
+            <h2>
+              {metrics?.publishedEmbeds
+                ? 'Your billing page is published.'
+                : 'Put your plans in front of customers.'}
+            </h2>
+            <p>
+              {metrics?.publishedEmbeds
+                ? `${metrics.publishedEmbeds} published embed design${metrics.publishedEmbeds === 1 ? '' : 's'}. Review your installation and customer sign-in before sharing.`
+                : 'Choose your plans, style the unified embed, then connect it to your app.'}
+            </p>
+            <Link href="/app/builder">
+              {metrics?.publishedEmbeds ? 'Manage your embed' : 'Set up your embed'}
+              <ArrowUpRight size={15} />
+            </Link>
+          </section>
+        </aside>
+      </div>
+      <div className={styles.bottomGrid}>
+        <section className={styles.panel}>
+          <div className={styles.panelHead}>
+            <div>
+              <h2>Recent checkouts</h2>
+              <p>Latest six in the selected period</p>
+            </div>
+            <Link href={`/app/checkouts?days=${days}`}>
+              View all <ArrowUpRight size={13} />
+            </Link>
+          </div>
+          {current?.recent.length ? (
+            <div className={styles.tableWrap}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Plan / checkout</th>
+                    <th>Created</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {current.recent.map((row) => (
+                    <tr key={row.id}>
+                      <td>
+                        <strong>{row.plan}</strong>
+                        <small>{row.id.slice(0, 15)}…</small>
+                      </td>
+                      <td>{date(row.createdAt)}</td>
+                      <td>
+                        <span className={row.status === 'PAID' ? styles.paid : styles.status}>
+                          {labels[row.status] ?? row.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className={styles.empty}>
+              <ShoppingBag size={22} />
+              <h3>
+                {!current
+                  ? busy
+                    ? 'Loading checkouts…'
+                    : 'Checkouts unavailable'
+                  : 'No checkouts in this period'}
+              </h3>
+              <p>Paid and unfinished checkouts appear here when a customer starts a purchase.</p>
+              <Link href="/app/builder">
+                Review your checkout experience <ArrowUpRight size={13} />
+              </Link>
+            </div>
+          )}
+        </section>
+        <section className={styles.panel}>
+          <div className={styles.panelHead}>
+            <div>
+              <h2>Plan performance</h2>
+              <p>Checkout counts · selected period</p>
+            </div>
+            <Link href="/app/plans">
+              Catalog <ArrowUpRight size={13} />
+            </Link>
+          </div>
+          {current?.topPlans.length ? (
+            <div className={styles.planList}>
+              {current.topPlans.map((plan) => (
+                <Link key={plan.id} href="/app/plans">
+                  <span>
+                    <strong>{plan.name}</strong>
+                    <small>{plan.opened} opened</small>
+                  </span>
+                  <span>
+                    <strong>{plan.paid}</strong>
+                    <small>paid</small>
+                  </span>
+                  <ArrowUpRight size={13} />
+                </Link>
+              ))}
+            </div>
+          ) : (
+            <p className={styles.empty}>
+              {busy ? 'Loading plans…' : 'Create your first plan to start tracking checkout activity.'}
+            </p>
+          )}
+          <p className={styles.note}>
+            These are checkout counts, not revenue or renewal collections. Directly issued grants are not
+            counted as sales.
+          </p>
+        </section>
+      </div>
+      <footer className={styles.footnote}>
+        Provider-scoped billing records. Credit balances and access validity remain authoritative on
+        Avalanche. <Link href="/app/settings">Network & gas ↗</Link>
+      </footer>
     </div>
   );
 }

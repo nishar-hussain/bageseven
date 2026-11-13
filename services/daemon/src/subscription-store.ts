@@ -1,4 +1,4 @@
-import { billingSubscriptions, subscriptionPeriods, subscriptionPlans, type Database } from '@bagseven/db';
+import { billingSubscriptions, subscriptionPeriods, subscriptionPlans, billingDocuments, issueBillingDocument, recordDocumentPayment, type BillingDocumentTerms, type Database } from '@bagseven/db';
 import { and, asc, eq, gt, lte, ne, or, sql } from 'drizzle-orm';
 import type { Subscription, SubscriptionPeriod, SubscriptionPlan } from './subscription-types.js';
 
@@ -89,8 +89,28 @@ export class PostgresSubscriptionStore implements SubscriptionStore {
     return row ? row.data as SubscriptionPeriod : null;
   }
   async savePeriod(period: SubscriptionPeriod) {
-    await this.db.insert(subscriptionPeriods).values({ id: period.id, subscriptionId: period.subscriptionId, data: period })
-      .onConflictDoUpdate({ target: subscriptionPeriods.id, set: { data: period } });
+    await this.db.transaction(async tx => {
+      const [row] = await tx.select().from(billingSubscriptions).where(eq(billingSubscriptions.id, period.subscriptionId));
+      if (!row) throw Error('SUBSCRIPTION_NOT_FOUND');
+      const sub = row.data as Subscription;
+      const initial = period.id === `${sub.id}:initial`;
+      const source = initial ? `checkout:${sub.checkoutId}` : `period:${period.id}`;
+      if (!initial) {
+        const [original] = await tx.select().from(billingDocuments).where(eq(billingDocuments.source, `checkout:${sub.checkoutId}`));
+        if (!original) throw Error('BILLING_DOCUMENT_MISSING');
+        const terms = original.terms as BillingDocumentTerms;
+        await issueBillingDocument(tx, { source, provider: sub.providerId, holder: sub.holder, terms: {
+          ...terms, amount: sub.plan.amount, kind: 'renewal',
+          periodStart: new Date(period.due * 1000).toISOString(),
+          periodEnd: new Date((period.due + sub.plan.ttl_seconds) * 1000).toISOString(),
+        } });
+      }
+      await tx.insert(subscriptionPeriods).values({ id: period.id, subscriptionId: period.subscriptionId, data: period })
+        .onConflictDoUpdate({ target: subscriptionPeriods.id, set: { data: period } });
+      if (['confirmed', 'minting', 'complete'].includes(period.stage)) await recordDocumentPayment(tx, source, period.hash, sub.payer);
+      else if (period.stage === 'failed') await tx.update(billingDocuments).set({ status: 'VOID' })
+        .where(and(eq(billingDocuments.source, source), eq(billingDocuments.status, 'OPEN')));
+    });
   }
   async lock<T>(id: string, operation: () => Promise<T>) {
     // At most two lock connections; the default ten-connection pool retains room

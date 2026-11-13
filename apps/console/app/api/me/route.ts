@@ -18,5 +18,5 @@ export async function GET() {
     mock: Boolean(session.mock),
     holder,
     operator_wallets: operatorOwnerAddresses(),
-  });
+  }, { headers: { 'Cache-Control': 'no-store' } });
 }

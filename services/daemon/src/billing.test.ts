@@ -23,6 +23,22 @@ afterEach(() => {
 });
 
 describe('billing plans + checkout', () => {
+  it('refuses a token configuration change after invoicing instead of collecting a different asset', async () => {
+    vi.stubEnv('AVALANCHE_USDC', `0x${'11'.repeat(20)}`);
+    const app = Fastify();
+    app.setErrorHandler((error, _req, reply) => { const result = errorResponse(error); return reply.code(result.status).send(result.body); });
+    registerBillingRoutes(app);
+    const plan = await getBillingStore().createPlan({ name: 'Token snapshot', feature: 'ocr', amount: '1', merchant_wallet: `0x${'22'.repeat(20)}` });
+    const session = await getBillingStore().createCheckout({ plan_id: plan.id, holder: 'buyer' });
+    vi.stubEnv('AVALANCHE_USDC', `0x${'33'.repeat(20)}`);
+    try {
+      const read = await app.inject({ url: `/v1/public/checkout/${session.id}` });
+      expect(read.statusCode).toBe(409); expect(read.json().error.code).toBe('CHECKOUT_TOKEN_CHANGED');
+      const confirm = await app.inject({ method: 'POST', url: `/v1/public/checkout/${session.id}/confirm`, payload: { payment_tx: `0x${'44'.repeat(32)}`, customer_wallet: `0x${'55'.repeat(20)}` } });
+      expect(confirm.statusCode).toBe(409); expect(confirm.json().error.code).toBe('CHECKOUT_TOKEN_CHANGED');
+      expect(await getGrantStore().findLive({ holder: 'buyer' })).toHaveLength(0);
+    } finally { await app.close(); }
+  });
   it('recovers an issued grant after checkout persistence fails without minting again', async () => {
     const holds = new Map<string, string>();
     const redis = { set: async (k: string, v: string, nx?: string) => { if (nx && holds.has(k)) return null; holds.set(k, v); return 'OK'; },

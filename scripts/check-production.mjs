@@ -70,7 +70,7 @@ for (const [file, keys] of [
   const data = existsSync(resolve(root, file)) ? parseEnv(readFileSync(resolve(root, file), 'utf8')) : {};
   check(file, keys.every(key => supplied(key) && data[key] === env[key]), 'shared configuration matches production source');
 }
-console.log('INFO Railway must resolve database/private-network references and run migrations through 0020. Import any existing feature catalog before accepting traffic.');
+console.log('INFO Railway must resolve database/private-network references and run migrations through 0021. Import any existing feature catalog before accepting traffic.');
 console.log('INFO Providers must sign gas authorization and fund their dedicated signer with AVAX before customers can check out.');
 console.log('INFO This checks files only. Email and wallet sign-in and a wallet-approved checkout still require live verification.');
 console.log(`${failures ? `PRODUCTION_NEEDS_SETUP (${failures} checks)` : 'PRODUCTION_CONFIG_OK'}`);

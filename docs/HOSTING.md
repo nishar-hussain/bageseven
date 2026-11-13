@@ -6,7 +6,7 @@ Required server configuration includes `DATABASE_URL`, `REDIS_URL`, `AUTH_SECRET
 
 Use Fuji chain 43113 with `AVALANCHE_NETWORK=fuji`, `AVALANCHE_CHAIN_ID=43113`, `AVALANCHE_RPC_URL=https://api.avax-test.network/ext/bc/C/rpc`, matching `CHAIN_ID`/`RPC_URL`, and an explicitly chosen six-decimal token in `AVALANCHE_USDC`. Existing contract addresses from another network cannot be reused. Set `AVALANCHE_DEMO_SETTLE=false`.
 
-Deploy `BagEntitlementRegistry` and configure `AVALANCHE_ENTITLEMENT_REGISTRY`. Set `ENTITLEMENT_STORE=avalanche`, generate and persist a private `ENTITLEMENT_SUBJECT_SECRET`, and run database migrations through 0020. Provider gas permissions must be newly signed for the configured chain and provider; native funding is AVAX. Do not import authorization blobs from another deployment.
+Deploy `BagEntitlementRegistry` and configure `AVALANCHE_ENTITLEMENT_REGISTRY`. Set `ENTITLEMENT_STORE=avalanche`, generate and persist a private `ENTITLEMENT_SUBJECT_SECRET`, and run database migrations through 0022. Provider gas permissions must be newly signed for the configured chain and provider; native funding is AVAX. Do not import authorization blobs from another deployment.
 
 Console uses `NEXT_PUBLIC_AVALANCHE_FUJI_RPC_URL` and `NEXT_PUBLIC_AVALANCHE_EXPLORER` for wallet display. It also needs its daemon/gateway URLs, shared session/provider secrets, Resend configuration and WalletConnect project ID. Production email delivery failures are surfaced as unavailable sign-in rather than exposing development links.
 
@@ -45,3 +45,29 @@ The command pins the official public Fuji RPC and genesis, rejecting local Anvil
 Alternatively, approve deployment in the existing Registry studio with your browser wallet, then run `pnpm fuji:registry verify <public-transaction-hash> <public-owner-address>`. This read-only chain verification requires no keystore and saves the same public manifest for `pnpm fuji:prepare`; it refuses to replace a different previously verified deployment.
 
 Verified public details appear in `.data/fuji/registry.json`; share only the public transaction hash and registry address. This operation deploys the registry only and preserves the existing Anvil configuration. Activating public Fuji still requires an explicit configuration change, provider gas approval/funding and separately approved customer transactions; local fixtures and balances do not migrate to Fuji.
+
+## Local Anvil snapshot permissions
+
+The Foundry image runs as UID 1000. Docker initially owns named volume directories as root; the `anvil-state-init` service prepares `/data` before Anvil starts. Anvil writes `/data/state.json` every second and reloads it on restart. Confirm that the snapshot exists and is writable before relying on local fixtures. PostgreSQL discovery metadata cannot restore missing contract state.
+
+If Anvil is empty while PostgreSQL still references contracts, back up both stores before recovery. Restore a matching chain/database snapshot or explicitly reset chain-dependent test data; do not silently turn database balances into on-chain grants. Preserve account profiles, feature/catalog definitions, embed designs and the subject secret when refreshing local fixtures. Reconnect MCP clients whose worker credentials belonged to the retired test chain. `LOCAL_PROVIDER_EMAIL` selects an Anvil-only provider fixture: the known development owner approves its gas permission, the delegated provider signer deploys/enforces its spending mandate, and monthly plan contracts are prepared without enrolling a customer.
+
+## Activate public Fuji on the existing local product ports
+
+The current verified registry is `0x52698af55f4396b3f31ff4940e5060140c3df03f`, deployed by `0x59f9F231d579D2780898Ec9B6de7a1e6CD40F62F` in transaction `0x255747ec4f05f66dfd78fb76968e65b5dfef2f891ade355e5d1ba7f48d4e619a`. Its creation transaction and deployed runtime were verified against the paired registry artifact on public Fuji. Deployment credentials remain in the encrypted Foundry keystore, not in application environment files.
+
+After `pnpm fuji:prepare`, `pnpm fuji:activate` runs a read-only preflight. `pnpm fuji:activate --apply` verifies the deployment manifest and selected token on-chain, creates/migrates a separate local `bagseven_fuji` database, backs up the old private environment, stops the old service owners and selects the public runtime. Existing product ports and local web origins remain unchanged; this does not publish the web apps to an internet host. The old Anvil database is not deleted or imported. No grants, mandates, gas permissions, billing plans or subscription consent are synthesized.
+
+Start with `pnpm start:local` and `pnpm mcp:local`. Startup requires public HTTPS RPCs when development mode is off and verifies Fuji genesis before serving the stack. Known development signing keys, static MCP tokens and legacy chain aliases are absent from the active runtime. Re-sign in, link your wallet and explicitly authorize/fund provider gas before preparing paid plans. A customer must separately approve payment and recurring permissions. Preserve the subject secret and both custody encryption keys.
+
+Anvil is now an opt-in Docker profile (`local-anvil`) for isolated tests. Default Compose startup does not launch it; platform setup starts it only for an explicitly selected development fixture. `pnpm setup -- --force` cannot overwrite a public runtime with development keys. Brand-new Anvil fixture generation requires explicit `--anvil` in a separate test checkout. Automated tests can continue to use isolated temporary EVMs without changing the active public network.
+
+If a free ngrok hostname changes, update `BAGSEVEN_MCP_PUBLIC_URL`, restart MCP and reconnect the custom client to its HTTPS `/mcp` URL. The hostname is a development access tunnel, not permanent production hosting. OAuth email/wallet consent remains required, and the public-chain database deliberately has none of the old Anvil authorizations.
+
+### Fund a provider gas account from the encrypted deployment wallet
+
+After signing the limited provider gas permission in Network & gas, `pnpm fuji:gas plan` reads the active public-Fuji permission and prepares a 0.05 AVAX deposit from the deployment keystore. The provider wallet that authorized the delegated signer can differ from the wallet funding its native gas. The deposit grants no stablecoin allowance or vault authority.
+
+Run `pnpm fuji:gas fund` in your own terminal. Review the destination, public network and maximum additional fee, type `FUND FUJI GAS`, then unlock the Foundry keystore locally. The command validates the exact signed recipient, native value, chain, nonce and fee fields; rejects calldata or another signer; journals signed bytes and hash before broadcast; and waits for two confirmations. If interrupted use `pnpm fuji:gas resume` to recover the same transaction, or `status` to verify it. An existing journal blocks a duplicate deposit. Additional routine funding can use the dashboard wallet flow after explicit review. Neither this utility nor the application sees the keystore password or raw deployment private key.
+
+`pnpm fuji:gas status` also reports the dedicated account's current public-Fuji balance when no funding journal exists. External transfers can fund that account without creating a local journal; its balance alone does not verify a particular payment. A wallet's pending-request error does not establish whether a deposit was sent. Review or dismiss the pending request in the wallet, then check the dedicated account balance or transaction receipt before retrying. After an external deposit confirms, use **Refresh account** in Network & gas.

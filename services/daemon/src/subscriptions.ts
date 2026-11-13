@@ -41,8 +41,21 @@ export class Subscriptions {
     if (!result) throw Error('SUBSCRIPTION_BUSY: plan preparation is in progress; retry this checkout');
     return result;
   }
-  async planView(planId: string, checkoutId: string, expiresAt: string) {
-    const plan = await this.store.plan(planId);
+  async planView(terms: Plan, checkoutId: string, expiresAt: string) {
+    let plan = await this.store.plan(terms.id);
+    if (plan?.status === 'preparing') {
+      // Public checkout polling may reconcile an existing deployment, but must
+      // never create, sign or broadcast a new provider transaction.
+      plan = await this.store.lock(`plan:${terms.id}`, async () => {
+        const current = await this.store.plan(terms.id);
+        if (current?.status === 'preparing' && await this.chain.verifyPlan(current, terms)) {
+          const ready = { ...current, status: 'ready' as const, raw: undefined };
+          await this.store.savePlan(ready);
+          return ready;
+        }
+        return current;
+      }) ?? plan;
+    }
     return plan ? { status: plan.status, address: plan.contract, chain_id: plan.chainId,
       subscribe_data: encodeFunctionData({ abi: SubscriptionAbi, functionName: 'subscribe', args: [checkoutKey(checkoutId), BigInt(Math.floor(Date.parse(expiresAt) / 1000))] }) } : null;
   }

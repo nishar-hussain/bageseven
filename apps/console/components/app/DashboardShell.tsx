@@ -1,8 +1,10 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
+import styles from './dashboard.module.css';
 import { usePathname } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { identityLabel } from '../../lib/identity-label';
 import {
   AlertTriangle,
@@ -14,12 +16,17 @@ import {
   LayoutDashboard,
   Layers,
   Puzzle,
-  Search,
+  ShoppingBag,
+  Menu,
+  Plus,
+  ArrowUpRight,
   Settings2,
   Shield,
   SquareStack,
   Terminal,
   UserRound,
+  UsersRound,
+  FileText,
   WalletCards,
 } from 'lucide-react';
 
@@ -30,6 +37,9 @@ const mainNav: NavItem[] = [
   { href: '/app/grants', label: 'Entitlements', icon: CreditCard },
   { href: '/app/features', label: 'Features', icon: Layers },
   { href: '/app/plans', label: 'Plans', icon: WalletCards },
+  { href: '/app/checkouts', label: 'Checkouts', icon: ShoppingBag },
+  { href: '/app/customers', label: 'Customers', icon: UsersRound },
+  { href: '/app/invoices', label: 'Invoices', icon: FileText },
   { href: '/app/builder', label: 'Builder', icon: SquareStack },
   { href: '/app/developers', label: 'Developers', icon: KeyRound },
 ];
@@ -43,54 +53,104 @@ const accessNav: NavItem[] = [
   { href: '/app/mandate', label: 'Agent spending', icon: Shield },
   { href: '/app/mcp', label: 'Connect agent', icon: Terminal },
   { href: '/app/sdk', label: 'SDK', icon: Puzzle },
-  { href: `${process.env.NEXT_PUBLIC_LANDING_URL ?? 'http://localhost:3001'}/docs/introduction`, label: 'Documentation', icon: BookOpen },
+  {
+    href: `${process.env.NEXT_PUBLIC_LANDING_URL ?? 'http://localhost:3001'}/docs/introduction`,
+    label: 'Documentation',
+    icon: BookOpen,
+  },
 ];
 
 const settingsNav: NavItem[] = [
   { href: '/app/account', label: 'Account', icon: UserRound },
   { href: '/app/attention', label: 'Needs attention', icon: AlertTriangle },
-  { href: '/app/settings', label: 'Tracks', icon: Settings2 },
+  { href: '/app/settings', label: 'Network & gas', icon: Settings2 },
   { href: '/app/registry', label: 'Registry studio', icon: Layers },
 ];
 
-function NavLink({ item, active }: { item: NavItem; active: boolean }) {
+function NavLink({ item, active, onNavigate }: { item: NavItem; active: boolean; onNavigate?: () => void }) {
   const Icon = item.icon;
   return (
     <Link
       href={item.href}
-      className={`flex items-center gap-2.5 rounded-xl px-3 py-2 text-[13.5px] transition ${
-        active
-          ? 'bg-white font-semibold text-[var(--ink)] shadow-[var(--sh)]'
-          : 'text-[var(--ink2)] hover:bg-white/70 hover:text-[var(--ink)]'
-      }`}
+      onClick={onNavigate}
+      aria-current={active ? 'page' : undefined}
+      className={`${styles.navItem} ${active ? styles.active : ''}`}
     >
-      <Icon className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
-      <span className="flex-1 truncate">{item.label}</span>
-      {item.badge != null && item.badge > 0 ? (
-        <span className="rounded-full bg-[var(--warn-t)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--warn)]">
-          {item.badge}
-        </span>
-      ) : null}
+      <Icon size={16} strokeWidth={1.65} />
+      <span>{item.label}</span>
+      {item.badge != null && item.badge > 0 ? <span className={styles.badge}>{item.badge}</span> : null}
     </Link>
   );
 }
-
-function Group({ title, items, pathname }: { title: string; items: NavItem[]; pathname: string }) {
+function Group({
+  title,
+  items,
+  pathname,
+  onNavigate,
+}: {
+  title: string;
+  items: NavItem[];
+  pathname: string;
+  onNavigate: () => void;
+}) {
   return (
-    <div className="mt-5">
-      <div className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--faint)]">{title}</div>
-      <div className="space-y-0.5">
-        {items.map((item) => {
-          const active = pathname === item.href || (item.href !== '/app' && pathname.startsWith(item.href));
-          return <NavLink key={item.href} item={item} active={active} />;
-        })}
-      </div>
+    <div className={styles.group}>
+      <div className={styles.groupLabel}>{title}</div>
+      {items.map((item) => (
+        <NavLink
+          key={item.href}
+          item={item}
+          active={pathname === item.href || pathname.startsWith(item.href + '/')}
+          onNavigate={onNavigate}
+        />
+      ))}
     </div>
   );
 }
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const closeNav = () => setMobileOpen(false);
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    sidebarRef.current?.querySelector<HTMLElement>('a')?.focus();
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === 'Tab') {
+        const links = sidebarRef.current?.querySelectorAll<HTMLElement>('a, button');
+        if (links?.length) {
+          const first = links[0],
+            last = links[links.length - 1];
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last?.focus();
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first?.focus();
+          }
+        }
+      }
+      if (event.key === 'Escape') {
+        setMobileOpen(false);
+        toggleRef.current?.focus();
+      }
+    };
+    const wide = window.matchMedia('(min-width: 801px)');
+    const resized = () => {
+      if (wide.matches) setMobileOpen(false);
+    };
+    window.addEventListener('keydown', escape);
+    wide.addEventListener('change', resized);
+    return () => {
+      document.body.style.overflow = previous;
+      window.removeEventListener('keydown', escape);
+      wide.removeEventListener('change', resized);
+    };
+  }, [mobileOpen]);
   const [attention, setAttention] = useState(0);
   const [accountNudge, setAccountNudge] = useState(0);
   const [live, setLive] = useState(false);
@@ -127,10 +187,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         setAccountNudge(account);
         setAttention(account);
         setLive(Boolean(me?.holder));
-        const label =
-          me?.email?.trim() ||
-          (me?.holder ? identityLabel(me.holder) : '') ||
-          'Workspace';
+        const label = me?.email?.trim() || (me?.holder ? identityLabel(me.holder) : '') || 'Workspace';
         setWorkspaceLabel(label);
       } catch {
         /* ignore */
@@ -149,112 +206,99 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
   if (isBare) return <>{children}</>;
 
+  const currentPage =
+    [...mainNav, ...catalogNav, ...accessNav, ...settingsNav].find(
+      (item) => pathname === item.href || (item.href !== '/app' && pathname.startsWith(item.href + '/')),
+    )?.label ?? 'Workspace';
   return (
-    <div className="min-h-screen bg-[var(--dash-bg,#f2f2f2)] text-[var(--ink)]">
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[248px] flex-col border-r border-[var(--line)] bg-[var(--soft)] px-3 py-4 lg:flex">
-        <Link href="/app" className="px-2 pb-4 text-[17px] font-semibold tracking-tight text-[var(--blue)]">
-          Bagseven
+    <div className={styles.shell}>
+      {mobileOpen && (
+        <button
+          className={styles.backdrop}
+          aria-label="Close navigation"
+          onClick={() => {
+            closeNav();
+            toggleRef.current?.focus();
+          }}
+        />
+      )}
+      <aside
+        ref={sidebarRef}
+        id="workspace-navigation"
+        aria-label="Workspace navigation"
+        className={`${styles.sidebar} ${mobileOpen ? styles.sidebarOpen : ''}`}
+      >
+        <Link href="/app" className={styles.brand} onClick={closeNav}>
+          <Image src="/icon.svg" width={32} height={32} alt="" />
+          Bagseven<small>CONSOLE</small>
         </Link>
-
-        <div className="mx-1 mb-3 flex items-center gap-2.5 rounded-2xl border border-[var(--line)] bg-white px-3 py-2.5 shadow-[var(--sh)]">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--hero)] text-[11px] font-bold text-white">
-            B7
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-[13px] font-semibold">{workspaceLabel}</div>
-            <div className="mt-0.5 flex items-center gap-1.5">
-              <span
-                className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
-                  live ? 'bg-[var(--good-t)] text-[var(--good)]' : 'bg-[var(--soft)] text-[var(--muted)]'
-                }`}
-              >
-                <span className={`h-1.5 w-1.5 rounded-full ${live ? 'bg-[var(--good)]' : 'bg-[var(--muted)]'}`} />
-                {live ? 'Signed in' : 'Setup'}
-              </span>
-            </div>
+        <div className={styles.workspace}>
+          <div className={styles.workspaceAvatar}>B7</div>
+          <div className={styles.workspaceInfo}>
+            <strong title={workspaceLabel}>{workspaceLabel}</strong>
+            <span>
+              <i />
+              {live ? 'Signed in · Email + wallet' : 'Account setup'}
+            </span>
           </div>
         </div>
-
-        <nav className="flex-1 overflow-y-auto px-0.5 pb-4">
-          <div className="space-y-0.5">
-            {mainNav.map((item) => {
-              const active = pathname === item.href || (item.href !== '/app' && pathname.startsWith(item.href));
-              return <NavLink key={item.href} item={item} active={active} />;
-            })}
-          </div>
-          <Group title="Catalog" items={catalogNav} pathname={pathname} />
-          <Group title="Access" items={accessNav} pathname={pathname} />
-          <Group title="Settings" items={settingsWithBadge} pathname={pathname} />
+        <nav className={styles.navigation} aria-label="Main navigation">
+          {mainNav.map((item) => (
+            <NavLink
+              key={item.href}
+              item={item}
+              active={
+                pathname === item.href || (item.href !== '/app' && pathname.startsWith(item.href + '/'))
+              }
+              onNavigate={closeNav}
+            />
+          ))}
+          <Group title="Catalog" items={catalogNav} pathname={pathname} onNavigate={closeNav} />
+          <Group title="Agents & integration" items={accessNav} pathname={pathname} onNavigate={closeNav} />
+          <Group title="Workspace" items={settingsWithBadge} pathname={pathname} onNavigate={closeNav} />
         </nav>
-
-        <div className="mx-1">
+        <div className={styles.sidebarFoot}>
+          <a href={process.env.NEXT_PUBLIC_LANDING_URL ?? 'http://localhost:3001'}>← Back to website</a>
           <form action="/api/auth/logout" method="post">
-            <button
-              type="submit"
-              className="w-full rounded-xl px-3 py-2 text-left text-[12px] text-[var(--muted)] hover:bg-white hover:text-[var(--ink)]"
-            >
-              Sign out
-            </button>
+            <button type="submit">Sign out</button>
           </form>
         </div>
       </aside>
-
-      <div className="lg:pl-[248px]">
-        <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-[var(--line)] bg-[var(--dash-bg,#f2f2f2)]/90 px-4 backdrop-blur md:px-6">
-          <div className="relative mx-auto hidden w-full max-w-md md:block">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--faint)]" />
-            <input
-              className="w-full rounded-full border border-[var(--line)] bg-white py-2 pl-9 pr-3 text-sm shadow-[var(--sh)] placeholder:text-[var(--faint)]"
-              placeholder="Search entitlement, plan, or holder"
-              disabled
-              aria-disabled="true"
-            />
+      <div className={styles.mainArea}>
+        <header className={styles.topbar}>
+          <button
+            ref={toggleRef}
+            className={styles.mobileToggle}
+            onClick={() => setMobileOpen((v) => !v)}
+            aria-label="Open workspace navigation"
+            aria-expanded={mobileOpen}
+            aria-controls="workspace-navigation"
+          >
+            <Menu size={18} />
+          </button>
+          <div className={styles.breadcrumb}>
+            <Link href="/app">Workspace</Link>
+            <span>/</span>
+            <strong>{currentPage}</strong>
           </div>
-          <div className="ml-auto flex items-center gap-2">
-            <Link
-              href="/app/features"
-              className="hidden rounded-full border border-[var(--line)] bg-white px-3.5 py-2 text-[13px] font-medium md:inline-flex"
+          <div className={styles.headerActions}>
+            <a
+              href={`${process.env.NEXT_PUBLIC_LANDING_URL ?? 'http://localhost:3001'}/docs/introduction`}
+              className={styles.helpLink}
             >
-              New feature
+              Documentation
+              <ArrowUpRight size={13} />
+            </a>
+            <Link href="/app/mint" className={styles.headerCreate} aria-label="Create entitlement">
+              <Plus size={14} />
+              <span>Create entitlement</span>
             </Link>
-            <Link
-              href="/app/mint"
-              className="rounded-full bg-[var(--ink)] px-3.5 py-2 text-[13px] font-semibold text-white hover:bg-black"
-            >
-              Create entitlement
-            </Link>
-            <Link
-              href="/app/account"
-              className="relative flex h-8 w-8 items-center justify-center rounded-full bg-[var(--hero)] text-[11px] font-bold text-white"
-              title="Account"
-            >
-              B7
-              {accountNudge > 0 ? (
-                <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-[var(--warn)] ring-2 ring-[var(--dash-bg,#f2f2f2)]" />
-              ) : null}
+            <Link href="/app/account" className={styles.accountLink} aria-label="Account settings">
+              B7{accountNudge > 0 && <span />}
             </Link>
           </div>
         </header>
-
-        <div className="flex gap-1 overflow-x-auto border-b border-[var(--line)] bg-[var(--soft)] px-3 py-2 lg:hidden">
-          {[...mainNav, ...catalogNav, ...accessNav, ...settingsWithBadge].map((item) => {
-            const active = pathname === item.href || (item.href !== '/app' && pathname.startsWith(item.href));
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`whitespace-nowrap rounded-full px-3 py-1.5 text-xs ${
-                  active ? 'bg-white font-semibold shadow-sm' : 'text-[var(--muted)]'
-                }`}
-              >
-                {item.label}
-                {item.badge != null && item.badge > 0 ? ` (${item.badge})` : ''}
-              </Link>
-            );
-          })}
-        </div>
-
-        <main className="px-4 py-6 md:px-8 md:py-8">{children}</main>
+        <main className={styles.main}>{children}</main>
       </div>
     </div>
   );

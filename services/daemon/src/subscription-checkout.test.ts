@@ -20,11 +20,13 @@ beforeEach(() => {
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); resetGrantStoreForTests(); resetBillingStoreForTests(); });
 
-async function fixture(paidAt = now) {
+async function fixture(paidAt = now, deploymentConfirmed = true) {
   const store = new MemorySubscriptionStore();
+  const verifyPlan = vi.fn(async () => deploymentConfirmed);
+  const broadcast = vi.fn(async () => {});
   const chain: SubscriptionChain = {
     preparePlan: async plan => ({ id: plan.id, providerId: 'provider', contract: `0x${'33'.repeat(20)}`, chainId: 43113, status: 'preparing', hash, raw: '0xdeployment' }),
-    verifyPlan: async () => true, broadcast: async () => {},
+    verifyPlan, broadcast,
     signCharge: async () => { throw Error('No renewal due during checkout'); },
     payment: async () => ({ paidAt, paidThrough: now + 2592000, hash, payer, period: 1 }),
     state: async () => ({ paidThrough: now + 2592000, payments: 1, payer, cancelled: false, balance: 0n, allowance: 0n }),
@@ -38,9 +40,20 @@ async function fixture(paidAt = now) {
   const sessionResponse = await app.inject({ method: 'POST', url: '/v1/checkout-sessions', headers: { authorization: 'Bearer sk_subscription_test' }, payload: { plan_id: plan.id, holder: 'customer', expires_in: 600 } });
   expect(sessionResponse.statusCode).toBe(200); const session = sessionResponse.json().session;
   const confirm = () => app.inject({ method: 'POST', url: `/v1/public/checkout/${session.id}/confirm`, payload: { payment_tx: hash, customer_wallet: payer, payment_signature: `0x${'55'.repeat(65)}` } });
-  return { app, store, session, confirm };
+  return { app, store, session, confirm, verifyPlan, broadcast };
 }
 describe('monthly checkout fulfillment', () => {
+  it('refreshes a preparing checkout after its existing deployment confirms without another broadcast', async () => {
+    const { app, store, session, verifyPlan, broadcast } = await fixture(now, false);
+    try {
+      const url = `/v1/public/checkout/${session.id}`;
+      expect((await app.inject({ url })).json().session.subscription_plan.status).toBe('preparing');
+      verifyPlan.mockResolvedValue(true);
+      expect((await app.inject({ url })).json().session.subscription_plan.status).toBe('ready');
+      expect((await store.plan(session.plan_id))?.raw).toBeUndefined();
+      expect(broadcast).toHaveBeenCalledTimes(1);
+    } finally { await app.close(); }
+  });
   it('exposes a deadline-bound subscription transaction and fulfills a payment only once', async () => {
     const { app, store, session, confirm } = await fixture();
     try {

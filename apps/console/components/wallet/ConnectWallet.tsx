@@ -1,9 +1,15 @@
 'use client';
 
 import { ConnectButton } from '@rainbow-me/rainbowkit';
-import { useAccount, useChainId, useSignMessage, useSwitchChain } from 'wagmi';
-import { useEffect, useRef, useState } from 'react';
-import { avalancheFuji } from '../../lib/wagmi-config';
+import { useAccount, useSignMessage } from 'wagmi';
+import { useEffect, useState, useSyncExternalStore } from 'react';
+import { Wallet, ChevronDown, ShieldCheck, ArrowRightLeft } from 'lucide-react';
+import { errorMessage } from '../../lib/error-message';
+import { withWalletOperation, getWalletOperation, subscribeWalletOperation } from '../../lib/bagseven-sdk-wallet';
+import styles from './wallet.module.css';
+import { useAccountWallet, announceAccountUpdate } from './AccountWallet';
+import { accountWalletState } from '../../lib/account-wallet-state';
+import { WalletReplacement } from './WalletReplacement';
 
 type Props = {
   /** Compact for headers / embed chrome */
@@ -22,13 +28,17 @@ type Props = {
  */
 export function ConnectWallet({ compact = false, persistToAccount = false, className, onConnected, onLinked, onLinkError }: Props) {
   const { address, isConnected } = useAccount();
-  const chainId = useChainId();
-  const { switchChain } = useSwitchChain();
   const { signMessageAsync } = useSignMessage();
-  const [linked, setLinked] = useState<string | null>(null);
+  const account = useAccountWallet();
+  const linked = account.profile?.wallet_address;
+  const state = accountWalletState({ loaded: account.loaded, failed: Boolean(account.error), linked, connected: isConnected ? address : null });
+  const [replacing, setReplacing] = useState(false);
   const [linking, setLinking] = useState(false);
   const [message, setMessage] = useState('');
-  const initialChain = useRef<string | null>(null);
+  const [linkError, setLinkError] = useState(false);
+  const verified = state === 'verified';
+
+  useEffect(() => { setMessage(''); setLinkError(false); setReplacing(false); }, [address, linked]);
 
   useEffect(() => {
     if (!isConnected || !address) return;
@@ -38,8 +48,10 @@ export function ConnectWallet({ compact = false, persistToAccount = false, class
   const linkWallet = async () => {
     if (!address || linking) return;
     setLinking(true);
+    setLinkError(false);
     setMessage('Approve the wallet ownership signature.');
       try {
+        await withWalletOperation('Verify wallet ownership', async () => {
         const challenge = await fetch(`/api/auth/wallet/verify?owner=${encodeURIComponent(address)}`, { cache: 'no-store' });
         const payload = (await challenge.json().catch(() => ({}))) as { message?: string; error?: { message?: string } };
         if (!challenge.ok || !payload.message) throw new Error(payload.error?.message || 'Could not prepare wallet verification');
@@ -51,11 +63,14 @@ export function ConnectWallet({ compact = false, persistToAccount = false, class
         });
         const result = (await verified.json().catch(() => ({}))) as { wallet_address?: `0x${string}`; error?: { message?: string } };
         if (!verified.ok || !result.wallet_address) throw new Error(result.error?.message || 'Wallet ownership could not be verified');
-        setLinked(address);
+        await account.refresh();
+        announceAccountUpdate();
         setMessage('Wallet ownership verified.');
         onLinked?.(result.wallet_address);
+        });
       } catch (error) {
-        const detail = error instanceof Error ? error.message : 'Wallet ownership could not be verified';
+        const detail = errorMessage(error, 'Wallet ownership could not be verified');
+        setLinkError(true);
         setMessage(detail);
         onLinkError?.(detail);
       } finally {
@@ -63,40 +78,45 @@ export function ConnectWallet({ compact = false, persistToAccount = false, class
       }
   };
 
-  useEffect(() => {
-    if (!isConnected || !address) { initialChain.current = null; return; }
-    if (initialChain.current === address) return;
-    initialChain.current = address;
-    if (chainId === avalancheFuji.id) return;
-    try {
-      switchChain?.({ chainId: avalancheFuji.id });
-    } catch {
-      /* user may reject */
-    }
-  }, [address, chainId, isConnected, switchChain]);
-
   return (
     <div className={`min-w-0 max-w-full ${className ?? ''}`}>
-      <ConnectButton
-        accountStatus={compact ? 'avatar' : { smallScreen: 'address', largeScreen: 'full' }}
-        chainStatus={compact ? 'icon' : { smallScreen: 'icon', largeScreen: 'full' }}
-        showBalance={compact ? false : { smallScreen: false, largeScreen: true }}
-        label="Connect wallet"
-      />
-      {persistToAccount && isConnected && address ? (
-        <button type="button" disabled={linking || linked === address} onClick={() => void linkWallet()}
-          className="mt-3 rounded-full border border-[var(--line)] px-4 py-2 text-sm font-medium disabled:opacity-60">
-          {linking ? 'Verifying…' : linked === address ? 'Wallet verified' : 'Sign to link wallet'}
+      <WalletControl compact={compact} />
+      {persistToAccount && state === 'loading' && <p role="status" className={styles.message}>Loading your saved wallet…</p>}
+      {persistToAccount && state === 'unavailable' && <p role="alert" className={styles.error}>{account.error} <button type="button" onClick={() => void account.refresh()}>Retry</button></p>}
+      {persistToAccount && state === 'reconnect' && <p className={styles.message}>Your account is still linked to <code>{linked}</code>. Reconnect that wallet to continue; disconnecting does not unlink it.</p>}
+      {persistToAccount && state === 'different' && <div className={styles.replacement}>
+        <p>Your account is linked to <code>{linked}</code>, but a different wallet is connected. Switch accounts in your wallet to reconnect it, or explicitly replace the linked wallet.</p>
+        {!replacing ? <button type="button" className={styles.verify} onClick={() => setReplacing(true)}>Replace linked wallet</button> : account.profile?.email && address && <WalletReplacement key={address + linked + account.profile.email} email={account.profile.email} address={address} onVerified={linkWallet} onCancel={() => setReplacing(false)} />}
+      </div>}
+      {persistToAccount && isConnected && address && (state === 'unlinked' || verified) && account.profile?.email_verified ? (
+        <button type="button" disabled={linking || verified} onClick={() => void linkWallet()}
+          className={styles.verify}>
+          <ShieldCheck size={14} />{linking ? 'Waiting for signature…' : verified ? 'Ownership verified' : 'Verify wallet ownership'}
         </button>
       ) : null}
-      {message ? <p role="status" className="mt-2 max-w-sm break-words text-sm text-[var(--muted)]">{message}</p> : null}
+      {message ? <p role={linkError ? 'alert' : 'status'} className={linkError ? styles.error : styles.message}>{message}</p> : null}
     </div>
   );
 }
 
-/** Minimal RainbowKit button for embed checkout chrome. */
-export function EmbedWalletBar() {
-  return (
-    <ConnectButton accountStatus="address" chainStatus="icon" showBalance={false} label="Connect wallet" />
-  );
+/** Shared console and embedded wallet controls; wallet approval stays with the user. */
+const idleWallet = { active: null, reminder: null };
+function WalletControl({ compact = false }: { compact?: boolean }) {
+  const accountProfile = useAccountWallet();
+  const operation = useSyncExternalStore(subscribeWalletOperation, getWalletOperation, () => idleWallet);
+  const blocked = Boolean(operation.active || operation.reminder);
+  return <ConnectButton.Custom>{({ account, chain, mounted, openAccountModal, openChainModal, openConnectModal }) => {
+    if (!mounted || !accountProfile.loaded) return <button className={styles.connect} type="button" disabled aria-busy="true"><Wallet size={16} />Loading wallet…</button>;
+    if (!account || !chain) return <button className={styles.connect} type="button" disabled={blocked} onClick={openConnectModal}><Wallet size={16} />{accountProfile.profile?.wallet_address ? 'Reconnect wallet' : 'Connect wallet'}</button>;
+    const short = account.address.slice(0, 6) + '…' + account.address.slice(-4);
+    return <div className={styles.controls}>
+      <button className={chain.unsupported ? styles.wrongNetwork : styles.network} type="button" disabled={blocked} onClick={openChainModal} aria-label={chain.unsupported ? 'Wrong network. Switch to Avalanche Fuji' : 'Avalanche Fuji. Change network'}>
+        {chain.unsupported ? <ArrowRightLeft size={14} /> : <span className={styles.networkDot} />}{chain.unsupported ? 'Switch to Fuji' : compact ? 'Fuji' : 'Avalanche Fuji'}<ChevronDown size={12} />
+      </button>
+      <button className={styles.account} type="button" onClick={openAccountModal} aria-label={'Manage wallet ' + account.address}>
+        <Wallet size={15} /><span>{short}</span><ChevronDown size={12} />
+      </button>
+    </div>;
+  }}</ConnectButton.Custom>;
 }
+export function EmbedWalletBar() { return <WalletControl compact />; }

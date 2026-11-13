@@ -14,7 +14,7 @@ function useTtl(paidThrough: string) {
     const tick = () => {
       const ms = new Date(paidThrough).getTime() - Date.now();
       if (ms <= 0) {
-        setLabel('evaporated');
+        setLabel('Expired');
         setDead(true);
         return;
       }
@@ -65,7 +65,7 @@ function GrantRow({
             <div className="font-medium">
               {featureLabel(grant.feature)} entitlement
               <span className="ml-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">
-                {isBoolean ? 'boolean · Registry' : 'numeric · Registry'}
+                {isBoolean ? 'Feature access' : 'Credit-based access'}
               </span>
             </div>
             <div className="break-words text-xs text-[var(--muted)]">
@@ -82,7 +82,7 @@ function GrantRow({
         <span>
           {isBoolean ? (
             <>
-              <strong className="text-[var(--ink)]">{dead ? 'Off' : 'On'}</strong> until TTL
+              <strong className="text-[var(--ink)]">{dead ? 'Off' : 'On'}</strong> until expiry
             </>
           ) : (
             <>
@@ -126,6 +126,7 @@ export function GrantList({
   onSelect,
   selectedId,
   onGrantsChange,
+  onReadError,
 }: {
   feature?: string;
   holder?: string;
@@ -133,6 +134,7 @@ export function GrantList({
   onSelect?: (grant: Grant) => void;
   selectedId?: string;
   onGrantsChange?: (grants: Grant[]) => void;
+  onReadError?: (error: string | null) => void;
 }) {
   const [grants, setGrants] = useState<Grant[]>([]);
   const [network, setNetwork] = useState('testnet');
@@ -154,16 +156,20 @@ export function GrantList({
       const list = live.grants ?? [];
       setGrants(list);
       onGrantsChange?.(list);
+      onReadError?.(null);
       setLocalSelected((prev) => {
         if (prev && list.some((g) => g.id === prev)) return prev;
         return list[0]?.id;
       });
     } catch (e) {
-      if (version === refreshVersion.current) setError(e instanceof Error ? e.message : String(e));
+      if (version === refreshVersion.current) {
+        const message = e instanceof Error ? e.message : String(e);
+        setError(message); onReadError?.(message);
+      }
     } finally {
       if (version === refreshVersion.current) setLoading(false);
     }
-  }, [feature, holder, onGrantsChange]);
+  }, [feature, holder, onGrantsChange, onReadError]);
 
   useEffect(() => {
     setLoading(true);
@@ -235,7 +241,7 @@ export function GrantList({
   return (
     <div className="rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
       <div className="mb-4 flex items-center justify-between gap-3">
-        <h2 className="text-base font-semibold tracking-tight">Living entitlements</h2>
+        <h2 className="text-base font-semibold tracking-tight">Active entitlements</h2>
         <button
           type="button"
           onClick={() => {
@@ -253,7 +259,7 @@ export function GrantList({
         <div className="py-10 text-center">
           <p className="font-medium text-[var(--ink)]">No live entitlements yet</p>
           <p className="mt-2 text-sm text-[var(--muted)]">
-            Nothing on Registry for this workspace right now. Create boolean or credit access with a TTL.
+            Create time-based access or prepaid credits for a customer. New purchases can also activate access through checkout.
           </p>
           <Link href="/app/mint" className="mt-5 inline-flex rounded-full bg-[var(--ink)] px-5 py-2 text-sm font-semibold text-white">
             Create entitlement

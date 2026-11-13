@@ -16,7 +16,7 @@ export default function GrantsPage() {
         title="Entitlements"
         description={
           <>
-            Credits + TTL. Prepaid access works directly. New agent payments require a{' '}
+            Manage customer credits and access periods. Prepaid usage works without a spending mandate; new agent payments also require an active{' '}
             <Link href="/app/mandate" className="font-medium text-[var(--blue)] underline decoration-dotted underline-offset-2">
               mandate
             </Link>

@@ -6,6 +6,7 @@ import { parseEther } from 'viem';
 import { connectedSpendingWallet, fundProviderGas, signSpendingMessage } from '../../lib/spending-wallet-client';
 import { ConnectWallet } from '../wallet/ConnectWallet';
 import { errorMessage } from '../../lib/error-message';
+import { withWalletOperation } from '../../lib/bagseven-sdk-wallet';
 import { avalancheFuji } from '../../lib/wagmi-config';
 
 type Authorization = { avalancheBudget: string; registryBudget: string; avalancheTxLimit: string; registryTxLimit: string };
@@ -45,7 +46,7 @@ export function ProviderGas() {
     if (!/^\d+(\.\d{1,18})?$/.test(amount) || parseEther(amount) <= 0n) throw new Error('Enter a positive native-token amount.');
     const chain = network === 'avalanche' ? status.avalanche_id : status.registry_id;
     const chainId = `0x${chain.toString(16)}`;
-    try { await providerWallet.request({ method: 'wallet_switchEthereumChain', params: [{ chainId }] }); }
+    try { if (Number(await providerWallet.request({ method: 'eth_chainId' })) !== chain) await providerWallet.request({ method: 'wallet_switchEthereumChain', params: [{ chainId }] }); }
     catch (e) {
       if ((e as { code?: number }).code !== 4902) throw e;
       await providerWallet.request({ method: 'wallet_addEthereumChain', params: [{ chainId, chainName: chain === 43113 ? avalancheFuji.name : 'Avalanche C-Chain', nativeCurrency: avalancheFuji.nativeCurrency, rpcUrls: [chain === 43113 ? avalancheFuji.rpcUrls.default.http[0] : 'https://api.avax.network/ext/bc/C/rpc'] }] });
@@ -69,19 +70,20 @@ export function ProviderGas() {
     {status?.address && <div className="rounded-xl bg-[var(--soft)] p-3 text-sm"><p className="font-semibold">Dedicated gas address · {status.status}</p><p className="mt-1 break-all font-mono text-xs">{status.address}</p><p className="mt-2 text-[var(--muted)]">Avalanche: {status.balances?.avalanche ?? 'unavailable'} AVAX · Registry: {status.balances?.registry ?? 'unavailable'} AVAX</p><p className="mt-2 break-all text-xs text-[var(--muted)]">Maximum fees reserved: {status.avalanche_reserved_wei ?? '0'} wei (Avalanche), {status.registry_reserved_wei ?? '0'} wei (Registry). Reservations are conservative limits, not measured transaction costs.</p></div>}
     <fieldset disabled={busy || !status} className="space-y-4 disabled:opacity-60">
       <details open={!status?.configured}><summary className="cursor-pointer text-sm font-semibold">Authorize or renew limited signing</summary>
-        <form onSubmit={e => { e.preventDefault(); void run(authorize); }} className="mt-3 space-y-3">
+        <form onSubmit={e => { e.preventDefault(); void run(() => withWalletOperation('Authorize provider gas', authorize)); }} className="mt-3 space-y-3">
           <div className="grid gap-3 sm:grid-cols-2"><label className="text-sm">Avalanche budget (AVAX)<input required className={control} value={whiteBudget} onChange={e => setWhiteBudget(e.target.value)} /></label><label className="text-sm">Registry budget (AVAX)<input required className={control} value={registryBudget} onChange={e => setRegistryBudget(e.target.value)} /></label><label className="text-sm">Maximum per transaction (AVAX)<input required className={control} value={whiteMax} onChange={e => setWhiteMax(e.target.value)} /></label><label className="text-sm">Maximum per transaction (AVAX)<input required className={control} value={registryMax} onChange={e => setRegistryMax(e.target.value)} /></label><label className="text-sm">Valid for days<input required className={control} type="number" min="1" max="365" value={days} onChange={e => setDays(e.target.value)} /></label></div>
           <p className="text-xs text-[var(--muted)]">The server holds an encrypted delegated key and enforces these limits before signing. This is not an on-chain smart-account restriction. This signature also permits deployment of your fixed-price subscription plans and collection of customer-authorized renewals. Monthly checkout requires at least 31 days of remaining gas authorization; renew it before expiry. New approval resets the authorized fee budgets. Revocation blocks future server signing; previously signed transactions can still settle.</p>
           <button type="submit" className={button}>Review and sign authorization</button>
         </form>
       </details>
       {status?.configured && <div className="space-y-3 border-t border-[var(--line)] pt-4"><div className="grid gap-3 sm:grid-cols-2"><label className="text-sm">Fee budget for recovery<select className={control} value={network} onChange={e => setNetwork(e.target.value as 'registry' | 'avalanche')}><option value="avalanche">Settlement operations</option><option value="registry">Registry operations</option></select></label><label className="text-sm">Native amount<input className={control} value={amount} onChange={e => setAmount(e.target.value)} /></label></div><div className="space-y-3">
-        <button type="button" className={button} disabled={status.status !== 'active'} onClick={() => void run(fund)}>Fund AVAX on Avalanche</button>
+        <button type="button" className={button} disabled={status.status !== 'active'} onClick={() => void run(() => withWalletOperation('Fund provider gas', fund))}>Fund from connected wallet</button>
         <p className="break-words text-xs text-[var(--muted)]">Transfer {amount || '0'} {network === 'registry' ? 'AVAX' : 'AVAX'} from your connected wallet to the dedicated gas address above. Review the network and amount in your wallet. Authorization alone does not deposit funds.</p>
+        <p className="text-xs text-[var(--muted)]">You can also send Fuji AVAX to the dedicated address from another wallet, then choose Refresh account. If a wallet request is pending, open your wallet and review or dismiss that request first. After a confirmed external deposit, refresh the account instead of sending another payment.</p>
         {status.status !== 'active' && <p className="text-xs text-[var(--warn)]">Authorize signing above before funding this account.</p>}
         <details className="rounded-xl border border-[var(--line)] p-3"><summary className="cursor-pointer text-sm font-medium">Advanced: revoke signing or recover funds</summary>
           <p className="my-3 text-xs text-[var(--muted)]">Recovery returns unused gas to your owner wallet. First revoke future signing; this stops provider operations until you authorize again.</p>
-          <div className="flex flex-wrap gap-2"><button type="button" className={button} disabled={status.status === 'active'} onClick={() => void run(recover)}>Sign recovery to owner</button><button type="button" className={button} disabled={status.status !== 'active'} onClick={() => void run(async () => { await api('revoke', {}); setMessage('Future signing revoked. Remaining gas funds can still be recovered.'); })}>Revoke signing</button></div>
+          <div className="flex flex-wrap gap-2"><button type="button" className={button} disabled={status.status === 'active'} onClick={() => void run(() => withWalletOperation('Recover unused gas', recover))}>Sign recovery to owner</button><button type="button" className={button} disabled={status.status !== 'active'} onClick={() => void run(async () => { await api('revoke', {}); setMessage('Future signing revoked. Remaining gas funds can still be recovered.'); })}>Revoke signing</button></div>
         </details>
       </div></div>}
       <button type="button" className="text-sm font-medium text-[var(--blue)] underline" onClick={() => void run(refresh)}>Refresh account</button>

@@ -32,7 +32,8 @@ export async function POST(req: NextRequest) {
         // A fresh inbox proof is required before a previously linked wallet can be replaced.
         wallet_rebind_verified_at: session.wallet_address ? verifiedAt : null,
       })
-    : { email, email_verified_at: verifiedAt, wallet_address: profile.walletAddress, onboarding_done_at: profile.onboardingDoneAt };
+    : { email, email_verified_at: verifiedAt, wallet_address: profile.walletAddress, onboarding_done_at: profile.onboardingDoneAt,
+        wallet_rebind_verified_at: profile.walletAddress ? verifiedAt : null };
   const res = NextResponse.json({
     ok: true,
     email,

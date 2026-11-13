@@ -113,14 +113,19 @@ function authorizePage(opts: {
   if (opts.codeChallengeMethod) q.set('code_challenge_method', opts.codeChallengeMethod);
 
   return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"/><title>Bagseven · Authorize ChatGPT</title>
+<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Bagseven · Connect your assistant</title>
 <style>
-  body{font-family:ui-sans-serif,system-ui;background:#f2f2f2;color:#0e0e10;margin:0;padding:2rem}
-  .card{max-width:28rem;margin:2rem auto;background:#fff;border:1px solid #ececf0;border-radius:16px;padding:1.5rem;box-shadow:0 18px 40px -18px #0e0e102e}
-  h1{font-size:1.35rem;margin:0 0 .5rem} p{color:#63636d;font-size:.9rem;line-height:1.45}
-  label{display:block;font-size:.7rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#63636d;margin-top:1rem}
-  input,textarea{width:100%;margin-top:.4rem;padding:.7rem .8rem;border:1px solid #ececf0;border-radius:12px;font:inherit;box-sizing:border-box}
-  button{margin-top:1.25rem;width:100%;border:0;border-radius:999px;background:#0e0e10;color:#fff;font-weight:600;padding:.75rem;cursor:pointer}
+  body{font-family:Arial,Helvetica,sans-serif;background:#f5f4f0;color:#1d2433;margin:0;padding:clamp(16px,4vw,48px)}
+  .brand{max-width:30rem;margin:0 auto 24px;color:#112d94;font:30px Georgia,serif}
+  .card{max-width:30rem;box-sizing:border-box;margin:0 auto;background:#fff;border:1px solid #e1e3e9;border-top:3px solid #112d94;border-radius:0 0 16px 16px;padding:clamp(24px,5vw,40px);box-shadow:0 16px 48px #1d243305}
+  .eyebrow{font-size:10px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:#112d94}
+  h1{font:normal 36px/1.15 Georgia,serif;letter-spacing:-1px;margin:16px 0} p{color:#667086;font-size:13px;line-height:1.8}
+  label{display:block;font-size:12px;font-weight:600;color:#414b61;margin-top:24px}
+  input,textarea{width:100%;margin-top:8px;padding:13px 14px;border:1px solid #e1e3e9;border-radius:8px;background:#fafaf8;font:14px Arial,sans-serif;box-sizing:border-box}
+  input[name=code]{font:20px monospace;letter-spacing:6px}
+  button{margin-top:18px;width:100%;border:1px solid #112d94;border-radius:8px;background:#112d94;color:#fff;font-size:13px;font-weight:600;padding:14px;cursor:pointer}
+  button:hover{background:#0a1f72} input:focus-visible,button:focus-visible{outline:2px solid #112d94;outline-offset:3px}
+  #status{overflow-wrap:anywhere} .footnote{max-width:30rem;margin:20px auto;font-size:11px;color:#667086;line-height:1.8}
   button:disabled{opacity:.65;cursor:wait}
   .qr-panel:not([hidden]){display:grid;justify-items:center;margin:1rem 0;padding:1rem;border:1px solid #ececf0;border-radius:12px;background:white}
   .qr-panel img{display:block;width:320px;max-width:100%;height:auto}
@@ -128,10 +133,12 @@ function authorizePage(opts: {
   .err{background:#fff1f1;color:#9b1c1c;padding:.75rem;border-radius:12px;font-size:.85rem}
   code{font-size:.75rem;background:#f6f6f8;padding:.1rem .35rem;border-radius:6px}
 </style></head><body>
-  <div class="card">
-    <h1>Authorize Bagseven for ChatGPT</h1>
+  <div class="brand">Bagseven</div><main class="card">
+    <span class="eyebrow">Assistant connection</span>
+    <h1>Connect your assistant.</h1>
+    ${opts.error ? `<p role="alert" class="err">${html(opts.error)}</p>` : ''}
     ${accountConsentMarkup}
-
+  </main><p class="footnote">This verifies your account and authorizes the assistant connection. Payments still require a separate spending permission. Never share a private key or recovery phrase.</p>
 </body></html>`;
 }
 

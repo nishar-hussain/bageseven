@@ -5,6 +5,7 @@ import type { Entitlement, Subscription } from './types.js';
 import { authorizeAvalanchePayment, connectAvalancheWallet, payStablecoinOnAvalanche, subscribeOnAvalanche, cancelAvalancheSubscription, renewSubscriptionAllowance } from './wallet.js';
 import { resolveEmbedComponent, type EmbedComponentId } from './components.js';
 import { currentSubscriptionPlans } from './subscription-state.js';
+import { WalletOperationNotice } from './wallet-notice.js';
 
 export type EmbedView = 'portal' | 'checkout' | 'consume' | 'credits' | 'unsubscribe' | 'pricing' | 'customer';
 
@@ -21,6 +22,7 @@ type PublicPlan = {
 };
 
 type PublicCheckout = {
+  billing_document_url?: string;
   subscription_plan?: { status: string; address: string; chain_id: number; subscribe_data: string } | null;
   expires_at: string;
   id: string;
@@ -212,29 +214,12 @@ function CheckIcon() {
   );
 }
 
-function CreditBar({ remaining, allocation }: { remaining: string; allocation: string }) {
-  const rem = Math.max(0, Number(remaining) || 0);
-  const alloc = Math.max(rem, Number(allocation) || rem || 1);
-  const pct = Math.min(100, Math.round((rem / alloc) * 100));
+function CreditBalance({ remaining }: { remaining: string }) {
+  // The registry exposes the current balance, not a lifetime allocation.
+  // An allocation inferred from this balance would always report 100%.
   return (
-    <div style={{ marginTop: 12 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--bs-muted)', marginBottom: 6 }}>
-        <span>
-          <strong style={{ color: 'var(--bs-ink)' }}>{remaining}</strong> of {allocation || remaining} credits
-        </span>
-        <span>{pct}%</span>
-      </div>
-      <div style={{ height: 8, borderRadius: 999, background: 'var(--bs-soft)', overflow: 'hidden' }}>
-        <div
-          style={{
-            width: `${pct}%`,
-            height: '100%',
-            background: 'var(--bs-accent)',
-            borderRadius: 999,
-            transition: 'width 200ms ease',
-          }}
-        />
-      </div>
+    <div style={{ marginTop: 12, fontSize: 12, color: 'var(--bs-muted)' }}>
+      <strong style={{ color: 'var(--bs-ink)' }}>{remaining}</strong> credits remaining
     </div>
   );
 }
@@ -642,7 +627,7 @@ export function BagsevenEmbed({
                   </p>
                 ) : (
                   <>
-                    <CreditBar remaining={e.remaining} allocation={e.allocation || e.remaining} />
+                    <CreditBalance remaining={e.remaining} />
                     {live && accessToken ? (
                       <div style={{ marginTop: 12 }}>
                         <GhostBtn
@@ -773,6 +758,7 @@ export function BagsevenEmbed({
                 Paid — entitlement is live for {checkout.holder}
               </p>
               {checkoutSubscription && subscriptionCard(checkoutSubscription)}
+              {checkout.billing_document_url && <p style={{ marginTop: 12, fontSize: 13 }}><a href={checkout.billing_document_url} target="_blank" rel="noreferrer" style={{ color: 'var(--bs-accent)', textDecoration: 'underline' }}>View invoice & payment receipt</a></p>}
               <div style={{ marginTop: 12 }}>
                 {accessToken ? <PrimaryBtn onClick={() => setView('portal')}>Go to plan manager</PrimaryBtn> : null}
               </div>
@@ -963,6 +949,7 @@ export function BagsevenEmbed({
         </div>
       ) : null}
 
+      <WalletOperationNotice />
       {showPricing && pricingBody}
       {showCheckout && checkoutBody}
       {showPortal && portalBody}

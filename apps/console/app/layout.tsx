@@ -7,7 +7,7 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'Bagseven',
   description:
-    'Agents spend under a mandate. Humans mint Registry entitlements. Money settles on Avalanche. email and wallet mint gate. SDK + MCP is the product.',
+    'Manage plans, customer access, prepaid credits and bounded agent spending on Avalanche.',
   icons: { icon: '/icon.svg' },
 };
 

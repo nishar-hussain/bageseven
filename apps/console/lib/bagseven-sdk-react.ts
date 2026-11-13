@@ -1,6 +1,7 @@
 /** Local re-export so Turbopack can resolve workspace SDK subpaths. */
 export {
   BagsevenEmbed,
+  WalletOperationBoundary,
   BagsevenProvider,
   EMBED_COMPONENTS,
   FeatureFlagGuard,

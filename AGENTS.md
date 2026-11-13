@@ -10,7 +10,7 @@ Provider-funded gas is mandatory in production. Never fall back to a platform pr
 
 Monthly billing uses BagSubscriptionPlan, explicit payer allowance/subscribe/cancel transactions, and durable collection/fulfillment journals. Never synthesize payer signatures, silently enroll existing grants, or mark an on-chain permission cancelled from a server flag. Uncertain fulfillment requires reconciliation before another charge or mint. Cancel renewal preserves already-paid time. Provider gas authorization must explicitly cover subscriptions and have at least 31 days remaining for checkout.
 
-Live configuration: AVALANCHE_NETWORK, AVALANCHE_CHAIN_ID, AVALANCHE_RPC_URL, explicitly chosen AVALANCHE_USDC, AVALANCHE_ENTITLEMENT_REGISTRY, ENTITLEMENT_STORE=avalanche. Fuji is 43113. Only explicitly configured non-production tests may use memory grants. Apply migrations through 0020 and rebuild paired artifacts before deployment.
+Live configuration: AVALANCHE_NETWORK, AVALANCHE_CHAIN_ID, AVALANCHE_RPC_URL, explicitly chosen AVALANCHE_USDC, AVALANCHE_ENTITLEMENT_REGISTRY, ENTITLEMENT_STORE=avalanche. Fuji is 43113. Only explicitly configured non-production tests may use memory grants. Apply migrations through 0022 and rebuild paired artifacts before deployment.
 
 MCP uses HTTPS /mcp, OAuth PKCE and email-code plus wallet consent. Agents receive scoped Bagseven credentials. OAuth codes, tokens and consent challenges persist in PostgreSQL; HTTP MCP uses stateless per-request transports. Prepaid MCP clients need no deployed mandate; new spending retains the dual gate. Never expose private keys or auto-send wallet transaction drafts.
 

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { PageHeader, PrimaryButton, SecondaryButton, SoftCard, StatusPill } from '../../../components/app/ui';
 import { WalletStatusCard } from '../../../components/wallet/WalletStatus';
 import { useOperator } from '../../../lib/use-operator';
+import { errorMessage } from '../../../lib/error-message';
 import { IdentityValue } from '../../../components/app/IdentityValue';
 
 export default function AccountPage() {
@@ -12,6 +13,9 @@ export default function AccountPage() {
   const [code, setCode] = useState('');
   const [challenge, setChallenge] = useState('');
   const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState<'send' | 'verify' | null>(null);
+  const [msgError, setMsgError] = useState(false);
+  useEffect(() => { if (op.email) setEmail(op.email); }, [op.email]);
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const hash = window.location.hash.replace('#', '');
@@ -22,35 +26,29 @@ export default function AccountPage() {
 
   const startOtp = async (e: React.FormEvent) => {
     e.preventDefault();
-    setMsg('Sending code…');
-    const res = await fetch('/api/auth/email/start', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ email }),
-    });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      setMsg(json.error ?? 'Could not send code');
-      return;
-    }
-    setChallenge(json.challenge ?? '');
-    setMsg(json.dev_hint ? `Dev code: ${json.dev_hint}` : `Code sent to ${email}`);
+    if (busy) return;
+    setBusy('send'); setMsgError(false); setMsg('Sending your verification code…');
+    try {
+      const res = await fetch('/api/auth/email/start', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email }), signal: AbortSignal.timeout(20000) });
+      const json = await res.json();
+      if (!res.ok) throw Error(errorMessage(json.error, 'Could not send your code. Please retry.'));
+      setChallenge(json.challenge ?? ''); setCode('');
+      setMsg(json.dev_hint ? 'Development code: ' + json.dev_hint : 'Code sent to ' + email + '. Enter it below within 10 minutes.');
+    } catch (error) { setMsgError(true); setMsg(errorMessage(error, 'Could not send your code. Please retry.')); }
+    finally { setBusy(null); }
   };
-
   const verifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = await fetch('/api/auth/email/verify', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ code, challenge }),
-    });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      setMsg(json.error ?? 'Invalid code');
-      return;
-    }
-    setMsg(`Email verified: ${json.email}`);
-    window.location.reload();
+    if (busy) return;
+    setBusy('verify'); setMsgError(false); setMsg('Verifying your email…');
+    try {
+      const res = await fetch('/api/auth/email/verify', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code, challenge }), signal: AbortSignal.timeout(20000) });
+      const json = await res.json();
+      if (!res.ok) throw Error(errorMessage(json.error, 'That code could not be verified. Check it and try again.'));
+      setMsg('Email verified. Refreshing your account…');
+      window.location.reload();
+    } catch (error) { setMsgError(true); setMsg(errorMessage(error)); }
+    finally { setBusy(null); }
   };
 
   return (
@@ -82,13 +80,15 @@ export default function AccountPage() {
         <form onSubmit={(e) => void startOtp(e)} className="flex gap-2">
           <input
             type="email"
+            aria-label="Billing email"
+            autoComplete="email"
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@company.com"
             className="min-w-0 flex-1 rounded-xl border border-[var(--line)] px-3 py-2 text-sm"
           />
-          <SecondaryButton type="submit">Send code</SecondaryButton>
+          <SecondaryButton type="submit" disabled={Boolean(busy)}>{busy === 'send' ? 'Sending…' : challenge ? 'Resend code' : 'Send code'}</SecondaryButton>
         </form>
         {challenge ? (
           <form onSubmit={(e) => void verifyOtp(e)} className="flex gap-2">
@@ -96,10 +96,16 @@ export default function AccountPage() {
               value={code}
               onChange={(e) => setCode(e.target.value)}
               placeholder="6-digit code"
+              aria-label="Email verification code"
+              autoComplete="one-time-code"
+              inputMode="numeric"
+              pattern="[0-9]{6}"
+              maxLength={6}
+              minLength={6}
               className="min-w-0 flex-1 rounded-xl border border-[var(--line)] px-3 py-2 text-sm"
               required
             />
-            <PrimaryButton type="submit">Verify</PrimaryButton>
+            <PrimaryButton type="submit" disabled={Boolean(busy)}>{busy === 'verify' ? 'Verifying…' : 'Verify email'}</PrimaryButton>
           </form>
         ) : null}
       </SoftCard>
@@ -111,7 +117,7 @@ export default function AccountPage() {
         </SoftCard>
       </div>
 
-      {msg ? <p className="break-words whitespace-pre-wrap text-sm text-[var(--muted)]">{msg}</p> : null}
+      {msg ? <p role={msgError ? 'alert' : 'status'} className={"break-words whitespace-pre-wrap text-sm " + (msgError ? "text-[var(--deny)]" : "text-[var(--muted)]")}>{msg}</p> : null}
     </div>
   );
 }

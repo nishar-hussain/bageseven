@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { StatusBadges } from '../../../components/app/StatusBadges';
 import { WalletStatusCard } from '../../../components/wallet/WalletStatus';
 import { ProviderGas } from '../../../components/app/ProviderGas';
+import { PageHeader } from '../../../components/app/ui';
 import { entitlementsApi, type MumbaiStatus } from '../../../lib/entitlements-client';
 
 type Check = { id: string; ok: boolean; title: string; need: string; action?: string };
@@ -12,6 +13,36 @@ type Check = { id: string; ok: boolean; title: string; need: string; action?: st
 export default function SettingsPage() {
   const [status, setStatus] = useState<MumbaiStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [identity, setIdentity] = useState<{ email_verified?: boolean; wallet_address?: string } | null>(
+    null,
+  );
+  const [gas, setGas] = useState<{
+    status?: string;
+    expires_at?: string;
+    authorization?: { subscriptions?: boolean };
+    balances?: { avalanche?: string | null };
+  } | null>(null);
+  useEffect(() => {
+    let stopped = false;
+    const read = async (path: string) => {
+      const r = await fetch(path, { cache: 'no-store', signal: AbortSignal.timeout(15000) });
+      if (!r.ok) throw Error('Could not load deployment check data');
+      return r.json();
+    };
+    void Promise.all([read('/api/me'), read('/api/provider-gas')])
+      .then(([me, fees]) => {
+        if (!stopped) {
+          setIdentity(me);
+          setGas(fees);
+        }
+      })
+      .catch((e) => {
+        if (!stopped) setError(e instanceof Error ? e.message : 'Check data is unavailable');
+      });
+    return () => {
+      stopped = true;
+    };
+  }, []);
 
   useEffect(() => {
     entitlementsApi
@@ -24,31 +55,45 @@ export default function SettingsPage() {
     ? [
         {
           id: 'account',
-          ok: true,
-          title: 'Email and Avalanche wallet',
+          ok: Boolean(identity?.email_verified && identity.wallet_address),
+          title: 'Verified email and wallet ownership',
           need: 'Verified email receives billing messages; wallet signatures authorize financial actions.',
           action: '/app/account',
         },
         {
           id: 'avalanche',
-          ok: Boolean(status.tracks.avalanche.usdt && (status.dual_gate.provider_funded_gas || status.tracks.avalanche.pay_to)),
-          title: 'Avalanche stablecoin (money clock)',
-          need: status.dual_gate.provider_funded_gas
-            ? 'Provider checkout pays each plan’s merchant wallet. Fund and authorize your dedicated gas account below; platform keys are not fee payers.'
-            : !status.tracks.avalanche.pay_to
-            ? 'Set AVALANCHE_PAY_TO (payout wallet) or AVALANCHE_PRIVATE_KEY — Mint / Buy credits need a recipient. Restart daemon after changing .env.'
-            : status.tracks.avalanche.demo_settle
-              ? `Recipient ${status.tracks.avalanche.pay_to.slice(0, 10)}… · demo settle on. Set AVALANCHE_DEMO_SETTLE=false for live verify.`
-              : `Live · recipient ${status.tracks.avalanche.pay_to.slice(0, 10)}… · stablecoin configured.`,
+          ok: Boolean(status.tracks.avalanche.usdt && !status.tracks.avalanche.demo_settle),
+          title: 'Avalanche payment token configured',
+          need: 'Customers pay the payout wallet configured on each plan. Your dedicated gas account pays the network fees for provider operations.',
           action: '/app/plans',
+        },
+        {
+          id: 'provider-gas',
+          ok: Boolean(
+            gas?.status === 'active' &&
+            gas.authorization?.subscriptions &&
+            gas.expires_at &&
+            new Date(gas.expires_at).getTime() > Date.now() + 31 * 86400000 &&
+            Number(gas.balances?.avalanche ?? 0) > 0,
+          ),
+          title: 'Authorized and funded provider gas',
+          need:
+            gas?.status !== 'active'
+              ? 'Sign the provider gas permission below. No development approval is imported.'
+              : Number(gas.balances?.avalanche ?? 0) <= 0
+                ? 'Permission is active, but its dedicated address needs Fuji AVAX before contract writes can proceed.'
+                : 'Gas address is funded. Monthly checkout additionally requires subscription authorization with at least 31 days remaining; sufficient balance is checked before every operation.',
+          action: '/app/settings#provider-gas',
         },
         {
           id: 'registry',
           ok: status.tracks.registry.live,
-          title: 'Registry living grants',
+          title: 'Entitlement registry',
           need: status.tracks.registry.live
-            ? 'Live store — grants are queryable entities.'
-            : status.dual_gate.provider_funded_gas ? 'Set AVALANCHE_ENTITLEMENT_REGISTRY and ENTITLEMENT_STORE=avalanche, then authorize and fund the provider gas account.' : 'Set AVALANCHE_ENTITLEMENT_REGISTRY and ENTITLEMENT_STORE=avalanche.',
+            ? 'Connected to the authoritative Avalanche entitlement registry.'
+            : status.dual_gate.provider_funded_gas
+              ? 'Set AVALANCHE_ENTITLEMENT_REGISTRY and ENTITLEMENT_STORE=avalanche, then authorize and fund the provider gas account.'
+              : 'Set AVALANCHE_ENTITLEMENT_REGISTRY and ENTITLEMENT_STORE=avalanche.',
           action: '/app/grants',
         },
       ]
@@ -57,10 +102,7 @@ export default function SettingsPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-5">
       <div>
-        <h1 className="text-[1.75rem] font-semibold tracking-tight md:text-[2rem]">Tracks</h1>
-        <p className="mt-1.5 text-[13.5px] text-[var(--muted)]">
-          Infrastructure readiness from server env. Secrets never leave the server.
-        </p>
+        <PageHeader title="Network & gas" description="Manage your wallet connection, provider gas authorization and Avalanche readiness." />
         <div className="mt-4">
           <StatusBadges />
         </div>
@@ -72,7 +114,7 @@ export default function SettingsPage() {
       <ProviderGas />
 
       <section className="rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
-        <h2 className="font-semibold">Go-live checklist</h2>
+        <h2 className="font-semibold">Deployment checks</h2>
         <ul className="mt-4 space-y-3">
           {checks.map((c) => (
             <li key={c.id} className="flex gap-3 rounded-xl border border-[var(--line)] p-3 text-sm">
@@ -87,7 +129,10 @@ export default function SettingsPage() {
                 <div className="font-semibold">{c.title}</div>
                 <p className="mt-1 text-[var(--muted)]">{c.need}</p>
                 {c.action ? (
-                  <Link href={c.action} className="mt-2 inline-block text-xs font-semibold text-[var(--blue)] underline">
+                  <Link
+                    href={c.action}
+                    className="mt-2 inline-block text-xs font-semibold text-[var(--blue)] underline"
+                  >
                     Open →
                   </Link>
                 ) : null}
@@ -108,21 +153,30 @@ export default function SettingsPage() {
               t: 'Avalanche',
               lines: [
                 `Network: ${status.tracks.avalanche.network} (${status.tracks.avalanche.chain_id})`,
-                `Operator: ${status.tracks.avalanche.operator}`,
-                `Demo settle: ${status.tracks.avalanche.demo_settle}`,
+                status.tracks.avalanche.demo_settle ? 'Payment verification: development mode' : 'Payment verification: live',
+                'Network fees: provider-funded',
               ],
             },
             {
               t: 'Registry',
-              lines: [`Store: ${status.tracks.registry.store}`, `Live entities: ${status.tracks.registry.live}`],
+              lines: [
+                status.tracks.registry.live ? 'Authoritative access records connected' : 'Connection needs attention',
+                'Credits and paid access are verified on-chain',
+              ],
               extra: (
-                <Link href="/app/registry" className="mt-3 inline-block text-xs font-semibold text-[var(--blue)] underline">
+                <Link
+                  href="/app/registry"
+                  className="mt-3 inline-block text-xs font-semibold text-[var(--blue)] underline"
+                >
                   Open Registry studio →
                 </Link>
               ),
             },
           ].map((c) => (
-            <div key={c.t} className="rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
+            <div
+              key={c.t}
+              className="rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]"
+            >
               <div className="mb-3 h-1 w-10 rounded-full bg-[var(--blue)]" />
               <h2 className="font-semibold">{c.t}</h2>
               {c.lines.map((l) => (
@@ -142,8 +196,7 @@ export default function SettingsPage() {
           <ul className="mt-3 space-y-2 text-sm">
             {status.dual_gate.features.map((f) => (
               <li key={f.id}>
-                <strong>{f.label}</strong>{' '}
-                <span className="fi-mono text-xs text-[var(--muted)]">{f.id}</span>
+                <strong>{f.label}</strong> <span className="fi-mono text-xs text-[var(--muted)]">{f.id}</span>
                 <span className="text-[var(--muted)]"> · {f.actions.join(', ')}</span>
               </li>
             ))}

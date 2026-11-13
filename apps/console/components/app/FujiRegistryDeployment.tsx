@@ -4,6 +4,8 @@ import { useAccount } from 'wagmi';
 import { connectedSpendingWallet, signSpendingMessage } from '../../lib/spending-wallet-client';
 import { ConnectWallet } from '../wallet/ConnectWallet';
 import { errorMessage } from '../../lib/error-message';
+import { submitRegistryDeployment } from '../../lib/registry-wallet';
+import { withWalletOperation } from '../../lib/bagseven-sdk-wallet';
 import { formatEther } from 'viem';
 
 type Deployment = { address: string; transaction: string; token: string; rpc_url: string };
@@ -19,7 +21,7 @@ export function FujiRegistryDeployment() {
   const [hash, setHash] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const button = 'rounded-full bg-[var(--ink)] px-4 py-2 text-sm text-white disabled:opacity-50';
   const matchesConnected = Boolean(address && draft?.transaction?.from.toLowerCase() === address.toLowerCase());
-  async function run(action: () => Promise<void>) { setBusy(true); setError(''); try { await action(); } catch (e) { setError(errorMessage(e)); } finally { setBusy(false); } }
+  async function run(action: () => Promise<void>) { setBusy(true); setError(''); try { await withWalletOperation('Registry deployment', action); } catch (e) { setError(errorMessage(e)); } finally { setBusy(false); } }
   async function verifyWallet(expected?: string) {
     if (!address || !connector) throw Error('Connect the wallet you want to use for this deployment');
     const wallet = await connectedSpendingWallet(connector, address, expected);
@@ -36,15 +38,12 @@ export function FujiRegistryDeployment() {
   async function deploy() {
     if (!draft || !address || !connector) throw Error('Prepare the deployment and connect your verified wallet first');
     const wallet = await connectedSpendingWallet(connector, address, draft.transaction.from);
-    await wallet.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0xa869' }] });
-    const genesis = await wallet.request({ method: 'eth_getBlockByNumber', params: ['0x0', false] }) as { hash?: string };
-    if (genesis?.hash !== draft.genesis_hash) throw Error(`Your wallet is pointing at Anvil or another network with chain ID 43113. Select public Fuji RPC ${draft.rpc_url} in your wallet before approving this deployment.`);
     // Only this explicit button requests the financial wallet approval.
-    const sent = await wallet.request({ method: 'eth_sendTransaction', params: [draft.transaction] }); setHash(String(sent));
+    setHash(await submitRegistryDeployment(wallet, draft));
   }
   return <section className="space-y-3 rounded-2xl border border-[var(--line)] bg-white p-5">
     <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">Public Fuji deployment</h2><ConnectWallet compact /></div>
-    <p className="text-sm text-[var(--muted)]">Prepare the entitlement registry for public Avalanche Fuji, review the test AVAX fee, then approve in your wallet. Your local Anvil deployment stays selected until you explicitly activate a verified public deployment.</p>
+    <p className="text-sm text-[var(--muted)]">Prepare the entitlement registry for public Avalanche Fuji, review the test AVAX fee, then approve in your wallet. Preparing a draft does not change the active registry. Approve a new deployment only when you intend to create a separate registry.</p>
     {address && <p className="break-all text-sm">Connected deployment wallet: {address}</p>}
     {error && <p role="alert" className="break-words text-sm text-[var(--deny)]">{error}</p>}
     <button className={button} disabled={busy || !address || !connector} onClick={() => void run(async () => {

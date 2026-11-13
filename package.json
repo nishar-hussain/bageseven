@@ -2,7 +2,7 @@
   "name": "bagseven",
   "version": "0.1.0",
   "private": true,
-    "description": "Bagseven — Avalanche paid access, recurring billing, agent mandates, SDK and MCP",
+  "description": "Bagseven \u2014 Avalanche paid access, recurring billing, agent mandates, SDK and MCP",
   "packageManager": "pnpm@10.33.0",
   "engines": {
     "node": "24.x"
@@ -50,7 +50,9 @@
     "test:checkout": "node scripts/test-avalanche-checkout.mjs",
     "start": "node scripts/start-local.mjs",
     "stop:local": "node scripts/start-local.mjs --stop",
-    "status:local": "node scripts/start-local.mjs --status"
+    "status:local": "node scripts/start-local.mjs --status",
+    "fuji:activate": "node scripts/activate-fuji.mjs",
+    "fuji:gas": "node scripts/fuji-gas.mjs"
   },
   "devDependencies": {
     "@bagseven/db": "workspace:*",

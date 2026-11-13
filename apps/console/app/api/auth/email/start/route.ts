@@ -30,11 +30,12 @@ export async function POST(req: NextRequest) {
     event: 'magic_link',
     subject: 'Your Bagseven verification code',
     title: 'Verify your email',
-    body: `Your code is ${code}. It expires in 10 minutes. It confirms this address for your Bagseven account, invoices, and receipts.`,
-    meta: { code, purpose: 'email_otp' },
+    body: 'Use the code below to verify your email for Bagseven. Return to the window where you started to finish verification.',
+    code,
   });
 
-  if (process.env.NODE_ENV === 'production' && (!sent.ok || sent.skipped)) {
+  const allowDevelopmentHint = process.env.DEV_MODE === 'true' && process.env.NODE_ENV !== 'production';
+  if (!allowDevelopmentHint && (!sent.ok || sent.skipped)) {
     return NextResponse.json({ error: 'Email delivery is unavailable. Please try again later.' }, { status: 503 });
   }
 
@@ -44,7 +45,7 @@ export async function POST(req: NextRequest) {
     email,
   };
   if (sent.id) payload.email_id = sent.id;
-  if ((process.env.NODE_ENV ?? 'development') !== 'production' && (sent.skipped || !sent.ok)) {
+  if (allowDevelopmentHint && (sent.skipped || !sent.ok)) {
     payload.dev_hint = code;
   }
   return NextResponse.json(payload);

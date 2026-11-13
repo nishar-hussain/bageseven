@@ -94,3 +94,8 @@ body {
 .animate-fi-up {
   animation: fi-fade-up 0.7s ease-out both;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .animate-fi-up { animation: none; }
+}
