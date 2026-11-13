@@ -1,98 +1,17 @@
-# Agent instructions (Bagseven)
+# Agent instructions (Bagseven on Avalanche)
 
-Monorepo for **Bagseven**: humans mint living Arkiv entitlements; humans and agents `checkEntitlement` via `@bagseven/sdk`; agents make new payments through MCP under a **dual-gate** (mandate remaining ∧ living grant); prepaid credit usage needs only a living grant. Prefer the live product path — no extra UIs, ports, or demo apps.
+Use the current product paths: landing :3001, console :3000/app, gateway :4000, daemon :4001, policy :4003, MCP :4009. Do not add another dashboard, web app or inspector port. Design tokens live in docs/design.md. Browser calls authenticated console BFF routes and never holds daemon/private keys.
 
-## Architecture
+The Avalanche registry is authoritative for grants, credits, paid-through and reservations. PostgreSQL stores private discovery/recovery metadata. Prepaid usage requires a living holder-authorized grant, worker binding when present, and enough credits; it does not require a payment mandate. New agent payments require active agent/mandate capacity and a living grant. Credit units are not token amounts.
 
-```
-apps/landing     marketing          :3001
-apps/console     operator dashboard :3000/app   (magic-link BFF)
-services/gateway public API         :4000
-services/daemon  grants + dual-gate :4001
-services/policy  spend tokens       :4003
-scripts/bagseven-mcp.ts  MCP HTTP/stdio  :4009  (agent surface)
-packages/        sdk entitlements world notify db money onchain server
-```
+Authentication is verified email plus expiring, nonce/domain-bound wallet signatures. Neither proves unique humanity. Require explicit wallet approval for financial transactions. Keep raw billing email off-chain. Preserve ENTITLEMENT_SUBJECT_SECRET across restarts and deployments.
 
-Start: `pnpm run setup` then `pnpm start:local`. Design tokens: `docs/design.md` (`--blue #0002f8`, landing dark, dashboard `#f2f2f2`).
+Provider-funded gas is mandatory in production. Never fall back to a platform private-key wallet. Provider permissions must be signed, expiring and bound to the current Avalanche chain. Encrypt delegated keys using PROVIDER_GAS_ENCRYPTION_KEY shared by console/daemon/policy. Atomically reserve worst-case fees before signing. Describe EOA limits as server-enforced. Journal signed bytes/hash before broadcast and recover the same transaction after restart.
 
-Do **not** add another web app, revive `bag-dashboard`, or put an inspector on `:3010`. Browser never holds `DAEMON_*` keys — console uses `/api/daemon/*`.
+Monthly billing uses BagSubscriptionPlan, explicit payer allowance/subscribe/cancel transactions, and durable collection/fulfillment journals. Never synthesize payer signatures, silently enroll existing grants, or mark an on-chain permission cancelled from a server flag. Uncertain fulfillment requires reconciliation before another charge or mint. Cancel renewal preserves already-paid time. Provider gas authorization must explicitly cover subscriptions and have at least 31 days remaining for checkout.
 
-## Dual-gate
+Live configuration: AVALANCHE_NETWORK, AVALANCHE_CHAIN_ID, AVALANCHE_RPC_URL, explicitly chosen AVALANCHE_USDC, AVALANCHE_ENTITLEMENT_REGISTRY, ENTITLEMENT_STORE=avalanche. Fuji is 43113. Only explicitly configured non-production tests may use memory grants. Apply migrations through 0020 and rebuild paired artifacts before deployment.
 
-| Clock | Truth |
-| --- | --- |
-| Payment | Whitechain `payment_tx` |
-| Renewal | `grant.renewal_enabled` (cancel does **not** kill `paid_through`) |
-| Access | Arkiv grant `remaining` + `paid_through` (queryable object, not a private `/check`) |
+MCP uses HTTPS /mcp, OAuth PKCE and email-code plus wallet consent. Agents receive scoped Bagseven credentials. OAuth codes, tokens and consent challenges persist in PostgreSQL; HTTP MCP uses stateless per-request transports. Prepaid MCP clients need no deployed mandate; new spending retains the dual gate. Never expose private keys or auto-send wallet transaction drafts.
 
-`paid_run`, `consume_entitlement`, and SDK `/v1/usage/consume` use already-paid access: require a living grant, holder authorization, worker binding when supplied, and enough credits. They do not check a USDT mandate. Credit units are not payment amounts.
-
-New payments through `bagseven_fetch` still require an active agent, mandate capacity, and a living grant (`BAGSEVEN_REQUIRE_GRANT=true`). `entitlements_only` MCP connections can use prepaid credits without a deployed mandate. Dashboard `/app/mandate` manages agent spending permissions: owner-signed create/delegate, owner-wallet funding/withdrawal/revoke. Never expose private keys or auto-send wallet transaction drafts.
-
-## Provider-funded gas
-
-Provider-funded mode is the default. Never spend a platform private-key wallet for provider operations or silently fall back to one. Provider accounts require signed, expiring authorization and native funding on Whitechain (WBT) and Arkiv (tGLM). Keys are AES-GCM encrypted with PROVIDER_GAS_ENCRYPTION_KEY; console/daemon/policy share this deployment secret. Limits are server-enforced EOA restrictions; do not describe them as on-chain smart-account limits. Fee budgets atomically reserve worst-case fees before signing. Legacy platform-owned grants/mandates need explicit migration/reissue; no hidden platform-fee subsidy. x402 without provider payer integration fails closed. See docs/PRODUCT.md.
-
-## Auth + email
-
-- Dashboard: **World-primary** login (`/api/auth/world`); session in `apps/console/lib/auth.ts` carries `world_human_id` + optional verified email. Email OTP verify-later via `/api/auth/email/*`. Magic link is recovery only.
-- Resend via `packages/notify` from `bags@cesthq.com`. Grant mails → signed-in actor (`x-bagseven-actor`) + optional `OPERATOR_NOTIFY_EMAIL`.
-- Production secrets: `AUTH_SECRET`, `DAEMON_AUTH_TOKEN`, `RESEND_API_KEY`. Hosting: `docs/HOSTING.md`.
-
-**World vs MCP (different doors):** World proves the **human** at mint / OAuth authorize. MCP proves the **agent** to the daemon (daemon Bearer / OAuth access token). Agents never hold World credentials.
-
-**World OIDC (live):** authorize `https://auth.world.org/api/v1/authorize` + token `…/api/v1/token`. Console `/app/mint` starts PKCE, redirects back with `?code=&state=`, daemon `POST /internal/world/callback` exchanges code (server-held verifier) → `id_token` → mint. Mock mode mints as the signed-in email with `world:ok:<email>` — no pasted proofs.
-
-**Human + agent UX:** Operators never paste grant/worker UUIDs for normal flows (select entitlements; MCP hides worker id). Agents should call `paid_run` with `feature: "ocr"` (auto-picks a living grant); `grant_id` is optional.
-
-## MCP (local + ChatGPT)
-
-```bash
-BAGSEVEN_MCP_WORKER=<uuid> BAGSEVEN_MCP_PORT=4009 pnpm mcp:local
-# ChatGPT remote: HTTPS tunnel to :4009 + MCP_OAUTH_REQUIRED=true + BAGSEVEN_MCP_PUBLIC_URL=https://…
-```
-
-Tools: `bagseven_status`, `grant_status`, `check_entitlement`, `consume_entitlement`, `mint_with_world`, `buy_credits`, `create_checkout_session`, `paid_run`, `cancel_renewal`, `explain_denial`, `bagseven_fetch` (+ search/spawn when wired).
-
-| Fact | Detail |
-| --- | --- |
-| ChatGPT | Needs **HTTPS** streamable HTTP (`/mcp`), not stdio/localhost |
-| Auth | World-gated OAuth AS (`scripts/mcp-oauth-as.ts`) — PKCE + DCR; ChatGPT gets a Bagseven Bearer, not World |
-| Sessions | In-memory `mcp-session-id`; after MCP restart clients must re-`initialize` (stale sid on initialize is accepted) |
-| `grant_status` | Defaults to feature filter only (aligns with `bagseven_status`). Do **not** force `worker_id` — console/curl mints often omit it |
-| JSON | `enableJsonResponse: true` — avoids SSE hangs behind ngrok |
-| Ngrok free | Browser interstitial on first visit; API POSTs with Bearer are fine. Update ChatGPT plugin URL when the tunnel hostname changes |
-
-Keep MCP alive in a long-lived process (`pnpm bagseven-mcp` / `mcp:local`). Killing the shell kills sessions and OAuth tokens in memory.
-
-## Code map
-
-| Concern | Where |
-| --- | --- |
-| Dual-gate + grants API | `services/daemon/src/grants.ts` |
-| Whitechain settle | `services/daemon/src/whitechain-settle.ts` |
-| Entitlement SDK | `packages/sdk` |
-| Arkiv store | `packages/entitlements` |
-| World verify | `packages/world` |
-| Magic link | `apps/console/lib/auth.ts` |
-| Daemon BFF | `apps/console/app/api/daemon/[...path]/route.ts` |
-| MCP + OAuth | `scripts/bagseven-mcp.ts`, `scripts/mcp-oauth-as.ts` |
-
-## Commands
-
-```bash
-pnpm start:local
-pnpm smoke
-pnpm --filter @bagseven/console typecheck
-pnpm --filter @bagseven/daemon typecheck
-```
-
-## Docs (keep this set small)
-
-- `README.md` — humans
-- `llms.txt` — compact model context
-- `docs/PRODUCT.md` · `docs/DEVELOPERS.md` · `docs/HOSTING.md` · `docs/DECISIONS.md` · `docs/design.md`
-- `docs/arkiv/` — schema / friction notes
-
-Do not add root audit/plan/report markdown; put durable notes here or in `docs/`.
+Run pnpm test and pnpm typecheck. Test registry accounting with node scripts/test-entitlement-registry.mjs. Local tests do not prove public deployment readiness. Keep durable documentation in README.md, llms.txt, docs/PRODUCT.md, docs/DEVELOPERS.md, docs/HOSTING.md, docs/DECISIONS.md and docs/design.md. Do not add root audit/report markdown.

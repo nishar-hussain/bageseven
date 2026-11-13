@@ -64,6 +64,90 @@
       "when": 1794009600000,
       "tag": "0008_provider_gas_accounts",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1794355200000,
+      "tag": "0009_subscriptions",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1794441600000,
+      "tag": "0010_provider_signed_transactions",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1794528000000,
+      "tag": "0011_avalanche_entitlements",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1794614400000,
+      "tag": "0012_avalanche_gas_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1794700800000,
+      "tag": "0013_entitlement_discovery_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1794787200000,
+      "tag": "0014_subscription_due_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1794873600000,
+      "tag": "0015_account_profiles",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1794960000000,
+      "tag": "0016_pending_plan_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1795046400000,
+      "tag": "0017_feature_definitions",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1795132800000,
+      "tag": "0018_auth_credentials",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1795219200000,
+      "tag": "0019_isolated_x402",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1795305600000,
+      "tag": "0020_embed_designs",
+      "breakpoints": true
     }
   ]
 }

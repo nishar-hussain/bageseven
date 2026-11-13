@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import solc from 'solc';
 import { createDb, agents, mandates, vaults } from '@bagseven/db';
-import { MandateClient, canonicalMandate, chainForId, workerKey } from '@bagseven/onchain';
-import { createWalletClient, http, parseAbi } from 'viem';
+import { MandateClient, canonicalMandate, chainForId, workerKey, EntitlementRegistryAbi, EntitlementRegistryBytecode, ProviderGasManager } from '@bagseven/onchain';
+import { AvalancheGrantStore, configureProviderGrantSigners } from '@bagseven/entitlements';
+import { createWalletClient, http, parseAbi, parseEther } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
 const envPath = fileURLToPath(new URL('../.env', import.meta.url));
@@ -34,7 +35,6 @@ async function main() {
   // Generated development keys need not be Anvil's prefunded accounts.
   const faucet = createWalletClient({ account: owner, chain, transport: http(cfg.RPC_URL) });
   const fundedAccounts = [executor.address];
-  if (cfg.BAGSEVEN_X402_PAYER_KEY) fundedAccounts.push(privateKeyToAccount(cfg.BAGSEVEN_X402_PAYER_KEY).address);
   for (const address of fundedAccounts) {
     if (await client.publicClient.getBalance({ address }) < 1_000_000_000_000_000_000n) {
       await wait(await faucet.sendTransaction({ to: address, value: 10_000_000_000_000_000_000n }));
@@ -51,6 +51,10 @@ async function main() {
   }
   const balance = await client.publicClient.readContract({ address: token, abi: tokenAbi, functionName: 'balanceOf', args: [executor.address] });
   if (balance < 100_000_000n) await wait(await wallet.writeContract({ address: token, abi: tokenAbi, functionName: 'mint', args: [executor.address, 10_000_000_000n] }));
+  let registry = cfg.AVALANCHE_ENTITLEMENT_REGISTRY;
+  if (!registry || !(await client.publicClient.getCode({ address: registry }))) {
+    registry = (await wait(await wallet.deployContract({ abi: EntitlementRegistryAbi, bytecode: EntitlementRegistryBytecode }))).contractAddress;
+  }
 
   const db = createDb({ connectionString: cfg.DATABASE_URL });
   try {
@@ -75,10 +79,14 @@ async function main() {
     let env = readFileSync(envPath, 'utf8');
     for (const [key, value] of Object.entries({
       USDC_ADDRESS: token,
-      WHITECHAIN_USDT: token,
-      NEXT_PUBLIC_WHITECHAIN_USDT: token,
-      WHITECHAIN_RPC_URL: cfg.RPC_URL,
-      NEXT_PUBLIC_WHITECHAIN_RPC_URL: cfg.RPC_URL,
+      AVALANCHE_USDC: token,
+      AVALANCHE_ENTITLEMENT_REGISTRY: registry,
+      ENTITLEMENT_STORE: 'avalanche',
+      ENTITLEMENT_SUBJECT_SECRET: cfg.ENTITLEMENT_SUBJECT_SECRET || randomBytes(32).toString('hex'),
+      NEXT_PUBLIC_AVALANCHE_USDC: token,
+      AVALANCHE_RPC_URL: cfg.RPC_URL,
+      NEXT_PUBLIC_AVALANCHE_RPC_URL: cfg.RPC_URL,
+      NEXT_PUBLIC_AVALANCHE_FUJI_RPC_URL: cfg.RPC_URL,
       LOCAL_MANDATE_ID: mandate.id,
       BAGSEVEN_MCP_WORKER: worker.id,
     })) {
@@ -86,6 +94,49 @@ async function main() {
       env = re.test(env) ? env.replace(re, () => `${key}=${value}`) : `${env.trimEnd()}\n${key}=${value}\n`;
     }
     writeFileSync(envPath, env);
+    // Optional, explicitly selected workspace. All signatures and funds are Anvil-only.
+    if (cfg.LOCAL_PROVIDER_EMAIL) {
+      const provider = cfg.LOCAL_PROVIDER_EMAIL.trim().toLowerCase();
+      const localEnv = { ...cfg, AVALANCHE_ENTITLEMENT_REGISTRY: registry, AVALANCHE_USDC: token,
+        AVALANCHE_RPC_URL: cfg.RPC_URL, ENTITLEMENT_SUBJECT_SECRET: cfg.ENTITLEMENT_SUBJECT_SECRET || '' };
+      if (!localEnv.ENTITLEMENT_SUBJECT_SECRET) {
+        localEnv.ENTITLEMENT_SUBJECT_SECRET = (await import('node:util')).parseEnv(env).ENTITLEMENT_SUBJECT_SECRET;
+      }
+      const gas = new ProviderGasManager(db, localEnv);
+      let status = await gas.status(provider);
+      if (!status.configured || status.status !== 'active') {
+        const draft = await gas.prepare(provider, { owner: owner.address, avalancheBudget: '1', registryBudget: '1',
+          avalancheTxLimit: '0.1', registryTxLimit: '0.1', expires: Date.now() + 90 * 86400000 });
+        await gas.authorize(provider, await owner.signMessage({ message: draft.message }));
+        status = await gas.status(provider);
+      }
+      if (await client.publicClient.getBalance({ address: status.address }) < parseEther('0.1')) {
+        await wait(await faucet.sendTransaction({ to: status.address, value: parseEther('0.5') }));
+      }
+      // Fund only known development accounts with local faucet tokens.
+      for (const address of [owner.address, operator.address]) {
+        if (await client.publicClient.readContract({ address: token, abi: tokenAbi, functionName: 'balanceOf', args: [address] }) < 100_000_000n) {
+          await wait(await wallet.writeContract({ address: token, abi: tokenAbi, functionName: 'mint', args: [address, 1_000_000_000n] }));
+        }
+      }
+      const { PostgresBillingStore } = await import('../services/daemon/dist/billing-store.js');
+      const billing = new PostgresBillingStore(db);
+      const plans = await billing.listPlans();
+      for (const [name, amount, credits, interval] of [['Receipt Starter', '1', '5', 'once'], ['Receipt Pro', '10', '100', 'month'], ['Receipt Team', '25', '300', 'month']]) {
+        if (!plans.some(p => p.provider_id === provider && p.name === name)) {
+          await billing.createPlan({ provider_id: provider, name, amount, credits, interval, feature: 'ocr', merchant_wallet: owner.address });
+        }
+      }
+      configureProviderGrantSigners(id => gas.account(id, 'registry'));
+      const grants = new AvalancheGrantStore(db, localEnv);
+      for (const [feature, remaining] of [['ocr', '10'], ['research_fetch', '5'], ['api_access', '20']]) {
+        if (!(await grants.findLive({ holder: provider, feature })).length) {
+          await grants.mint({ merchant: provider, holder: provider, feature, remaining, ttl_seconds: 30 * 86400,
+            worker_id: worker.id, renewal_enabled: false, settlement_network: 'avalanche' });
+        }
+      }
+      console.log('Prepared selected local workspace: provider-funded gas, three plans and three on-chain entitlements. No recurring customer permission was synthesized.');
+    }
     console.log(`Local token: ${token}\nFunded mandate: ${mandate.id}\nMCP worker: ${worker.id}`);
   } finally {
     await db.$client.end();

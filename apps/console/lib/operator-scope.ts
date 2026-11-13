@@ -7,7 +7,7 @@ const ADDR = /^0x[0-9a-fA-F]{40}$/;
 /** Wallets this signed-in operator may inspect (mandates / vaults). */
 export function operatorOwnerAddresses(env: NodeJS.ProcessEnv = process.env): string[] {
   const out = new Set<string>();
-  for (const raw of [env.DAEMON_OWNER_ADDRESS, env.WHITECHAIN_PAY_TO, env.OPERATOR_WALLET]) {
+  for (const raw of [env.DAEMON_OWNER_ADDRESS, env.AVALANCHE_PAY_TO, env.OPERATOR_WALLET]) {
     const v = raw?.trim();
     if (v && ADDR.test(v)) out.add(v.toLowerCase());
   }
@@ -34,9 +34,6 @@ export function sessionActorHeaders(session: Session): Record<string, string> {
   const headers: Record<string, string> = {
     'x-bagseven-actor': sessionHolder(session),
   };
-  if (!session.mock && session.world_human_id && !session.world_human_id.startsWith('email:')) {
-    headers['x-bagseven-world-human'] = session.world_human_id;
-  }
   return headers;
 }
 

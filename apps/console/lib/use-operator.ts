@@ -6,20 +6,17 @@ import { entitlementsApi, type MumbaiStatus } from './entitlements-client';
 export type Operator = {
   email: string | null;
   emailVerified: boolean;
-  worldHumanId: string | null;
   walletAddress: string | null;
   mock: boolean;
   holder: string;
   status: MumbaiStatus | null;
-  worldLive: boolean;
   loading: boolean;
 };
 
-/** Signed-in World identity (+ optional email / wallet) for human-friendly defaults. */
+/** Verified email and signed wallet for human-friendly defaults. */
 export function useOperator(): Operator {
   const [email, setEmail] = useState<string | null>(null);
   const [emailVerified, setEmailVerified] = useState(false);
-  const [worldHumanId, setWorldHumanId] = useState<string | null>(null);
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [mock, setMock] = useState(false);
   const [holder, setHolder] = useState('');
@@ -36,7 +33,6 @@ export function useOperator(): Operator {
               ? ((await r.json()) as {
                   email?: string | null;
                   email_verified?: boolean;
-                  world_human_id?: string | null;
                   wallet_address?: string | null;
                   mock?: boolean;
                   holder?: string;
@@ -48,7 +44,6 @@ export function useOperator(): Operator {
         if (cancelled) return;
         setEmail(meRes?.email ?? null);
         setEmailVerified(Boolean(meRes?.email_verified));
-        setWorldHumanId(meRes?.world_human_id ?? null);
         setWalletAddress(meRes?.wallet_address ?? null);
         setMock(Boolean(meRes?.mock));
         setHolder(meRes?.holder ?? meRes?.email ?? '');
@@ -65,24 +60,17 @@ export function useOperator(): Operator {
   return {
     email,
     emailVerified,
-    worldHumanId,
     walletAddress,
     mock,
     holder,
     status,
-    worldLive: Boolean(
-      status?.tracks.world.mode === 'idkit' ||
-        status?.tracks.world.mode === 'dual' ||
-        status?.tracks.world.mode === 'live' ||
-        (status?.tracks.world.mode === 'agent_pass' && !status.tracks.world.mock_proofs),
-    ),
     loading,
   };
 }
 
 /**
  * Keep in sync with packages/entitlements/src/features.ts (canonical catalog).
- * Console does not import that package (avoids pulling Arkiv into the browser bundle).
+ * Console does not import that package (avoids pulling Registry into the browser bundle).
  */
 export const FEATURE_OPTIONS = [
   {
@@ -97,7 +85,7 @@ export const FEATURE_OPTIONS = [
   },
 ] as const;
 
-/** Access / billing period — grant stays on Arkiv until paid_through, then evaporates. */
+/** Access / billing period — grant stays on Registry until paid_through, then evaporates. */
 export const TTL_PRESETS = [
   { seconds: 900, label: '15 minutes (demo)' },
   { seconds: 3600, label: '1 hour (demo)' },

@@ -38,7 +38,7 @@ export default function AttentionPage() {
         if (!me?.wallet_address) {
           next.push({
             title: 'Add payout wallet',
-            detail: 'Optional — connect a Whitechain wallet for plan payouts.',
+            detail: 'Optional — connect a Avalanche wallet for plan payouts.',
             href: '/app/account#wallet',
             tone: 'info',
           });
@@ -46,7 +46,7 @@ export default function AttentionPage() {
         if ((live.grants ?? []).length === 0) {
           next.push({
             title: 'No live entitlements yet',
-            detail: 'Create an entitlement so agents have living Arkiv access to spend against.',
+            detail: 'Create an entitlement so agents have living Registry access to spend against.',
             href: '/app/mint',
             tone: 'warn',
           });
@@ -59,35 +59,20 @@ export default function AttentionPage() {
             tone: 'warn',
           });
         }
-        if (!s.tracks.arkiv.live) {
+        if (!s.tracks.registry.live) {
           next.push({
-            title: 'Arkiv on local store',
-            detail: 'Set ARKIV_ACCESS_KEY and ARKIV_PRIVATE_KEY, then restart the daemon.',
+            title: 'Registry on local store',
+            detail: 'Set AVALANCHE_ENTITLEMENT_REGISTRY and ENTITLEMENT_SUBJECT_SECRET, then restart the daemon.',
             href: '/app/settings',
             tone: 'info',
           });
         }
-        if (s.tracks.whitechain.demo_settle) {
+        if (s.tracks.avalanche.demo_settle) {
           next.push({
-            title: 'Whitechain settle not wired',
-            detail: 'Set WHITECHAIN_PRIVATE_KEY and WHITECHAIN_PAY_TO for live settlement.',
+            title: 'Avalanche settle not wired',
+            detail: 'Set AVALANCHE_PRIVATE_KEY and AVALANCHE_PAY_TO for live settlement.',
             href: '/app/settings',
             tone: 'info',
-          });
-        }
-        if (s.tracks.world.mock_proofs) {
-          next.push({
-            title: 'World live proofs disabled',
-            detail: 'Set WORLD_MOCK_PROOFS=false for production uniqueness proofs.',
-            href: '/app/settings',
-            tone: 'info',
-          });
-        } else if (!s.tracks.world.idkit) {
-          next.push({
-            title: 'World IDKit credentials missing',
-            detail: 'Set WORLD_APP_ID, WORLD_RP_ID, and WORLD_RP_SIGNING_KEY from the Developer Portal.',
-            href: '/app/settings',
-            tone: 'warn',
           });
         }
         setItems(next);

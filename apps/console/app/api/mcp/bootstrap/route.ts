@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { parseEnv } from 'node:util';
 import { NextResponse } from 'next/server';
 import { getSession } from '../../../../lib/auth';
 
@@ -38,7 +39,11 @@ function upsertEnvWorker(worker: string): void {
 }
 
 function configs(worker: string) {
-  const publicUrl = process.env.BAGSEVEN_MCP_PUBLIC_URL?.replace(/\/$/, '');
+  // Local tunnel hostnames change independently of the running Next process.
+  const localPath = rootEnvPath();
+  const localUrl = process.env.NODE_ENV !== 'production' && existsSync(localPath)
+    ? parseEnv(readFileSync(localPath, 'utf8')).BAGSEVEN_MCP_PUBLIC_URL : undefined;
+  const publicUrl = (localUrl ?? process.env.BAGSEVEN_MCP_PUBLIC_URL)?.replace(/\/$/, '');
   if (publicUrl) {
     return {
       cursorMcp: { mcpServers: { bagseven: { url: `${publicUrl}/mcp` } } },
@@ -79,17 +84,20 @@ export async function GET() {
       'grant_status',
       'check_entitlement',
       'consume_entitlement',
-      'mint_with_world',
+      'buy_access',
       'buy_credits',
       'create_checkout_session',
       'paid_run',
       'cancel_renewal',
+      'list_subscriptions',
+      'get_subscription',
+      'cancel_subscription',
       'explain_denial',
     ],
     auth: {
-      human: 'World-primary dashboard login. Email OTP is verify-later. World still gates mint uniqueness.',
+      human: 'Verified email login and signed Avalanche wallet ownership.',
       agent:
-        'External agents never hold World credentials. They connect via MCP bound to BAGSEVEN_MCP_WORKER; daemon auth is DAEMON_AUTH_TOKEN. Dual-gate still requires a living Arkiv grant minted by a human.',
+        'External agents never hold account credentials. They connect via MCP bound to BAGSEVEN_MCP_WORKER; daemon auth is DAEMON_AUTH_TOKEN. Dual-gate still requires a living Registry grant minted by a human.',
     },
     ...(worker ? configs(worker) : {}),
   });
@@ -112,8 +120,8 @@ export async function POST() {
     created: true,
     ...configs(worker),
     auth: {
-      human: 'Magic-link dashboard. World Agent Pass gates mint.',
-      agent: 'MCP + worker UUID + DAEMON_AUTH_TOKEN. No World ID on the agent path.',
+      human: 'Email and wallet authorize the human; agents receive scoped Bagseven credentials.',
+      agent: 'MCP + worker UUID + DAEMON_AUTH_TOKEN. No account credentials on the agent path.',
     },
   });
 }

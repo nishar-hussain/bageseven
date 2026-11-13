@@ -30,7 +30,7 @@ function LiveGuard() {
         <code className="fi-mono text-xs">useFlag(&apos;ocr&apos;)</code> → <strong>{String(enabled)}</strong>
       </div>
       <div className="mt-1">
-        type {ent.value_type ?? 'numeric'} · remaining {ent.remaining} · TTL {ent.paid_through ?? 'none'} · Arkiv{' '}
+        type {ent.value_type ?? 'numeric'} · remaining {ent.remaining} · TTL {ent.paid_through ?? 'none'} · Registry{' '}
         {ent.grant_id ? 'live' : 'empty'}
       </div>
       <FeatureFlagGuard feature="ocr" fallback={<p className="mt-2 text-[var(--muted)]">OCR gated off — mint an entitlement first.</p>}>

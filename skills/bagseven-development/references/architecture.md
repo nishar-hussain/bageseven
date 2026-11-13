@@ -4,21 +4,21 @@
 
 | Concern | Repository path |
 | --- | --- |
-| Console World/session login | `apps/console/app/api/auth/`, `apps/console/lib/auth.ts`, `session-crypto.ts` |
+| Console email and wallet/session login | `apps/console/app/api/auth/`, `apps/console/lib/auth.ts`, `session-crypto.ts` |
 | BFF auth and scope | `apps/console/app/api/daemon/[...path]/route.ts`, policy/public routes, `lib/daemon-bff.ts` |
 | Connected spending wallet | `apps/console/lib/spending-wallet.ts`, wallet verification route, `SpendingControls.tsx` |
 | Grant mint/consume/denial | `services/daemon/src/grants.ts` |
 | Public SDK API/key scopes | `services/daemon/src/public-entitlements.ts`, `api-keys.ts` |
 | Plans, checkout, provider fees | `services/daemon/src/billing.ts`, `billing-store.ts` |
-| Whitechain receipts and replay | `whitechain-payment.ts`, `whitechain-settle.ts`, `payment-ledger.ts` in daemon |
-| New payment executor and x402 | `services/daemon/src/index.ts`, `x402.ts`, `x402-payer.ts`, request ledger |
+| Avalanche receipts and replay | `avalanche-payment.ts`, `avalanche-settle.ts`, `payment-ledger.ts` in daemon |
+| New payment executor and x402 | `services/daemon/src/index.ts`, `x402.ts`, `x402-authorities.ts`, `x402-payments.ts`, `x402-job-store.ts`, request ledger |
 | Agent/mandate discovery | `services/daemon/src/worker-management.ts` |
 | Gateway authentication/proxy | `services/gateway/src/index.ts` |
 | Spend permissions and chain reads | `services/policy/src/routes.ts`, `mandate-state.ts`, `usdt-units.ts` |
 | Shared HTTP service/CORS | `packages/server/src/` |
-| Arkiv and memory grants | `packages/entitlements/src/` |
+| Avalanche registry and memory grants | `packages/entitlements/src/` |
 | Onchain client, ABI/bytecode | `packages/onchain/src/` |
-| World verification/OIDC | `packages/world/src/` |
+| Email and signed wallet consent | `apps/console/lib/auth.ts`, `scripts/mcp-account-auth.ts` |
 | Email | `packages/notify/src/` |
 | MCP/OAuth/tool schemas | `scripts/bagseven-mcp.ts`, `mcp-oauth-as.ts`, `mcp-management-tools.ts` |
 
@@ -26,13 +26,13 @@ Paths are relative to a Bagseven checkout, not to the installed skill folder. If
 
 ## Invariants to preserve
 
-- World OIDC uses PKCE and server-held verifier; IDKit RP credentials and Agent Pass OIDC credentials are distinct. Do not disable JWKS or synthesize World proofs in production.
+- MCP OAuth uses PKCE with expiring request-bound email and wallet consent; never synthesize user signatures.
 - Policy has no browser session. The authenticated BFF binds actor/holder/owner scope before forwarding. Never trust internet-supplied actor headers without the service authentication boundary.
 - New payments fail closed when the chain, contract, grant or mandate cannot be verified. Preserve revoked/unavailable states rather than treating them as an empty successful read.
 - Owner-signed prepare/create/delegate messages bind terms, chain and freshness. Funding/withdrawal/revoke transaction drafts require the owner's connected wallet approval.
 - Receipt verification binds transaction, network, token, amount, buyer and merchant. Preserve replay protection and idempotency when altering checkout or x402 flows.
-- Local development can use memory grants and Anvil. Live access uses Arkiv; a public RPC URL by itself is not a configured grant store.
-- The feature registry is persisted on disk. MCP OAuth/session maps and some Arkiv hold state are process-local; additional replicas require a deliberate persistence/concurrency design.
+- Local development can use memory grants and Anvil. Live access uses Avalanche registry; a public RPC URL by itself is not a configured grant store.
+- The feature registry is persisted on disk. MCP OAuth/session maps and some Avalanche registry hold state are process-local; additional replicas require a deliberate persistence/concurrency design.
 
 ## Focused checks
 

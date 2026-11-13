@@ -62,7 +62,7 @@ export function ProviderCheckout({ creditsOnly = false }: { creditsOnly?: boolea
   }
 
   return <div className="mx-auto max-w-3xl space-y-5">
-    <PageHeader title={creditsOnly ? 'Buy credits' : 'Create entitlement'} description="Choose a provider plan. The buyer pays its provider directly, then verified payment issues living access on Arkiv." />
+    <PageHeader title={creditsOnly ? 'Buy credits' : 'Create entitlement'} description="Choose a provider plan. The buyer pays its provider directly, then verified payment issues living access on Registry." />
     {session ? <>
       <BagsevenEmbed key={session} apiUrl="/api/public" checkoutSessionId={session} initialView="checkout" mode="inline" walletSlot={<ConnectWallet />} />
       <p className="text-sm text-[var(--muted)]">After payment confirmation, open Entitlements to use the purchased access.</p>
@@ -74,11 +74,11 @@ export function ProviderCheckout({ creditsOnly = false }: { creditsOnly?: boolea
           <label className="block text-sm font-semibold">Plan
             <select value={planId} onChange={event => setPlanId(event.target.value)} className="mt-1 w-full rounded-xl border border-[var(--line)] bg-white px-3 py-2.5 font-normal">
               <option value="">Choose a plan</option>
-              {available.map(plan => <option key={plan.id} value={plan.id}>{plan.name} — {plan.amount} USDT</option>)}
+              {available.map(plan => <option key={plan.id} value={plan.id}>{plan.name} — {plan.amount} stablecoin</option>)}
             </select>
           </label>
           {selected ? <div className="space-y-1 rounded-xl bg-[var(--soft)] p-3 text-sm">
-            <p><strong>{selected.amount} USDT</strong> · {booleanAccess ? 'Feature access' : `${selected.credits} usage credits`} · {selected.feature}</p>
+            <p><strong>{selected.amount} stablecoin</strong> · {booleanAccess ? 'Feature access' : `${selected.credits} usage credits`} · {selected.feature}</p>
             <p>Access period: {selected.ttl_seconds} seconds · {selected.interval === 'month' ? 'Monthly renewal option' : 'One-time purchase'}</p>
             <p className="break-all">Provider receives payment at {selected.merchant_wallet}</p>
             <p className="text-[var(--muted)]">The 0.1% platform fee is billed separately to the provider.</p>

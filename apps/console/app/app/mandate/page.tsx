@@ -4,6 +4,7 @@ import { errorMessage } from '../../../lib/error-message';
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { SpendingControls } from '../../../components/app/SpendingControls';
+import { X402Payments } from '../../../components/app/X402Payments';
 import { PageHeader } from '../../../components/app/ui';
 import { entitlementsApi, type Grant } from '../../../lib/entitlements-client';
 import { mandateApi, type MandateOverview, type MandateSummary } from '../../../lib/mandate-client';
@@ -68,11 +69,11 @@ export default function MandatePage() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-5">
-      <PageHeader title="Agent spending permissions" description="Set USDT budgets for automated purchases. Prepaid service access is managed separately." />
+      <PageHeader title="Agent spending permissions" description="Set stablecoin budgets for automated purchases. Prepaid service access is managed separately." />
 
       <div className="rounded-2xl border border-[var(--line)] bg-white px-4 py-3 text-sm">
         <p className="font-semibold">Prepaid access and new payments are separate</p>
-        <p className="mt-2 text-[var(--muted)]">Agents use active entitlements and remaining credits through MCP without funding a mandate. Set up a spending permission below only when an agent should make new USDT payments automatically.</p>
+        <p className="mt-2 text-[var(--muted)]">Agents use active entitlements and remaining credits through MCP without funding a mandate. Set up a spending permission below only when an agent should make new stablecoin payments automatically.</p>
         <Link href="/app/grants" className="mt-2 inline-block font-medium text-[var(--blue)] underline">Manage service access</Link>
       </div>
 
@@ -143,6 +144,7 @@ export default function MandatePage() {
       </div>
 
       <SpendingControls selectedId={selectedId} overview={overview} onChange={loadList} onCreated={setSelectedId} />
+      <X402Payments mandateId={selectedId} overview={overview} />
 
       {overview?.mandate_id === selectedId && overview && (
         <div className="space-y-4 rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">

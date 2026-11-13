@@ -51,7 +51,6 @@ describe('production provider gas configuration', () => {
     const consoleEnv = read(root, 'apps/console/.env.prod');
     expect(consoleEnv.AUTH_SECRET).toBe('preserved-secret');
     expect(consoleEnv.NEXT_PUBLIC_BAGSEVEN_API_URL).toBe('https://bageseven-app.vercel.app/api/public');
-    expect(read(root, 'services/daemon/.env.prod').WORLD_REDIRECT_URI).toBe('https://bageseven-app.vercel.app/app/mint');
     writeFileSync(resolve(root, '.env.prod'), 'DATABASE_URL=postgres://user:secret@custom.internal:5432/bag\nREDIS_URL=redis://:secret@cache.internal:6379\n');
     run(root);
     expect(read(root, 'services/daemon/.env.prod').DATABASE_URL).toBe('postgres://user:secret@custom.internal:5432/bag');

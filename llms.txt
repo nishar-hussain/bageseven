@@ -1,82 +1,20 @@
 # Bagseven
 
-> Infrastructure for autonomous AI agents. Operators sign in with World. SaaS merchants define thin Plans and open Checkout Sessions. Buyers pay USDT on Whitechain (WhiteWallet-ready). Paid sessions mint living Arkiv entitlements. Humans and agents check/consume through an SDK. Agents spend under a mandate dual-gate.
+Avalanche C-Chain paid access and agent spending. Fuji chain 43113; mainnet 43114. Payment token is explicitly configured with AVALANCHE_USDC and must have six decimals.
 
-## Start
+Email proves inbox control. Wallet ownership uses a signed, expiring account-bound message. Neither proves unique humanity. Browser uses console BFF APIs; service keys remain server-side.
 
-pnpm setup
-pnpm start:local
+GrantStore: mint/get/findLive/consume/cancelRenewal/hold/commit/release. AvalancheGrantStore uses private PostgreSQL metadata for discovery and reads balances from BagEntitlementRegistry. Expired records remain stored but are excluded from live access. Subjects are HMAC hashes on-chain; preserve ENTITLEMENT_SUBJECT_SECRET across restarts.
 
-Landing http://localhost:3001
-Dashboard http://localhost:3000/app  (World-primary login; email OTP verify-later)
-Plans http://localhost:3000/app/plans
-Checkouts http://localhost:3000/app/checkouts
-Account http://localhost:3000/app/account
-SDK playground http://localhost:3000/app/sdk
-Embed portal http://localhost:3000/embed?token=
-Public checkout http://localhost:3000/checkout?session=cs_…
-Gateway :4000  Daemon :4001  Policy :4003
+Prepaid usage needs a living authorized grant and enough credits. New agent payments require an active agent, remaining mandate capacity, and a living grant. Credit units and stablecoin amounts differ.
 
-## What this repo is
+Recurring billing uses fixed-price BagSubscriptionPlan, explicit payer allowance/subscribe/cancel, and durable collection/fulfillment journals. Cancellation preserves paid time. Unknown transaction outcomes require reconciliation of the same signed bytes.
 
-Monorepo (pnpm + turbo). Two product surfaces only:
+Provider-funded gas is mandatory in production. Authorized encrypted delegated keys pay AVAX under server-enforced fee budgets. Do not call these EOA restrictions on-chain smart-account limits. No platform-wallet fallback.
 
-- apps/landing — Fianto-style marketing
-- apps/console — operator dashboard (/app) + /embed + /checkout
+SDK: @bagseven/sdk; browser wallet helpers connectAvalancheWallet/payStablecoinOnAvalanche/subscribeOnAvalanche/cancelAvalancheSubscription. MCP: HTTPS /mcp with email-code plus wallet consent, OAuth PKCE, scoped access and rotating refresh tokens. HTTP MCP is stateless. OAuth codes/tokens, email-consent challenges and rate limits persist in PostgreSQL with atomic single-use exchanges.
 
-Backend: services/gateway, services/daemon, services/policy
-Libraries: packages/sdk, packages/entitlements, packages/world, packages/notify, packages/db, packages/money, packages/onchain, packages/server
+Code: services/daemon/src/grants.ts, billing.ts, subscriptions.ts, avalanche-payment.ts; packages/entitlements/src/avalanche-store.ts; packages/contracts/src/BagEntitlementRegistry.sol; scripts/bagseven-mcp.ts and mcp-account-auth.ts.
 
-## SDK flow
-
-1. World login (operator)
-2. createPlan → createCheckoutSession
-3. BagsevenEmbed checkoutSessionId (WhiteWallet / EVM pay)
-4. Living Arkiv grant
-5. checkEntitlement / FeatureFlagGuard / MCP consume
-
-@bagseven/sdk/react — Provider, FeatureFlagGuard, BagsevenEmbed (portal | checkout | …)
-@bagseven/sdk/node — checkEntitlement, consumeEntitlement, identify, createPlan, createCheckoutSession
-@bagseven/sdk/wallet — connectWhitechainWallet, payUsdtOnWhitechain
-@bagseven/sdk/agent — programmatic agent wrapper
-
-Public API:
-GET /v1/check  GET /v1/entitlements  POST /v1/usage/consume  POST /v1/access-tokens  POST /v1/credits
-POST /v1/plans  GET /v1/plans  POST /v1/checkout-sessions
-GET /v1/public/checkout/:id  POST /v1/public/checkout/:id/confirm
-Demo: pnpm sdk:demo
-
-## Dual-gate (IP)
-
-Payment clock = Whitechain (payment_tx)
-Renewal clock = grant.renewal_enabled (cancel does not kill paid_through)
-Access clock = Arkiv grant remaining + TTL — queryable object
-
-paid_run / secret consume use prepaid grants without a mandate. New USDT payments via bagseven_fetch require mandate remaining AND a living grant. Dashboard /app/mandate manages owner-signed spending permissions.
-
-## Auth
-
-World is primary (IDKit / mock). Session cookie bagseven_session (HMAC, 8h).
-Email is optional — verify later via 6-digit OTP. Magic link is recovery/invite only.
-
-## MCP tools
-
-bagseven_status, grant_status, check_entitlement, consume_entitlement, mint_with_world, buy_credits, create_checkout_session, paid_run, cancel_renewal, explain_denial, bagseven_fetch
-Bind one worker: BAGSEVEN_MCP_WORKER=<uuid> pnpm mcp:local
-
-## Tracks (mock vs live)
-
-World: WORLD_MOCK_PROOFS vs WORLD_RP_* / WORLD_CLIENT_ID
-Whitechain: WHITECHAIN_DEMO_SETTLE vs buyer-signed USDT + WHITECHAIN_USDT
-Arkiv: ENTITLEMENT_STORE=memory vs ARKIV_ACCESS_KEY + ARKIV_PRIVATE_KEY
-
-## Do not
-
-- Add a third web app or port 3010 inspector
-- Put operator keys in client JS (publishable + embed token only)
-- Add payment-link product line / products catalog / invoices
-- Weaken fail-closed policy / spend_token (docs/DECISIONS.md)
-
-## More
-
-AGENTS.md, docs/DEVELOPERS.md, docs/HOSTING.md, docs/PRODUCT.md
+Isolated x402: separately approved encrypted payment signer; mandate-enforced funding; durable jobs; EIP-3009 nonce/transfer reconciliation; no refund while a payment signature can settle. Use bagseven_x402_payment for status. Migration 0019 and separate X402_PAYMENT_ENCRYPTION_KEY required.
+Builder: /app/builder customizes one complete customer embed (cmp_customer): plans, wallets, checkout, prepaid credits and renewals. Drafts and explicit published snapshots persist in PostgreSQL with provider scope and revision checks; apply migration 0020. Hosted iframe credentials use an exact-origin parent-window postMessage handshake, never new token-bearing URLs. React and legacy standalone components remain supported.

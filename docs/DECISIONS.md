@@ -1,74 +1,27 @@
-# Bagseven — Architecture Decisions
+# Decisions
 
-Status: **authoritative**. Every mechanism here is a hard invariant. Do not weaken without a new decision entry.
+## D17. Avalanche product migration
 
-## D1. The spend_token (the core security mechanism)
+The `Avalanche` branch implements Avalanche C-Chain settlement and an entitlement registry. The `chain` branch preserves the previous product implementation. Merge into `main` only after validation and the user's merge instruction.
 
-Issued by the **Policy Service** at ALLOW (or on guardian approval completion). It is the only thing the Treasury Service will co-sign against. The LLM/agent runtime never authorizes; it can only present a token the Policy Service issued.
+Authentication is verified email plus signed wallet ownership. Email supports sign-in, receipts and recovery; wallet signatures authorize financial actions. The product does not claim proof of unique humanity. MCP consent uses an emailed code and a nonce-bound, expiring wallet signature bound to the OAuth request. Existing OAuth client, redirect, PKCE and refresh-token checks remain required.
 
-- **Signature**: Ed25519, Policy Service's signing key. Treasury verifies with the corresponding public key (via env, never fetched at co-sign time).
-- **Claims** (canonical JSON, signed):
-  ```
-  { v: 1, decision_id, agent_id, amount, currency, chain, category, counterparty_id, iat, exp, jti }
-  ```
-- **exp**: 30s from issuance.
-- **Single-use**: Treasury enforces via `SETNX spendtoken:used:{jti}` (TTL 5min). A replayed token is rejected.
-- **Payee binding**: Treasury resolves `counterparty_id` → the **registered** payout address (provider/agent record). It **never** signs to an address supplied by the request. `counterparty_id === null` is only valid for platform-controlled sweeps.
-- **Live status recheck**: at co-sign time Treasury re-checks the agent is `active` (and wallet not frozen) against identity data. A suspension inside the 30s window still blocks.
-- **Budget accounting**: Policy increments spend counters at token issuance (reserved). A settlement failure/refund compensates the counter via an idempotent job keyed by `decision_id`.
+The registry is the access authority. Private PostgreSQL records support discovery and recovery. Each authoritative read verifies the configured Avalanche network and reads contract state. Subject HMACs keep raw billing email off-chain; the secret must remain stable. Numeric credits use exact 18-decimal units; payment tokens use their explicitly verified six-decimal units.
 
-## D2. Delegation accounting (child can never exceed parent's remaining)
+Provider signing authority is scoped to recorded provider operations, encrypted at rest, fee-bounded and journaled before broadcast. Settlement and registry operations share one configured C-Chain native balance and nonce namespace while retaining separate maximum-fee accounting categories. A provider must reauthorize after a deployment or authorization-format change. Production has no platform-fee fallback.
 
-`parent.remaining = parent.budget − parent.own_spent − parent.children_spent`.
+Recurring payment contracts retain fixed terms, payer-approved allowances, customer subscription/cancellation transactions and durable renewal/fulfillment journals. Each period is fulfilled once. Cancellation stops future collection and preserves paid-through. Unknown outcomes require reconciliation of original transactions.
 
-- `children_spent` is an aggregated counter incremented whenever any descendant spends.
-- A child's spend increments the child's own counter **and** `children_spent` on every ancestor **in one Redis Lua script** — atomic, no read-then-write. Two children racing the parent's remaining cannot jointly overshoot.
-- The `min(child.remaining, parent.remaining)` rule from the PRD is evaluated on every check, not cached.
+The registry supports minting, current reads, credit consumption, holds, commit/release, expiry and renewal cancellation. Duplicate operations must not decrement or release twice, conflicting retries must fail, and expired storage must not confer access. EVM state remains stored after expiry.
 
-## D3. Category limits
+Cross-L1 allocation through Avalanche ICM remains follow-up work until source reservation, authenticated delivery, replay/order protection, destination execution and public-network recovery are implemented and verified. Do not describe the current one-chain implementation as cross-L1 delivery.
 
-`policy.category_limits: { [category]: { max_per_tx, daily_budget } }`. Counters keyed `(agent_id, period_key, period_type, category)`. A category limit applies on top of the flat daily budget; the effective cap is the min of both.
+## D18 — Separate authority for isolated x402 payments
 
-## D4. Fail-closed, always
+The provider approves a separate EIP-3009 payment signer bound to one on-chain mandate, worker, chain, token, merchant recipient and provider origin. Gas-signing authorization does not grant payment-signing authority. The isolated signer receives only transfers executed through the existing mandate contract; it never receives owner or enforcer access to that vault. Unknown incoming tokens cannot increase a job's authorized funding amount.
 
-The Policy Service's only ALLOW output is a signed token. Any error or timeout during evaluation is a **deny** (HTTP 503/403, never ALLOW). The gateway and every SDK treat non-`allow` as deny. Proved by the chaos suite (D9), not just unit tests.
+Each mandate/worker/merchant binding retains a stable payer address across authorization renewal. The unchanged mandate enforces worker allocation, revocation, per-purchase, rolling-window, lifetime and direct-recipient limits on funding that address. Its direct recipient is the isolated payer. The downstream merchant restriction is enforced by the separately approved signer and settlement evidence; it is not an on-chain merchant whitelist in the unchanged vault. Never describe the off-chain signer policy as a smart-account restriction.
 
-## D5. Idempotency
+Signed payment authorizations and funding transaction bytes must be journaled before use. One unresolved job per payer prevents concurrent use of the same allocated funds. A job's idempotency key binds its complete payment inputs. HTTP success alone does not establish settlement: verify the token transfer and EIP-3009 nonce on-chain. An ambiguous authorization remains pending until reconciled; never refund while it can still settle. Recovery can return only the job's unused authorized funding to its original mandate. Returning tokens does not reset the mandate's on-chain spend counters. Revocation stops new signing; signatures already issued can remain executable until their expiry.
 
-Every mutating request carries `Idempotency-Key`. Redis `idempotency:{service}:{key}` → `{status: in_progress|completed, response}`. In-progress → 409 + `Retry-After`. Completed → stored response verbatim. TTL 24h. Stuck `in_progress` keys resolved by a sweeper after 60s. The spend-intent idempotency key binds token minting: one logical intent ⇒ one token.
-
-## D6. Reservation lifecycle
-
-`held → committed | released | expired`. Reserve is a single atomic statement: insert reservation + `UPDATE balances SET reserved_amount = reserved_amount + $amount WHERE wallet_id=$w AND token=$t AND (amount - reserved_amount) >= $amount`. Row count 0 ⇒ rollback (insufficient funds). Expiry (default 60s) **must exceed** provider timeout + settlement window; the sweeper skips reservations referenced by in-flight executions.
-
-## D7. Async settlement, sync decision
-
-`/spend-intents` answers "allowed?" in <50ms and issues a token. Chain settlement is asynchronous off the event bus. The synchronous path never waits on chain finality.
-
-## D8. Double-entry ledger
-
-Every settled tx writes exactly two `ledger_entries`: debit payer, credit payee. Invariant (per account/token/chain): Σ debits = Σ credits. Checked by a nightly reconciliation job; alert on any drift.
-
-## D9. The correctness test suites
-
-- **Concurrency**: 1,000 parallel spend-intents against one agent's daily budget ⇒ committed total never exceeds budget (asserts D2/D3/D5).
-- **Chaos**: kill the Policy Service under load ⇒ zero false-ALLOW decisions; clients get clean retryable errors (asserts D4).
-- **Fuzz**: spend_token verification with tampered claims/payee ⇒ all rejected pre-signature (asserts D1).
-
-## D10. Money
-
-Money is never a float. Canonical decimal strings (≤18 fractional digits) end-to-end; `NUMERIC(38,18)` in Postgres. `@bagseven/money` is the only arithmetic allowed.
-
-## D11. Events
-
-Domain events go to a transactional outbox in the same DB transaction as the state change, then drained to the bus. Correctness never depends on the bus being up. Topic registry in `@bagseven/events`.
-
-## D12. Receipts
-
-Append-only; `prev_hash` hash-chain makes post-hoc tampering detectable. On-chain merkle anchoring is a later phase.
-
-## D13. Scope notes (accepted cuts for v1)
-
-- Custody is an abstracted `Signer` interface; Phase 1 uses a **dev signer**. Real ERC-4337 smart-account custody is a dedicated later slice.
-- One shared Postgres for all services (Drizzle); per-service DBs + event-sourced integration is Phase-6 work. All tables carry `agent_id`-shard-friendly keys.
-- No Kubernetes/Temporal until evidence demands it (PRD §11.3).
+Facilitator operations sit behind a versioned adapter. On 2026-11-12, PayAI's live `/supported` advertised x402 v2 `exact` on `eip155:43113`, and its `/verify` accepted the standard envelope and returned `invalid_exact_evm_signature` for an intentionally invalid non-paying probe. Fuji USDC at `0x5425890298aed601595a70AB815c96711a31Bc65` returned name `USD Coin`, version `2`, a domain separator and `authorizationState`. This establishes interface compatibility, not a completed live payment. Funded settlement, recovery and provider activation need separate verification. Sources: https://facilitator.payai.network/supported and https://payai.network/developers.

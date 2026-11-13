@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET, POST } from '../app/api/policy/[...path]/route';
 import { walletChallenge, verifiedWalletToken, VERIFIED_WALLET_COOKIE } from '../lib/spending-wallet';
-const auth = vi.hoisted(() => ({ getSession: vi.fn(), sessionIsValid: vi.fn(), sessionHolder: () => 'world:owner' }));
+const auth = vi.hoisted(() => ({ getSession: vi.fn(), sessionIsValid: vi.fn(), sessionHolder: () => 'account:owner' }));
 vi.mock('../lib/auth', () => auth);
 const owner = '0x1111111111111111111111111111111111111111';
 const foreign = '0x2222222222222222222222222222222222222222';
@@ -10,8 +10,8 @@ const fetcher = vi.fn();
 beforeEach(() => {
   vi.stubGlobal('fetch', fetcher); fetcher.mockReset();
   vi.stubEnv('DAEMON_OWNER_ADDRESS', owner); vi.stubEnv('DAEMON_OWNER_KEY', '');
-  vi.stubEnv('WHITECHAIN_PAY_TO', ''); vi.stubEnv('OPERATOR_WALLET', '');
-  auth.getSession.mockResolvedValue({ world_human_id: 'owner', mock: false }); auth.sessionIsValid.mockReturnValue(true);
+  vi.stubEnv('AVALANCHE_PAY_TO', ''); vi.stubEnv('OPERATOR_WALLET', '');
+  auth.getSession.mockResolvedValue({ email: 'owner', mock: false }); auth.sessionIsValid.mockReturnValue(true);
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 function request(path: string[], body: unknown, origin = 'http://localhost:3000') {
@@ -21,7 +21,7 @@ function request(path: string[], body: unknown, origin = 'http://localhost:3000'
 describe('spending management session and owner scope', () => {
   it('allows the verified connected wallet without adding it to server configuration', async () => {
     vi.stubEnv('AUTH_SECRET', 'test-spending-secret');
-    const { claim } = walletChallenge('world:owner', 'http://localhost:3000', foreign);
+    const { claim } = walletChallenge('account:owner', 'http://localhost:3000', foreign);
     const cookie = `${VERIFIED_WALLET_COOKIE}=${verifiedWalletToken(claim)}`;
     fetcher.mockResolvedValue(new Response(JSON.stringify({ mandate_id: 'mine' })));
     const response = await POST(new NextRequest('http://localhost:3000/api/policy/mandates', { method: 'POST',
@@ -32,7 +32,7 @@ describe('spending management session and owner scope', () => {
     expect(fetcher.mock.calls.at(-1)![0]).toContain(`owner_address=${foreign}`);
   });
   it('does not treat an unverified profile wallet as spending ownership', async () => {
-    auth.getSession.mockResolvedValue({ world_human_id: 'owner', wallet_address: foreign });
+    auth.getSession.mockResolvedValue({ email: 'owner', wallet_address: foreign });
     expect((await request(['mandates'], { owner_address: foreign })).status).toBe(403);
     expect(fetcher).not.toHaveBeenCalled();
   });
@@ -58,8 +58,8 @@ describe('spending management session and owner scope', () => {
     fetcher.mockResolvedValue(new Response(JSON.stringify({ mandate_id: 'new' })));
     expect((await request(['mandates'], { owner_address: owner, signature: 'signed' })).status).toBe(200);
     expect(fetcher.mock.calls[0]![1].body).toBe(JSON.stringify({ owner_address: owner, signature: 'signed' }));
-    fetcher.mockResolvedValue(new Response(JSON.stringify({ chain_id: 1874, token: foreign })));
+    fetcher.mockResolvedValue(new Response(JSON.stringify({ chain_id: 43113, token: foreign })));
     const config = await GET(new NextRequest('http://localhost:3000/api/policy/mandate-config'), { params: Promise.resolve({ path: ['mandate-config'] }) });
-    expect(await config.json()).toMatchObject({ chain_id: 1874, owner_addresses: [owner] });
+    expect(await config.json()).toMatchObject({ chain_id: 43113, owner_addresses: [owner] });
   });
 });

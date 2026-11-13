@@ -1,4 +1,45 @@
 import { pgTable, uuid, text, timestamp, numeric, jsonb, integer, index, bigint, uniqueIndex, pgEnum } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+
+export const accountProfiles = pgTable('account_profiles', {
+  email: text('email').primaryKey(),
+  walletAddress: text('wallet_address'),
+  onboardingDoneAt: bigint('onboarding_done_at', { mode: 'number' }),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+export const featureDefinitions = pgTable('feature_definitions', {
+  id: text('id').primaryKey(),
+  data: jsonb('data').notNull(),
+});
+export const authCredentials = pgTable('auth_credentials', {
+  key: text('key').primaryKey(),
+  data: jsonb('data').notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+}, t => [index('idx_auth_credential_expiry').on(t.expiresAt)]);
+
+export const x402Authorities = pgTable('x402_authorities', {
+  id: uuid('id').primaryKey(), providerId: text('provider_id').notNull(),
+  mandateId: uuid('mandate_id').notNull().references(() => mandates.id), workerId: uuid('worker_id').notNull().references(() => agents.id),
+  chainId: integer('chain_id').notNull(), merchant: text('merchant').notNull(),
+  ownerAddress: text('owner_address').notNull(), payerAddress: text('payer_address').notNull(),
+  encryptedKey: text('encrypted_key').notNull(), status: text('status').notNull().default('pending'),
+  challenge: jsonb('challenge'), authorization: jsonb('authorization'),
+  authorizationSignature: text('authorization_signature'),
+  expiresAt: timestamp('expires_at', { withTimezone: true }),
+}, t => [uniqueIndex('idx_x402_authority_binding').on(t.providerId, t.mandateId, t.workerId, t.chainId, t.merchant)]);
+
+export const x402Jobs = pgTable('x402_jobs', {
+  id: uuid('id').primaryKey(), authorityId: uuid('authority_id').notNull().references(() => x402Authorities.id),
+  idempotencyKey: text('idempotency_key').notNull(), fingerprint: text('fingerprint').notNull(),
+  state: text('state').notNull(), data: jsonb('data').notNull(),
+  lease: integer('lease').notNull().default(0),
+  nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+  lastError: text('last_error'),
+}, t => [uniqueIndex('idx_x402_job_idempotency').on(t.authorityId, t.idempotencyKey),
+  index('idx_x402_job_due').on(t.nextAttemptAt, t.id).where(sql`${t.state} NOT IN ('SETTLED', 'REFUNDED', 'REJECTED')`),
+  uniqueIndex('idx_x402_one_unresolved_job').on(t.authorityId).where(sql`${t.state} NOT IN ('SETTLED', 'REFUNDED', 'REJECTED')`),
+  uniqueIndex('idx_x402_funding_transaction').on(sql`(${t.data}->>'fundingHash')`).where(sql`${t.data}->>'fundingHash' IS NOT NULL`),
+]);
 
 export const mandateStatus = pgEnum('mandate_status', ['active', 'revoked', 'superseded']);
 export const agentStatus = pgEnum('agent_status', ['active', 'suspended', 'retired']);
@@ -53,10 +94,20 @@ export const providerGasAccounts = pgTable('provider_gas_accounts', {
   authorizationSignature: text('authorization_signature'),
   recoveryChallenge: jsonb('recovery_challenge'),
   expiresAt: timestamp('expires_at', { withTimezone: true }),
-  whitechainReserved: numeric('whitechain_reserved', { precision: 78, scale: 0 }).notNull().default('0'),
-  arkivReserved: numeric('arkiv_reserved', { precision: 78, scale: 0 }).notNull().default('0'),
+  avalancheReserved: numeric('avalanche_reserved', { precision: 78, scale: 0 }).notNull().default('0'),
+  registryReserved: numeric('registry_reserved', { precision: 78, scale: 0 }).notNull().default('0'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** Durable ownership of Avalanche nonces, shared by every provider signing process. */
+export const providerSignedTransactions = pgTable('provider_signed_transactions', {
+  id: text('id').primaryKey(),
+  providerId: text('provider_id').notNull().references(() => providerGasAccounts.providerId),
+  chainId: integer('chain_id').notNull(),
+  nonce: integer('nonce').notNull(),
+  intent: text('intent'),
+  raw: text('raw').notNull(),
+}, t => [uniqueIndex('uq_provider_signed_intent').on(t.providerId, t.chainId, t.intent)]);
 
 export const providers = pgTable(
   'providers',
@@ -117,11 +168,13 @@ export const reservations = pgTable(
       .notNull()
       .references(() => agents.id, { onDelete: 'cascade' }),
     amount: numeric('amount', { precision: 38, scale: 18 }).notNull(),
+    recipient: text('recipient'),
+    settlementHash: text('settlement_hash'),
     status: reservationStatus('status').notNull().default('reserved'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     expiresAt: timestamp('expires_at', { withTimezone: true }),
   },
-  (t) => [index('idx_reservations_mandate').on(t.mandateId)],
+  (t) => [index('idx_reservations_mandate').on(t.mandateId), uniqueIndex('uq_reservation_settlement').on(t.settlementHash)],
 );
 
 /** A spend attempt that violated a bound — named after the contract error. */
@@ -145,7 +198,7 @@ export const refusals = pgTable(
   (t) => [index('idx_refusals_mandate_created').on(t.mandateId, t.requestedAt)],
 );
 
-/** Thin SaaS plan → living Arkiv entitlement (no payment-link product line). */
+/** Thin SaaS plan → living Registry entitlement (no payment-link product line). */
 export const billingPlans = pgTable(
   'billing_plans',
   {
@@ -174,7 +227,7 @@ export const checkoutSessions = pgTable(
     holder: text('holder').notNull(),
     status: text('status').notNull().default('PENDING'),
     amount: text('amount').notNull(),
-    chainId: integer('chain_id').notNull().default(1874),
+    chainId: integer('chain_id').notNull().default(43113),
     workerId: text('worker_id'),
     platformFeeBps: integer('platform_fee_bps').notNull().default(0),
     platformFeeAmount: text('platform_fee_amount').notNull().default('0'),
@@ -193,7 +246,44 @@ export const checkoutSessions = pgTable(
   ],
 );
 
+/** Durable subscription journals; signed transactions are public data, never wallet keys. */
+export const embedDesigns = pgTable('embed_designs', {
+  id: uuid('id').primaryKey().defaultRandom(), owner: text('owner').notNull(), config: jsonb('config').notNull(),
+  revision: integer('revision').notNull().default(1), published: jsonb('published'), publishedRevision: integer('published_revision'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, t => [index('embed_designs_owner_updated_idx').on(t.owner, t.updatedAt.desc(), t.id)]);
+
+export const subscriptionPlans = pgTable('subscription_plans', {
+  id: text('id').primaryKey().references(() => billingPlans.id),
+  providerId: text('provider_id').notNull(),
+  data: jsonb('data').notNull(),
+});
+export const billingSubscriptions = pgTable('billing_subscriptions', {
+  id: text('id').primaryKey(),
+  checkoutId: text('checkout_id').notNull().unique().references(() => checkoutSessions.id),
+  holder: text('holder').notNull(),
+  providerId: text('provider_id').notNull(),
+  nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull(),
+  status: text('status').notNull(),
+  data: jsonb('data').notNull(),
+}, t => [index('idx_subscription_due').on(t.status, t.nextAttemptAt), index('idx_subscription_holder').on(t.holder)]);
+export const subscriptionPeriods = pgTable('subscription_periods', {
+  id: text('id').primaryKey(),
+  subscriptionId: text('subscription_id').notNull().references(() => billingSubscriptions.id),
+  data: jsonb('data').notNull(),
+});
+
 /** Every on-chain action for audit. */
+/** Private discovery metadata; Avalanche contract state remains authoritative for access. */
+export const entitlementRecords = pgTable('entitlement_records', {
+  key: text('key').primaryKey(),
+  chainId: integer('chain_id').notNull(),
+  registry: text('registry').notNull(),
+  providerId: text('provider_id').notNull(),
+  kind: text('kind').notNull(),
+  data: jsonb('data').notNull(),
+});
+
 export const transactions = pgTable(
   'transactions',
   {

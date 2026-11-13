@@ -6,6 +6,8 @@ import { daemonFetch } from '../../../../lib/daemon-bff';
 type Ctx = { params: Promise<{ path: string[] }> };
 
 const ALLOWED: Array<{ method: string; match: (parts: string[]) => boolean }> = [
+  { method: 'GET', match: p => p[0] === 'subscriptions' && p.length <= 2 },
+  { method: 'POST', match: p => p[0] === 'subscriptions' && p.length === 3 && ['cancel', 'sync'].includes(p[2]!) },
   { method: 'GET', match: (p) => p[0] === 'plans' && (p.length === 1 || p.length === 2) },
   { method: 'POST', match: (p) => p[0] === 'plans' && p.length === 1 },
   { method: 'GET', match: (p) => p[0] === 'checkout-sessions' && (p.length === 1 || p.length === 2) },
@@ -29,7 +31,7 @@ async function proxy(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   const url = new URL(req.url);
   const target = `/v1/${suffix}${url.search}`;
   const headers = new Headers();
-  headers.set('x-bagseven-provider', session.world_human_id ? `world:${session.world_human_id}` : sessionHolder(session));
+  headers.set('x-bagseven-provider', sessionHolder(session));
   for (const [name, value] of Object.entries(providerScopeHeaders(headers.get('x-bagseven-provider')!))) headers.set(name, value);
   const init: RequestInit = { method: req.method, headers };
   if (req.method !== 'GET' && req.method !== 'HEAD') {

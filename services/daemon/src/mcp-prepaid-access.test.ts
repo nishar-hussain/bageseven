@@ -10,7 +10,7 @@ import { buildServer } from '../../../scripts/bagseven-mcp.ts';
 afterEach(() => { vi.unstubAllEnvs(); resetGrantStoreForTests(); });
 describe('MCP prepaid access through the daemon', () => {
   it('uses credits with no payment worker, replays once, and refuses exhausted access', async () => {
-    vi.stubEnv('ENTITLEMENT_STORE', 'memory'); vi.stubEnv('ARKIV_ACCESS_KEY', '');
+    vi.stubEnv('ENTITLEMENT_STORE', 'memory'); vi.stubEnv('REGISTRY_ACCESS_KEY', '');
     vi.stubEnv('NOTIFY_MODE', 'log'); vi.stubEnv('OPERATOR_NOTIFY_EMAIL', ''); vi.stubEnv('RESEND_API_KEY', '');
     resetGrantStoreForTests();
     const app = Fastify();

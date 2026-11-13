@@ -1,110 +1,35 @@
-# Bagseven — what this product is
+# Product semantics
 
-One sentence: **humans mint entitlements (World + Whitechain + Arkiv); humans and agents both `checkEntitlement`; agents spend only under a dual-gate.**
+Bagseven connects paid service plans, living entitlements, and bounded agent spending on Avalanche. The existing ReceiptBox example demonstrates receipt scanning with metered access.
 
-**Entitlement (Schematic-style):** the right to use a **feature** with a limit (credits) and expiry — not the feature name itself.
+There are three independent clocks: confirmed Avalanche payment evidence, permission to collect future subscription payments, and paid access through the grant's `paid_through`. Cancelling renewal preserves already-paid access. Numeric features consume credits; boolean features check access without consuming units.
 
-Canonical catalog (`packages/entitlements/src/features.ts`):
+Customers sign in with verified email and link an Avalanche wallet by signature. Providers use their email for account communication and their wallet for payout and gas authorization. Email and wallet ownership are separate proofs; neither establishes person uniqueness. Raw email addresses and signatures are not stored in the entitlement contract.
 
-| Feature | Meters |
-| --- | --- |
-| `ocr` | `paid_run` (demo) |
-| `research_fetch` | `bagseven_fetch` + `paid_run` |
+`BagEntitlementRegistry` is authoritative for credits, expiry, renewal preference, and reservations. PostgreSQL contains private discovery metadata and recovery records; it cannot increase a contract balance. Contract reads fail closed if the RPC is unavailable or connected to another chain. Expiry is enforced when checking or spending; EVM storage is retained after expiry.
 
-OCR is a **demo SKU**, not the product. The product is the SDK + the living Arkiv grant.
+Prepaid OCR and SDK consumption require holder authorization, worker binding when present, live time, and enough credits. They do not require a payment mandate. New purchases by agents require both a living entitlement and an active bounded mandate. Never equate credit quantities with token payment amounts.
 
-## Surfaces (what to open)
+Recurring plans use explicit customer token allowance and subscription transactions. Durable workers recover signed transactions and fulfill each confirmed paid period once. Cancellation must be confirmed on-chain before the platform calls a recurring permission cancelled. An uncertain fulfillment outcome must be reconciled before charging or minting again.
 
-| URL | Role |
-| --- | --- |
-| http://localhost:3001 | Marketing landing |
-| http://localhost:3000/app | Operator dashboard (magic-link) |
-| http://localhost:3000/app/sdk | Human SDK playground + embed snippet |
-| http://localhost:3000/embed?token= | Token-gated entitlement portal (iframe) |
-| daemon `:4001` | Policy + entitlements API |
-| MCP (`pnpm mcp:local`) | What Cursor / Claude / external agents attach to |
+Providers fund AVAX for their dedicated delegated signer. Settlement and registry fee budgets are separate accounting categories on the same configured C-Chain; the native balance is shared. Keys are encrypted with AES-GCM and budgets are reserved before signing. These are server-enforced EOA restrictions. No hidden platform-wallet fee subsidy is allowed.
 
-## SDK (the core)
+## Registry design and production limits
 
-```
-npm install @bagseven/sdk
-```
+PostgreSQL locates a holder's grants using indexed chain, registry, holder, feature, worker and expiry metadata. The adapter then reads balances and access flags from the contract, with at most eight concurrent reads per discovery request. The contract uses mappings for direct grant lookup and atomically enforces credit deductions, expiry and duplicate operation IDs. Discovery therefore requires both PostgreSQL and a working chain RPC; it is not a fully decentralized login or indexing system.
 
-- `@bagseven/sdk/react` — `BagsevenProvider`, `useFlag`, `useEntitlement`, `useConsumeEntitlement`, `FeatureFlagGuard`, `BagsevenEmbed`
-- `@bagseven/sdk/node` — `BagsevenClient.checkFlag / checkEntitlement / consumeEntitlement / identify`
-- `@bagseven/sdk/agent` — same verbs for programmatic agents
+The contract records provider-issued access; it does not itself prove a stablecoin payment occurred. The daemon verifies receipts before checkout fulfillment, and the provider signer remains trusted to issue and operate its grants. Holder and worker authorization are enforced by the service, while the contract enforces provider/operator authority and credit accounting. Public auditability must not be described as trustless payment-to-entitlement issuance.
 
-React is UI gating. Authoritative checks always go through Node / daemon. Agents never hold World credentials.
+Every consumption currently sends a provider-paid transaction and waits for confirmation. This gives shared, independently readable credit accounting, but introduces gas cost, confirmation latency and contention on each provider's signing account. Indexed SQL and bounded concurrency reduce discovery load; they do not establish a production transaction-throughput guarantee. Load tests must measure concurrent holders, provider nonce contention, RPC throttling and fee cost per operation before setting service limits. A high-frequency OCR service may need a separately designed reservation/batching protocol; silently moving balances into a cache would break the current authority model.
 
-## Prepaid access and agent spending
+One-time checkout fulfillment uses a deterministic grant identity per checkout. After receipt and payer verification, a retry can recover that grant and finish the checkout database update without issuing another grant. Conflicting payment evidence is rejected. Unknown broadcasts without a confirmed grant retain their payment hold for reconciliation. Older unresolved checkouts created before deterministic fulfillment need explicit reconciliation rather than blind reissue.
 
-`paid_run`, `consume_entitlement`, and SDK `/v1/usage/consume` use already-paid credits. Both humans and agents need an active entitlement, enough credits, and valid holder/worker scope. They do not require a USDT mandate or send another payment. Cancelling renewal leaves access valid until `paid_through`.
+The implementation is not yet a blanket production-readiness certification. MCP OAuth credentials and consent now persist in PostgreSQL with atomic exchange, and HTTP transports are stateless. Custom feature semantics and account wallet/onboarding profiles use PostgreSQL; signed sessions hydrate the current profile, and wallet updates use compare-and-set. Pending subscription-plan recovery uses indexed, bounded keyset pages. Provider-funded x402 has no separately authorized payer integration and deliberately fails closed. Public Fuji deployment, load testing, backup recovery and real client authorization must be verified separately from Anvil tests.
 
-New payments through `bagseven_fetch` require an active registered agent, sufficient on-chain mandate capacity, and a living grant for the payment feature. Mandates limit USDT spending per purchase, window, lifetime, provider, and delegated worker.
+Isolated x402 payments keep payment authority separate from provider gas. The provider and mandate owner approve the payer, merchant, resource origin, token, chain, amount ceiling and expiry. The existing vault enforces funding limits on-chain; server signing enforces downstream recipient policy. Payments remain pending until confirmed token/nonce evidence proves settlement. Unused allocations return only to their source vault after signature expiry, without resetting spent quota. The dashboard exposes approval, revocation, payment status, reconciliation and recovery drafts; MCP can check payment status without obtaining wallet keys.
 
-Manage these at `/app/mandate` (**Agent spending**):
+## Unified customer billing embed
 
-- Create: connect an allowed owner wallet, review fixed limits, sign the canonical permission. The backend verifies the signature and deploys the contract with a root agent. Deployment gas is paid in WBT by the provider’s authorized dedicated gas account. New provider-bound mandates use that account as enforcer. Platform-funded deployment fallback is disabled. Insufficient gas returns `DEPLOYER_GAS_INSUFFICIENT`; successful creation selects the new permission in the dashboard.
-- Fund: approve a USDT transfer from the owner wallet into the deployed vault.
-- Delegate: select a parent and sign a narrower child allocation.
-- Withdraw: return unused USDT to the owner wallet.
-- Revoke: permanently block future spending; withdrawals remain available.
+Builder configures one customer experience: plans, wallet connection, checkout, prepaid access and subscription management. New designs use the complete `cmp_customer` embed, with persistent navigation between Plans, My access and Checkout. Standalone components remain compatible for existing integrations.
 
-Funding, withdrawal, and revocation are transaction drafts sent only by the connected wallet. Agent spending uses the active RainbowKit/wagmi connector, including WalletConnect. A signed-in account can add its connected wallet to spending scope by signing a five-minute ownership challenge. The server verifies the signature and issues an HttpOnly ownership cookie bound to that account and website for eight hours. An optional, unverified profile wallet is not sufficient. Existing local operator wallets remain available; managing an existing permission still requires its actual owner. Creating a root agent does not automatically rebind the running MCP instance; configure its worker to the intended root or child. Missing deployments stay visible with spending disabled.
-
-## Auth: World vs MCP vs SDK (three doors)
-
-```
-Human (dashboard)
-  magic link → mint / buy_credits
-                 └─ World verifies uniqueness
-                 └─ Whitechain stamps payment_tx
-                 └─ Arkiv stores living grant
-
-Human (your app)
-  pk_ + embed token → useFlag / BagsevenEmbed
-
-Agent (Cursor / Claude)
-  MCP process with BAGSEVEN_MCP_WORKER
-                 └─ NEVER holds World ID credentials
-                 └─ check_entitlement / consume_entitlement / paid_run
-                 └─ Daemon checks prepaid access; new payments also require a spending permission
-```
-
-## Live tracks
-
-| Track | Env | Meaning |
-| --- | --- | --- |
-| World | `WORLD_CLIENT_ID` (+ optional `id_token`) | Unique human at mint |
-| Whitechain | `WHITECHAIN_PRIVATE_KEY` + `WHITECHAIN_PAY_TO` | USDT / native stamp → explorer `payment_tx` |
-| Arkiv | `ARKIV_ACCESS_KEY` + provider-authorized encrypted signer | Grants stored on Rabdi, not memory |
-
-## Thin billing (Plans + Checkout Sessions)
-
-Merchants define a **Plan** (feature + USDT + credits). `createCheckoutSession` opens a session; Embed/`/checkout` collects a Whitechain payment (WhiteWallet-ready); confirm mints the living grant. Same `checkEntitlement` surface.
-
-## Intentionally not a feature
-
-- Payment-link product line, products catalog, invoices
-- Charts on Overview are illustrative until usage telemetry ships
-- Agents do not see the Fianto dashboard — they only see MCP tools
-
-## Win angle
-
-> “We don’t give agents wallets. Humans approve mint once under World. Settlement is Whitechain. Access lives on Arkiv until TTL. Humans check via SDK. Agents consume via MCP — and new payments also check spending permissions.”
-
-Demo (daemon running): `pnpm sdk:demo` — human `checkEntitlement` → agent consume → living grant evaporates.
-
-## Provider-funded operating fees
-
-Provider-funded gas is enabled by default. Open **Tracks → Provider-funded gas**, connect the provider owner wallet, review separate Whitechain/Arkiv budgets and per-transaction limits, and sign an expiring authorization. Fund the dedicated address with WBT on Whitechain and tGLM on Arkiv. No platform wallet automatically tops it up.
-
-Private delegated keys are encrypted with `PROVIDER_GAS_ENCRYPTION_KEY` and never returned to the browser. Use the same encryption key on console, daemon, and policy for one deployment, and back it up. The console signs a short-lived provider scope capability; a shared service/API bearer alone cannot select a provider for gas-account management.
-
-Signing is limited in the server to zero-value Arkiv create/patch operations, approved BagMandate deployment, and execution/worker-registration on the provider’s recorded mandates. Maximum gas fees are reserved atomically in PostgreSQL before signing. Reservations are conservative fee bounds, not actual spend, and are not automatically released after uncertain broadcasts. These are **server-enforced EOA limits**, not on-chain smart-account restrictions.
-
-Revoke future signing before recovering unused gas. Recovery needs the owner’s signature, binds amount, recipient, chain, nonce, gas price, and expiry, and sends only to that owner. A transaction already signed before revocation may still settle.
-
-Legacy platform-owned Arkiv grants remain readable but require explicit migration/reissuance for provider-funded updates. They are never silently re-signed by a platform account. Legacy mandates without provider binding cannot use platform-funded execution. Existing customer credits are not deleted.
-
-Customer USDT checkout payments still go directly to the provider. Providers pay operating gas; customers’ credit balances are reduced on usage. The separate 0.1% provider platform-fee accrual remains unchanged; automatic fee collection is not added here. Provider-funded x402 needs separate payer authorization and currently fails closed instead of using the platform x402 payer.
+Designs belong to the signed-in provider and persist in PostgreSQL. Save draft changes only the private draft; Publish embed creates or updates the public hosted snapshot. Concurrent edits require the current revision and fail visibly rather than overwriting another tab. Unpublishing or deleting a design removes the hosted page without changing plans, customer grants or subscriptions. Designs saved in the old browser-only library can be explicitly imported into the current account as private drafts.

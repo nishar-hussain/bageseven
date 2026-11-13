@@ -46,17 +46,17 @@ describe('wallet message signing after reconnect', () => {
 });
 
 describe('provider gas funding balance', () => {
-  it('does not request a transfer when Arkiv has no native funds', async () => {
+  it('does not request a transfer when Registry has no native funds', async () => {
     const request = vi.fn().mockResolvedValue('0x0');
-    await expect(fundProviderGas({ request }, { owner, to: other, value: 1n, symbol: 'tGLM' })).rejects.toThrow('wallet has 0 tGLM');
+    await expect(fundProviderGas({ request }, { owner, to: other, value: 1n, symbol: 'AVAX' })).rejects.toThrow('wallet has 0 AVAX');
     expect(request).toHaveBeenCalledOnce();
   });
   it('includes network fees before requesting the exact owner-approved deposit', async () => {
     const request = vi.fn().mockResolvedValueOnce('0x64').mockResolvedValueOnce('0x15').mockResolvedValueOnce('0x1');
-    await expect(fundProviderGas({ request }, { owner, to: other, value: 90n, symbol: 'WBT' })).rejects.toThrow('network fees');
+    await expect(fundProviderGas({ request }, { owner, to: other, value: 90n, symbol: 'AVAX' })).rejects.toThrow('network fees');
     expect(request).toHaveBeenCalledTimes(3);
     request.mockReset().mockResolvedValueOnce('0x64').mockResolvedValueOnce('0x15').mockResolvedValueOnce('0x1').mockResolvedValueOnce('0xhash');
-    await expect(fundProviderGas({ request }, { owner, to: other, value: 10n, symbol: 'WBT' })).resolves.toBe('0xhash');
+    await expect(fundProviderGas({ request }, { owner, to: other, value: 10n, symbol: 'AVAX' })).resolves.toBe('0xhash');
     expect(request).toHaveBeenLastCalledWith({ method: 'eth_sendTransaction', params: [{ from: owner, to: other, value: '0xa' }] });
   });
 });

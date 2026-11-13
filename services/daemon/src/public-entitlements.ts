@@ -7,7 +7,7 @@ import {
   getGrantStore,
   type Grant,
 } from '@bagseven/entitlements';
-import { gte } from '@bagseven/money';
+import { add, gte } from '@bagseven/money';
 import {
   assertCanRead,
   assertCanWrite,
@@ -15,7 +15,7 @@ import {
   issueEmbedToken,
   type ApiPrincipal,
 } from './api-keys.js';
-import { settleWhitechainUsdt } from './whitechain-settle.js';
+import { settleAvalancheUsdt } from './avalanche-settle.js';
 import type { GrantRouteDeps } from './grants.js';
 import { claimSettlement } from './payment-ledger.js';
 import { getFeatureValueType } from './feature-registry.js';
@@ -64,12 +64,13 @@ export function isPublicEntitlementPath(url: string): boolean {
   if (path.startsWith('/v1/plans/')) return true;
   if (path.startsWith('/v1/checkout-sessions/')) return true;
   if (path.startsWith('/v1/public/checkout/')) return true;
+  if (path === '/v1/subscriptions' || path.startsWith('/v1/subscriptions/')) return true;
   if (path.startsWith('/v1/entitlements/') && path.endsWith('/cancel-renewal')) return true;
   return false;
 }
 
-export function entitlementView(grant: Grant | null, feature: string) {
-  const valueType = getFeatureValueType(feature);
+export async function entitlementView(grant: Grant | null, feature: string) {
+  const valueType = await getFeatureValueType(feature);
   const notExpired = Boolean(grant) && new Date(grant!.paid_through).getTime() > Date.now();
   const live =
     Boolean(grant) &&
@@ -86,7 +87,9 @@ export function entitlementView(grant: Grant | null, feature: string) {
     allocation: valueType === 'boolean' ? (live ? '1' : '0') : (grant?.remaining ?? '0'),
     paid_through: grant?.paid_through ?? null,
     grant_id: grant?.id ?? null,
-    arkiv_entity_key: grant?.arkiv_entity_key,
+    updated_at: grant?.updated_at,
+    registry_grant_id: grant?.registry_grant_id,
+    registry_address: grant?.registry_address,
     payment_tx: grant?.payment_tx,
     explorer_url: grant?.payment_tx ? explorerUrl(grant.payment_tx) : null,
     settlement_network: grant?.settlement_network,
@@ -120,7 +123,7 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
     assertCanRead(principal, holder);
     const live = await store.findLive({ feature: q.feature, holder });
     const grant = [...live].sort((a, b) => Number(b.remaining) - Number(a.remaining))[0] ?? null;
-    return entitlementView(grant, q.feature);
+    return { ...await entitlementView(grant, q.feature), total_remaining: (await getFeatureValueType(q.feature)) === 'boolean' ? (grant ? '1' : '0') : live.reduce((sum, g) => add(sum, g.remaining), '0') };
   });
 
   app.get('/v1/entitlements', async (req) => {
@@ -131,7 +134,7 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
     const grants = await store.findLive({ holder, feature: q.feature || undefined });
     return {
       holder,
-      entitlements: grants.map((g) => entitlementView(g, g.feature)),
+      entitlements: await Promise.all(grants.map((g) => entitlementView(g, g.feature))),
       grants,
     };
   });
@@ -146,9 +149,11 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
     if (principal.kind === 'embed' && principal.holder !== grant.holder) {
       throw new ApiError(403, 'HOLDER_MISMATCH', 'embed token is scoped to a different holder');
     }
+    const draft = await deps.subscriptionCancellation?.(id);
+    if (draft) return draft;
     const next = await store.cancelRenewal(id);
     return {
-      entitlement: entitlementView(next, next.feature),
+      entitlement: await entitlementView(next, next.feature),
       grant: next,
       note: 'Renewal off; access remains until paid_through',
     };
@@ -187,8 +192,8 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
     if (grant.holder !== holder) throw new ApiError(403, 'HOLDER_MISMATCH', 'grant holder does not match');
 
     // Boolean features are on/off until TTL — check/access, do not burn credits.
-    if (getFeatureValueType(body.feature) === 'boolean') {
-      const view = entitlementView(grant, grant.feature);
+    if ((await getFeatureValueType(body.feature)) === 'boolean') {
+      const view = await entitlementView(grant, grant.feature);
       if (!view.enabled) throw new ApiError(403, 'FEATURE_OFF', `${body.feature} is not active`);
       return {
         entitlement: view,
@@ -203,7 +208,7 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
     const key = (body.idempotencyKey ?? body.idempotency_key)!.trim();
     const next = await store.consume(grantId, body.amount, key);
     return {
-      entitlement: entitlementView(next, next.feature),
+      entitlement: await entitlementView(next, next.feature),
       grant: next,
       dual_gate: { mandate: 'not_required', grant: 'ok' },
     };
@@ -222,9 +227,9 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
     const live = await store.findLive({ feature: body.feature, holder });
     const prior = [...live].sort((a, b) => Number(b.remaining) - Number(a.remaining))[0];
     if (!prior) {
-      throw new ApiError(404, 'GRANT_NOT_FOUND', `No living ${body.feature} grant for ${holder} — mint with World first`);
+      throw new ApiError(404, 'GRANT_NOT_FOUND', `No living ${body.feature} grant for ${holder} — mint with email and wallet first`);
     }
-    const settlement = await settleWhitechainUsdt({
+    const settlement = await settleAvalancheUsdt({
       amount: body.amount,
       feature: body.feature,
       holder,
@@ -241,13 +246,12 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
       remaining: body.remaining,
       ttl_seconds: body.ttl_seconds,
       payment_tx: settlement.payment_tx,
-      settlement_network: 'whitechain',
+      settlement_network: 'avalanche',
       human_id: prior.human_id,
-      world_proof_id: prior.world_proof_id,
       worker_id: prior.worker_id || process.env.BAGSEVEN_MCP_WORKER?.trim(),
       mandate_id: prior.mandate_id,
       renewal_enabled: true,
     });
-    return { grant, entitlement: entitlementView(grant, grant.feature), settlement };
+    return { grant, entitlement: await entitlementView(grant, grant.feature), settlement };
   });
 }

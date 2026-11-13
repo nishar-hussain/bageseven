@@ -1,6 +1,6 @@
-import type { ConsumeResult, Entitlement, IdentifyResult } from './types.js';
+import type { ConsumeResult, Entitlement, IdentifyResult, Subscription } from './types.js';
 
-export type { ConsumeResult, Entitlement, IdentifyResult };
+export type { ConsumeResult, Entitlement, IdentifyResult, Subscription };
 
 export class BagsevenApiError extends Error {
   constructor(
@@ -47,10 +47,10 @@ export class BagsevenClient {
     return r.enabled;
   }
 
-  /** Numeric remaining (credits). Boolean features return `'1'` / `'0'`. */
+  /** Total living credits for the holder/feature. Boolean features return '1'/'0'. */
   async getRemaining(feature: string, opts: { holder: string }): Promise<string> {
     const r = await this.checkEntitlement(feature, opts);
-    return r.remaining;
+    return r.total_remaining ?? r.remaining;
   }
 
   async checkEntitlement(feature: string, opts: { holder: string }): Promise<Entitlement> {
@@ -103,6 +103,26 @@ export class BagsevenClient {
 
   async listPlans(): Promise<{ plans: unknown[] }> {
     return this.request('GET', '/v1/plans');
+  }
+
+  async listSubscriptions(holder?: string): Promise<{ subscriptions: Subscription[] }> {
+    return this.request('GET', `/v1/subscriptions${holder ? `?${new URLSearchParams({ holder })}` : ''}`);
+  }
+
+  async getSubscription(id: string): Promise<{ subscription: Subscription }> {
+    return this.request('GET', `/v1/subscriptions/${encodeURIComponent(id)}`);
+  }
+
+  /** Prepare cancellation only. The payer must approve its transaction in their wallet. */
+  async prepareSubscriptionCancellation(id: string): Promise<{
+    requires_wallet_approval: true; payer: string; chain_id: number;
+    transaction: { to: string; data: string; value: string };
+  }> {
+    return this.request('POST', `/v1/subscriptions/${encodeURIComponent(id)}/cancel`, {});
+  }
+
+  async syncSubscription(id: string): Promise<{ subscription: Subscription }> {
+    return this.request('POST', `/v1/subscriptions/${encodeURIComponent(id)}/sync`, {});
   }
 
   async createCheckoutSession(input: {

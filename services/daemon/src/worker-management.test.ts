@@ -11,7 +11,7 @@ async function fixture() {
   const app = Fastify();
   app.setErrorHandler((error, _req, reply) => { const result = errorResponse(error); return reply.code(result.status).send(result.body); });
   const policy = vi.fn(async (_method: string, path: string, _body?: unknown) => path.includes('foreign') ? { mandate: { id: 'foreign', owner_address: contract }, agents: [] } : { mandate: { id, owner_address: owner, contract_address: contract }, token_address: token, agents: [{ id: 'root' }] });
-  registerWorkerManagement(app, { config: { WHITECHAIN_USDT: token }, policy, resolve: async worker => ({ agent: { id: worker, operator_address: owner }, mandate: { id, owner_address: owner, contract_address: contract } }) });
+  registerWorkerManagement(app, { config: { AVALANCHE_USDC: token }, policy, resolve: async worker => ({ agent: { id: worker, operator_address: owner }, mandate: { id, owner_address: owner, contract_address: contract } }) });
   return { app, policy };
 }
 describe('MCP worker management scope and wallet approvals', () => {

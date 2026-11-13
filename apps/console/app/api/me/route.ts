@@ -12,7 +12,6 @@ export async function GET() {
     email: session.email ?? null,
     email_verified: Boolean(session.email_verified_at),
     email_verified_at: session.email_verified_at ?? null,
-    world_human_id: session.world_human_id ?? null,
     wallet_address: session.wallet_address ?? null,
     onboarding_done_at: session.onboarding_done_at ?? null,
     needs_onboarding: needsOnboarding(session),

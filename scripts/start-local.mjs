@@ -7,6 +7,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseEnv } from 'node:util';
 import { ensurePortsAvailable, ownedRuntime, portAvailable, processTable, stopProcessTree } from './local-process.mjs';
+import { assertLocalConfiguration } from './local-config.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const envPath = resolve(root, '.env');
@@ -61,6 +62,8 @@ async function main() {
     for (const port of ports) console.log(`:${port} ${await portAvailable(port) ? 'stopped' : 'listening'}`);
     return;
   }
+  // Validate before stopping a healthy stack or launching a mixture of services.
+  if (!process.argv.includes('--stop')) assertLocalConfiguration(process.env);
   await stopOwner();
   await ensurePortsAvailable(ports, root, { log: console.log });
   if (process.argv.includes('--stop')) { console.log('Bagseven local services stopped. Data containers were left running.'); return; }
@@ -71,7 +74,7 @@ async function main() {
   ownsLock = true;
   managedPorts = ports;
   writeFileSync(ownerFile, JSON.stringify({ pid: process.pid, root }), { mode: 0o600 });
-  for (const [key, bytes] of [['AUTH_SECRET', 32], ['DAEMON_AUTH_TOKEN', 24], ['PROVIDER_GAS_ENCRYPTION_KEY', 32]]) {
+  for (const [key, bytes] of [['AUTH_SECRET', 32], ['DAEMON_AUTH_TOKEN', 24], ['PROVIDER_GAS_ENCRYPTION_KEY', 32], ['PROVIDER_SCOPE_SIGNING_KEY', 32], ['X402_PAYMENT_ENCRYPTION_KEY', 32]]) {
     if (process.env[key]?.trim()) continue;
     const value = randomBytes(bytes).toString('hex');
     let raw = readFileSync(envPath, 'utf8');

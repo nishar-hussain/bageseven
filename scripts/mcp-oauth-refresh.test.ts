@@ -1,0 +1,21 @@
+import express from 'express';
+import type { Server } from 'node:http';
+import { createHash } from 'node:crypto';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { privateKeyToAccount } from 'viem/accounts';
+const delivered = vi.hoisted(() => ({ code: '' }));
+vi.mock('../packages/notify/dist/index.js', () => ({ sendNotify: async (input: { body: string }) => { delivered.code = input.body.match(/code is (\d+)/)![1]; return { ok: true }; } }));
+const wallet = privateKeyToAccount('0x' + '01'.repeat(32) as `0x${string}`);
+import { mountMcpOAuth, verifyMcpAccessToken } from './mcp-oauth-as';
+let server:Server;let base:string;
+beforeAll(async()=>{const app=express();app.use(express.json());app.use(express.urlencoded({extended:false}));mountMcpOAuth(app);server=await new Promise<Server>(r=>{const s=app.listen(0,'127.0.0.1',()=>r(s));});const address=server.address();if(!address||typeof address==='string')throw Error('No listener');base=`http://127.0.0.1:${address.port}`;vi.stubEnv('BAGSEVEN_MCP_PUBLIC_URL',base);vi.stubEnv('MCP_OAUTH_CLIENT_SECRET','');});
+afterAll(async()=>{vi.unstubAllEnvs();server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));});
+async function code(){const verifier='test-verifier-'.repeat(4);const query=new URLSearchParams({client_id:'test-client',redirect_uri:'https://chatgpt.com/connector_platform_oauth_redirect',code_challenge:createHash('sha256').update(verifier).digest('base64url'),code_challenge_method:'S256'});const challenge=await fetch(`${base}/oauth/account/challenge?${query}`,{method:'POST',headers:{origin:base,'content-type':'application/json'},body:JSON.stringify({email:`customer-${crypto.randomUUID()}@example.com`,wallet:wallet.address})});expect(challenge.status).toBe(200);const {message}=await challenge.json();const signature=await wallet.signMessage({message});const cookie=challenge.headers.get('set-cookie')!.split(';')[0];const res=await fetch(`${base}/oauth/authorize?${query}`,{method:'POST',headers:{origin:base,cookie,'content-type':'application/json'},body:JSON.stringify({code:delivered.code,signature}),redirect:'manual'});expect(res.status).toBe(302);return{code:new URL(res.headers.get('location')!).searchParams.get('code')!,verifier};}
+const token=(body:Record<string,string>)=>fetch(`${base}/oauth/token`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+async function authorize(){const c=await code();const r=await token({grant_type:'authorization_code',code:c.code,code_verifier:c.verifier,client_id:'test-client',redirect_uri:'https://chatgpt.com/connector_platform_oauth_redirect'});expect(r.status).toBe(200);return r.json();}
+describe('MCP OAuth continuity',()=>{
+ it('renews a account-authorized session using a rotating refresh token',async()=>{const original=await authorize();const response=await token({grant_type:'refresh_token',refresh_token:original.refresh_token,client_id:'test-client'});expect(response.status).toBe(200);const refreshed=await response.json();expect(refreshed.access_token).not.toBe(original.access_token);expect((await verifyMcpAccessToken(`Bearer ${refreshed.access_token}`))?.accountWallet).toBe(wallet.address.toLowerCase());expect((await token({grant_type:'refresh_token',refresh_token:original.refresh_token,client_id:'test-client'})).status).toBe(400);});
+ it('rejects another client without destroying the rightful client refresh token',async()=>{const original=await authorize();expect((await token({grant_type:'refresh_token',refresh_token:original.refresh_token,client_id:'other-client'})).status).toBe(400);expect((await token({grant_type:'refresh_token',refresh_token:original.refresh_token,client_id:'test-client'})).status).toBe(200);});
+ it('does not accept refresh credentials as MCP bearer access',async()=>{const original=await authorize();expect(await verifyMcpAccessToken(`Bearer refresh:${original.refresh_token}`)).toBeNull();});
+ it('binds authorization codes to their client',async()=>{const c=await code();const response=await token({grant_type:'authorization_code',code:c.code,code_verifier:c.verifier,client_id:'other-client',redirect_uri:'https://chatgpt.com/connector_platform_oauth_redirect'});expect(response.status).toBe(400);});
+});

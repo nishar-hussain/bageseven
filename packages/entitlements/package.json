@@ -18,7 +18,9 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@arkiv-network/sdk": "^1.0.1",
+    "@bagseven/db": "workspace:*",
+    "@bagseven/onchain": "workspace:*",
+    "drizzle-orm": "^0.45.2",
     "@bagseven/money": "workspace:*",
     "viem": "^2.56.8",
     "zod": "^4.6.5"

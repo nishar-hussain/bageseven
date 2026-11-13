@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS "checkout_sessions" (
   "holder" text NOT NULL,
   "status" text DEFAULT 'PENDING' NOT NULL,
   "amount" text NOT NULL,
-  "chain_id" integer DEFAULT 1874 NOT NULL,
+  "chain_id" integer DEFAULT 43113 NOT NULL,
   "customer_wallet" text,
   "payment_tx" text,
   "grant_id" text,

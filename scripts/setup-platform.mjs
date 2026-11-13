@@ -39,7 +39,6 @@ const KEYS = {
   owner: '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
   operator: '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d',
   executor: '0x5de4111afa1a4b94908f83103cb8f814ceb57640aaac1cacff66d55309d58267',
-  payer: '0x7c852118294e51e653712a81e05800f419141751be58f9256c503bf597051b2b',
 };
 
 function upsertEnv(raw, key, value) {
@@ -54,7 +53,6 @@ function buildEnvContents() {
   const owner = privateKeyToAccount(KEYS.owner);
   const operator = privateKeyToAccount(KEYS.operator);
   const executor = privateKeyToAccount(KEYS.executor);
-  const payer = privateKeyToAccount(KEYS.payer);
 
   const pairs = {
     DATABASE_URL: 'postgres://bagseven:bagseven@localhost:55432/bagseven',
@@ -63,7 +61,7 @@ function buildEnvContents() {
     DEV_MODE: 'true',
     SIGNER_MODE: 'dev',
     RPC_URL: 'http://localhost:58545',
-    CHAIN_ID: '1874',
+    CHAIN_ID: '43113',
     DAEMON_OWNER_KEY: KEYS.owner,
     OWNER_DEV_KEY: KEYS.owner,
     DAEMON_OPERATOR_KEY: KEYS.operator,
@@ -71,14 +69,12 @@ function buildEnvContents() {
     DAEMON_EXECUTOR_KEY: KEYS.executor,
     ENFORCER_DEV_KEY: KEYS.executor,
     DAEMON_EXECUTOR_ADDRESS: executor.address,
-    BAGSEVEN_X402_PAYER_KEY: KEYS.payer,
-    BAGSEVEN_X402_PAYER_ALLOW_NONZERO: 'true',
-    ENTITLEMENT_STORE: 'memory',
-    WHITECHAIN_DEMO_SETTLE: 'true',
-    WHITECHAIN_NETWORK: 'testnet',
-    WHITECHAIN_RPC_URL: 'https://rpc.testnet.whitechain.io',
-    WORLD_MOCK_PROOFS: 'true',
-    WORLD_AGENT_PASS_ENABLED: 'true',
+    ENTITLEMENT_STORE: 'avalanche',
+    AVALANCHE_DEMO_SETTLE: 'false',
+    AVALANCHE_NETWORK: 'fuji',
+    AVALANCHE_RPC_URL: 'http://localhost:58545',
+    AVALANCHE_CHAIN_ID: '43113',
+    ENTITLEMENT_SUBJECT_SECRET: randomBytes(32).toString('hex'),
     BAGSEVEN_REQUIRE_GRANT: 'true',
     BAGSEVEN_GRANT_FEATURE: 'ocr',
     NEXT_PUBLIC_GATEWAY_URL: 'http://localhost:4000',
@@ -94,6 +90,8 @@ function buildEnvContents() {
     PROVIDER_ADMIN_TOKEN: createHash('sha256').update(randomBytes(16)).digest('hex').slice(0, 32),
     AUTH_SECRET: randomBytes(32).toString('hex'),
     PROVIDER_GAS_ENCRYPTION_KEY: randomBytes(32).toString('hex'),
+    PROVIDER_SCOPE_SIGNING_KEY: randomBytes(32).toString('hex'),
+    X402_PAYMENT_ENCRYPTION_KEY: randomBytes(32).toString('hex'),
     DAEMON_AUTH_TOKEN: randomBytes(24).toString('hex'),
     BAGSEVEN_SECRET_KEY: `sk_test_${randomBytes(16).toString('hex')}`,
     BAGSEVEN_PUBLISHABLE_KEY: `pk_test_${randomBytes(12).toString('hex')}`,
@@ -114,7 +112,6 @@ function buildEnvContents() {
   raw += `# OWNER     ${owner.address}\n`;
   raw += `# OPERATOR  ${operator.address}\n`;
   raw += `# EXECUTOR  ${executor.address}\n`;
-  raw += `# X402_PAYER ${payer.address}\n`;
   return raw;
 }
 

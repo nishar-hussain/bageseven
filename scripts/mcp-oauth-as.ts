@@ -1,21 +1,13 @@
 /**
  * Bagseven MCP OAuth Authorization Server (ChatGPT custom MCP).
  *
- * ChatGPT cannot use World as its IdP directly (redirect URI must be ChatGPT’s).
- * Flow: ChatGPT → Bagseven AS authorize → human proves World IDKit or World Agent Pass
- * → Bagseven issues access_token → ChatGPT calls /mcp with Bearer.
+ * Email and signed Avalanche wallet ownership approve the connection.
+ * Bagseven issues access_token → ChatGPT calls /mcp with Bearer.
  */
+import { mcpCredentials } from './mcp-credential-store.ts';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { Express, Request, Response } from 'express';
-import QRCode from 'qrcode';
-import { verifyWorldAgentPass } from '@bagseven/world';
-import { readWorldContinuity, signWorldContinuity, WORLD_CONTINUITY_AGE } from '../apps/console/lib/world-continuity.ts';
-
-const WORLD_SESSION_COOKIE = 'bagseven_oauth_world_session';
-function savedWorldSession(req: Request): string | undefined {
-  const value = req.headers.cookie?.split(';').map(v => v.trim()).find(v => v.startsWith(`${WORLD_SESSION_COOKIE}=`))?.slice(WORLD_SESSION_COOKIE.length + 1);
-  try { return readWorldContinuity(value ? decodeURIComponent(value) : undefined); } catch { return undefined; }
-}
+import { accountConsentMarkup, startAccountConsent, finishAccountConsent } from './mcp-account-auth.ts';
 
 type AuthCode = {
   clientId: string;
@@ -25,21 +17,25 @@ type AuthCode = {
   scope: string;
   resource?: string;
   humanId: string;
-  worldProofId: string;
+  accountWallet: string;
   exp: number;
 };
 
 type AccessToken = {
   humanId: string;
-  worldProofId: string;
+  accountWallet: string;
   clientId: string;
   scope: string;
   resource?: string;
   exp: number;
 };
 
-const codes = new Map<string, AuthCode>();
-const tokens = new Map<string, AccessToken>();
+const credentials = mcpCredentials<AuthCode | AccessToken>('oauth');
+const codes = {
+  get: async (key: string) => await credentials.get(`code:${key}`) as AuthCode | undefined,
+  set: (key: string, row: AuthCode) => credentials.set(`code:${key}`, row),
+};
+const tokens = credentials;
 
 function b64url(buf: Buffer): string {
   return buf.toString('base64url');
@@ -72,29 +68,22 @@ function resourceUrl(base: string): string {
   return `${base}/mcp`;
 }
 
-function prune(): void {
-  const now = Date.now();
-  for (const [k, v] of codes) if (v.exp < now) codes.delete(k);
-  for (const [k, v] of tokens) if (v.exp < now) tokens.delete(k);
+let nextPrune = 0;
+async function prune() {
+  if (Date.now() < nextPrune) return;
+  nextPrune = Date.now() + 15000;
+  await credentials.prune();
 }
 
-export function verifyMcpAccessToken(authHeader: string | undefined): AccessToken | null {
-  prune();
+export async function verifyMcpAccessToken(authHeader: string | undefined): Promise<AccessToken | null> {
   if (!authHeader?.startsWith('Bearer ')) return null;
   const token = authHeader.slice('Bearer '.length).trim();
-  // Legacy static token still accepted when set.
   if (process.env.MCP_AUTH_TOKEN && safeEqual(token, process.env.MCP_AUTH_TOKEN)) {
-    return {
-      humanId: 'static-token',
-      worldProofId: 'operator:static-token',
-      clientId: 'static',
-      scope: 'bagseven',
-      exp: Date.now() + 86_400_000,
-    };
+    return { humanId: 'static-token', accountWallet: 'operator:static-token', clientId: 'static', scope: 'bagseven', exp: Date.now() + 86400000 };
   }
-  const row = tokens.get(token);
-  if (!row || row.exp < Date.now()) return null;
-  return row;
+  if (token.startsWith('refresh:') || token.startsWith('code:')) return null;
+  const row = await tokens.get(token) as AccessToken | undefined;
+  return row && row.exp > Date.now() ? row : null;
 }
 
 function html(value: string): string {
@@ -141,53 +130,8 @@ function authorizePage(opts: {
 </style></head><body>
   <div class="card">
     <h1>Authorize Bagseven for ChatGPT</h1>
-    <p>Verify with World ID to approve this agent connection. The agent receives a Bagseven token; your World credentials stay with you.</p>
-    ${opts.error ? `<p class="err">${html(opts.error)}</p>` : ''}
-    <form method="post" action="/oauth/authorize?${html(q.toString())}">
-      <input type="hidden" name="idkit_response" id="world-proof" />
-      <button type="button" id="verify-world">Verify with World ID</button>
-      <div id="world-qr-panel" class="qr-panel" hidden>
-        <img id="world-qr" width="320" height="320" alt="Scan this QR code with World App to authorize Bagseven" />
-        <p>Scan with World App on your phone</p>
-      </div>
-      <a id="world-link" hidden>Open World App</a>
-      <p id="world-status" role="status"></p>
-    </form>
-    <p style="margin-top:1rem;font-size:.75rem">Resource: <code>${html(opts.resource || resourceUrl(opts.base))}</code></p>
-  </div>
-<script src="https://cdn.jsdelivr.net/npm/@worldcoin/idkit-core@4.6.0/dist/idkit.global.js"></script>
-<script>
- document.getElementById('verify-world').onclick = async function () {
-  this.disabled = true;
-  const status = document.getElementById('world-status');
-  const qrPanel = document.getElementById('world-qr-panel');
-  const qr = document.getElementById('world-qr');
-  qrPanel.hidden = true;
-  document.getElementById('world-link').hidden = true;
-  try {
-   status.textContent = 'Starting World ID verification…';
-   const response = await fetch('/oauth/world/challenge', { method: 'POST' });
-   const sig = await response.json();
-   if (!response.ok) throw new Error(sig.error || 'World ID is unavailable');
-   const config = { app_id: sig.app_id, environment: sig.environment,
-    rp_context: { rp_id: sig.rp_id, nonce: sig.nonce, created_at: sig.created_at, expires_at: sig.expires_at, signature: sig.sig } };
-   const builder = sig.existing_session_id ? IDKit.proveSession(sig.existing_session_id, config) : IDKit.createSession(config);
-   const request = await builder.constraints(IDKit.CredentialRequest('proof_of_human'));
-   const link = document.getElementById('world-link'); link.href = request.connectorURI; link.hidden = false;
-   const qrResponse = await fetch('/oauth/world/qr', { method: 'POST',
-    headers: { 'content-type': 'application/json' }, body: JSON.stringify({ uri: request.connectorURI, nonce: sig.nonce }) });
-   if (!qrResponse.ok) throw new Error('Could not generate the QR code. Try again, or use Open World App on your phone.');
-   const qrUrl = URL.createObjectURL(await qrResponse.blob());
-   qr.onload = function () { URL.revokeObjectURL(qrUrl); };
-   qr.src = qrUrl; qrPanel.hidden = false;
-   status.textContent = 'Scan the QR code with World App, then approve on your phone.';
-   const completion = await request.pollUntilCompletion();
-   if (!completion.success) throw new Error('World ID verification failed (' + completion.error + '). Please try a fresh QR.');
-   document.getElementById('world-proof').value = JSON.stringify(completion.result);
-   document.querySelector('form').submit();
-  } catch (error) { qrPanel.hidden = true; status.textContent = error.message; this.disabled = false; }
- };
-</script>
+    ${accountConsentMarkup}
+
 </body></html>`;
 }
 
@@ -225,39 +169,7 @@ export function mountMcpOAuth(app: Express): void {
   app.get('/.well-known/oauth-protected-resource', prMeta);
   app.get('/.well-known/oauth-protected-resource/mcp', prMeta);
 
-  /** Encode the connector locally; verification links never go to a third-party QR service. */
-  app.post('/oauth/world/qr', async (req, res) => {
-    const nonce = req.headers.cookie?.split(';').map(value => value.trim()).find(value => value.startsWith('bagseven_oauth_world_nonce='))?.slice('bagseven_oauth_world_nonce='.length);
-    if (req.headers.origin !== publicBase(req) || !nonce || req.body?.nonce !== nonce) {
-      res.status(403).json({ error: 'Start a new World verification in this browser' }); return;
-    }
-    const uri = req.body?.uri;
-    if (typeof uri !== 'string' || uri.length > 4096) { res.status(400).json({ error: 'Invalid World connector URL' }); return; }
-    try {
-      const url = new URL(uri);
-      if (url.protocol !== 'https:' || !['world.org', 'staging.world.org', 'sandbox.world.org'].includes(url.hostname) || url.pathname !== '/verify' || url.username || url.password) {
-        res.status(400).json({ error: 'Invalid World connector URL' }); return;
-      }
-      const png = await QRCode.toBuffer(uri, { type: 'png', width: 320, margin: 4, errorCorrectionLevel: 'M' });
-      res.setHeader('Cache-Control', 'no-store');
-      res.type('image/png').send(png);
-    } catch { res.status(400).json({ error: 'Could not generate World QR code' }); }
-  });
-
-  app.post('/oauth/world/challenge', async (req, res) => {
-    try {
-      const daemon = (process.env.DAEMON_URL || 'http://127.0.0.1:4001').replace(/\/$/, '');
-      const response = await fetch(`${daemon}/internal/world/rp-signature`, {
-        method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${process.env.DAEMON_AUTH_TOKEN || ''}` },
-        body: JSON.stringify({ purpose: 'session', existing_session_id: savedWorldSession(req) }), signal: AbortSignal.timeout(10000),
-      });
-      const sig = await response.json() as { nonce?: string };
-      if (!response.ok || !sig.nonce) { res.status(503).json({ error: 'World ID signing credentials are not ready' }); return; }
-      res.cookie('bagseven_oauth_world_nonce', sig.nonce, { httpOnly: true, sameSite: 'lax', secure: publicBase(req).startsWith('https:'), path: '/oauth', maxAge: 300000 });
-      res.setHeader('Cache-Control', 'no-store');
-      res.json({ ...sig, existing_session_id: savedWorldSession(req) });
-    } catch { res.status(503).json({ error: 'World verification is unavailable' }); }
-  });
+  app.post('/oauth/account/challenge', (req, res) => startAccountConsent(req, res, publicBase(req)));
 
   app.get('/oauth/authorize', (req, res) => {
     const base = publicBase(req);
@@ -301,11 +213,6 @@ export function mountMcpOAuth(app: Express): void {
     const code_challenge = q.code_challenge ? String(q.code_challenge) : undefined;
     const code_challenge_method = q.code_challenge_method ? String(q.code_challenge_method) : undefined;
 
-    const body = req.body as {
-      idkit_response?: string;
-      id_token?: string;
-    };
-    const idToken = (body.id_token || '').trim() || undefined;
 
     const fail = (msg: string) => {
       res
@@ -337,38 +244,15 @@ export function mountMcpOAuth(app: Express): void {
     }
 
     let humanId: string;
-    let worldProofId: string;
-    if (body.idkit_response) {
-      try {
-        const proof = JSON.parse(body.idkit_response) as { nonce?: string; session_id?: string; action?: string };
-        if (!proof.session_id || proof.action) return fail('Complete a fresh World session verification');
-        const cookie = req.headers.cookie?.split(';').map((v) => v.trim()).find((v) => v.startsWith('bagseven_oauth_world_nonce='))?.slice('bagseven_oauth_world_nonce='.length);
-        if (!cookie || decodeURIComponent(cookie) !== proof.nonce) return fail('World verification does not match this browser request');
-        const daemon = (process.env.DAEMON_URL || 'http://127.0.0.1:4001').replace(/\/$/, '');
-        const response = await fetch(`${daemon}/internal/world/verify-idkit-session`, {
-          method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${process.env.DAEMON_AUTH_TOKEN || ''}` },
-          body: JSON.stringify({ idkit_response: proof }), signal: AbortSignal.timeout(20000),
-        });
-        const verified = await response.json() as { ok?: boolean; human_id?: string; world_proof_id?: string; session_id?: string };
-        if (!response.ok || !verified.ok || !verified.human_id || !verified.world_proof_id) return fail('World ID verification failed');
-        if (verified.session_id !== proof.session_id || (savedWorldSession(req) && verified.session_id !== savedWorldSession(req))) return fail('World session does not match this account');
-        res.cookie(WORLD_SESSION_COOKIE, signWorldContinuity(verified.session_id), { httpOnly: true, sameSite: 'lax', secure: publicBase(req).startsWith('https:'), path: '/oauth', maxAge: WORLD_CONTINUITY_AGE * 1000 });
-        humanId = verified.human_id;
-        worldProofId = verified.world_proof_id;
-        res.clearCookie('bagseven_oauth_world_nonce', { path: '/oauth' });
-      } catch { return fail('World verification is unavailable or the proof is invalid'); }
-    } else if (idToken) {
-      const verified = await verifyWorldAgentPass({ id_token: idToken });
-      if (!verified.ok || verified.mode !== 'live') return fail('A verified World identity is required');
-      humanId = verified.human_id;
-      worldProofId = verified.world_proof_id;
-    } else {
-      return fail('Complete World ID verification before authorizing an agent');
-    }
+    let accountWallet: string;
+    try {
+      const consent = await finishAccountConsent(req, res, base);
+      humanId = consent.accountId; accountWallet = consent.wallet;
+    } catch (error) { return fail(error instanceof Error ? error.message : 'Account verification failed'); }
 
-    prune();
+    await prune();
     const code = b64url(randomBytes(24));
-    codes.set(code, {
+    await codes.set(code, {
       clientId: client_id,
       redirectUri: redirect_uri,
       codeChallenge: code_challenge,
@@ -376,7 +260,7 @@ export function mountMcpOAuth(app: Express): void {
       scope,
       resource,
       humanId,
-      worldProofId,
+      accountWallet,
       exp: Date.now() + 10 * 60_000,
     });
 
@@ -387,11 +271,11 @@ export function mountMcpOAuth(app: Express): void {
     res.redirect(302, redirect.toString());
   });
 
-  app.post('/oauth/token', (req, res) => {
-    prune();
+  app.post('/oauth/token', async (req, res) => {
+    await prune();
     const body = req.body as Record<string, string>;
     const grant = body.grant_type;
-    if (grant !== 'authorization_code') {
+    if (grant !== 'authorization_code' && grant !== 'refresh_token') {
       res.status(400).json({ error: 'unsupported_grant_type' });
       return;
     }
@@ -409,17 +293,36 @@ export function mountMcpOAuth(app: Express): void {
     const expectedId = clientId();
     const expectedSecret = clientSecret();
     // Accept our registered client when secret configured; otherwise public PKCE clients (ChatGPT).
-    if (expectedSecret && cid === expectedId && csec && !safeEqual(csec, expectedSecret)) {
+    if (expectedSecret && cid === expectedId && !safeEqual(csec, expectedSecret)) {
       res.status(401).json({ error: 'invalid_client' });
       return;
     }
 
-    const row = codes.get(body.code || '');
-    if (!row || row.exp < Date.now()) {
+    if (grant === 'refresh_token') {
+      const key = `refresh:${body.refresh_token || ''}`;
+      const previous = await tokens.get(key) as AccessToken | undefined;
+      if (!previous || previous.exp < Date.now() || previous.clientId !== cid ||
+          (body.resource && body.resource !== previous.resource) ||
+          (body.scope && body.scope !== previous.scope)) {
+        res.status(400).json({ error: 'invalid_grant' });
+        return;
+      }
+      const access = b64url(randomBytes(32));
+      const refresh = b64url(randomBytes(32));
+      if (!await credentials.exchange(key, [
+        { key: access, data: { ...previous, exp: Date.now() + 3600000 } },
+        { key: `refresh:${refresh}`, data: { ...previous, exp: Date.now() + 30 * 86400000 } },
+      ])) { res.status(400).json({ error: 'invalid_grant' }); return; }
+      res.set('Cache-Control', 'no-store').json({ access_token: access, token_type: 'Bearer',
+        expires_in: 3600, refresh_token: refresh, scope: previous.scope });
+      return;
+    }
+
+    const row = await codes.get(body.code || '');
+    if (!row || row.exp < Date.now() || row.clientId !== cid) {
       res.status(400).json({ error: 'invalid_grant' });
       return;
     }
-    codes.delete(body.code);
 
     if (row.redirectUri !== body.redirect_uri) {
       res.status(400).json({ error: 'invalid_grant', error_description: 'redirect_uri mismatch' });
@@ -448,25 +351,14 @@ export function mountMcpOAuth(app: Express): void {
     const access = b64url(randomBytes(32));
     const refresh = b64url(randomBytes(32));
     const expiresIn = 3600;
-    tokens.set(access, {
-      humanId: row.humanId,
-      worldProofId: row.worldProofId,
-      clientId: row.clientId || cid,
-      scope: row.scope,
-      resource: row.resource,
-      exp: Date.now() + expiresIn * 1000,
-    });
-    // refresh reuse map: store under refresh key pointing at same identity
-    tokens.set(`refresh:${refresh}`, {
-      humanId: row.humanId,
-      worldProofId: row.worldProofId,
-      clientId: row.clientId || cid,
-      scope: row.scope,
-      resource: row.resource,
-      exp: Date.now() + 30 * 86_400_000,
-    });
+    const identity = { humanId: row.humanId, accountWallet: row.accountWallet,
+      clientId: row.clientId || cid, scope: row.scope, resource: row.resource };
+    if (!await credentials.exchange(`code:${body.code}`, [
+      { key: access, data: { ...identity, exp: Date.now() + expiresIn * 1000 } },
+      { key: `refresh:${refresh}`, data: { ...identity, exp: Date.now() + 30 * 86400000 } },
+    ])) { res.status(400).json({ error: 'invalid_grant' }); return; }
 
-    res.json({
+    res.set('Cache-Control', 'no-store').json({
       access_token: access,
       token_type: 'Bearer',
       expires_in: expiresIn,
@@ -486,7 +378,7 @@ export function mountMcpOAuth(app: Express): void {
       redirect_uris: body.redirect_uris || [],
       client_name: body.client_name || 'ChatGPT',
       token_endpoint_auth_method: 'none',
-      grant_types: ['authorization_code'],
+      grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
     });
   });

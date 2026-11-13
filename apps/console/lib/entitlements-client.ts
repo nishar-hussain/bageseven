@@ -18,19 +18,8 @@ async function api<T>(method: string, path: string, body?: unknown): Promise<T> 
 
 export type MumbaiStatus = {
   tracks: {
-    world: {
-      enabled: boolean;
-      mode: string;
-      mock_proofs: boolean;
-      idkit?: boolean;
-      agent_pass?: boolean;
-      app_id?: string | null;
-      rp_id?: string | null;
-      action?: string;
-      environment?: 'production' | 'staging';
-      oidc_client_id?: string | null;
-    };
-    whitechain: {
+    auth: { mode: 'email_wallet' };
+    avalanche: {
       pay_to?: string | null;
       usdt?: string;
       network: string;
@@ -39,7 +28,7 @@ export type MumbaiStatus = {
       operator: boolean;
       demo_settle: boolean;
     };
-    arkiv: { live: boolean; store: string };
+    registry: { live: boolean; store: string };
   };
   dual_gate: {
     provider_funded_gas?: boolean;
@@ -59,8 +48,8 @@ export type Grant = {
   paid_through: string;
   payment_tx?: string;
   settlement_network?: string;
-  arkiv_entity_key?: string;
-  world_proof_id?: string;
+  registry_grant_id?: string;
+  registry_address?: string;
   human_id?: string;
 };
 
@@ -98,46 +87,9 @@ export const entitlementsApi = {
       features?: string[];
     }>('GET', `grants/live${qs ? `?${qs}` : ''}`);
   },
-  mint: (body: Record<string, unknown>) => api<{ grant: Grant; settlement?: { payment_tx?: string; explorer_url?: string; mode?: string }; world?: { mode?: string } }>('POST', 'grants/mint', body),
+  mint: (body: Record<string, unknown>) => api<{ grant: Grant; settlement?: { payment_tx?: string; explorer_url?: string; mode?: string } }>('POST', 'grants/mint', body),
   buyCredits: (body: Record<string, unknown>) => api<{ grant: Grant; settlement?: { payment_tx?: string; explorer_url?: string; mode?: string } }>('POST', 'grants/buy-credits', body),
   paidRun: (body: Record<string, unknown>) => api<{ grant: Grant; dual_gate?: unknown }>('POST', 'grants/paid-run', body),
-  cancelRenewal: (id: string) => api<{ grant: Grant }>('POST', `grants/${encodeURIComponent(id)}/cancel-renewal`),
+  cancelRenewal: (id: string) => api<{ grant: Grant } | { requires_wallet_approval: true; management_url: string }>('POST', `grants/${encodeURIComponent(id)}/cancel-renewal`),
   explainDenial: (body: Record<string, unknown>) => api<{ denied: boolean; reasons: Array<{ code: string; detail: string }> }>('POST', 'grants/explain-denial', body),
-  worldAuthorize: (redirectUri?: string) => {
-    const qs = redirectUri ? `?redirect_uri=${encodeURIComponent(redirectUri)}` : '';
-    return api<{
-      mode: string;
-      authorize_url?: string | null;
-      state?: string;
-      note?: string;
-      mock?: boolean;
-    }>('GET', `world/authorize${qs}`);
-  },
-  worldCallback: (body: { code: string; state: string; redirect_uri?: string; iss?: string }) =>
-    api<{
-      ok: boolean;
-      id_token: string;
-      human_id: string;
-      world_proof_id: string;
-      mode: string;
-    }>('POST', 'world/callback', body),
-  worldRpSignature: (action?: string) =>
-    api<{
-      sig: string;
-      nonce: string;
-      created_at: number;
-      expires_at: number;
-      action: string;
-      rp_id: string | null;
-      app_id: string | null;
-    }>('POST', 'world/rp-signature', { action }),
-  worldVerifyIdkit: (idkit_response: unknown, action?: string) =>
-    api<{
-      ok: boolean;
-      human_id: string;
-      world_proof_id: string;
-      nullifier: string;
-      action: string;
-      mode: string;
-    }>('POST', 'world/verify-idkit', { idkit_response, action }),
 };

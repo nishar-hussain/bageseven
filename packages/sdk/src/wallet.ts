@@ -1,32 +1,28 @@
-/** Browser Whitechain wallet helpers (WhiteWallet-ready). */
+/** Browser wallet helpers for Avalanche C-Chain and Fuji. */
 
-export const WHITECHAIN_SEPOLIA = {
-  chainId: 1874,
-  chainIdHex: '0x752',
-  name: 'Whitechain Testnet',
-  rpcUrl: 'https://rpc.testnet.whitechain.io',
-  explorer: 'https://explorer.testnet.whitechain.io',
-  nativeCurrency: { name: 'WhiteBIT Coin', symbol: 'WBT', decimals: 18 },
-  /** Portal prize USDT on Whitechain Sepolia */
-  usdt: '0xaa7962d073935D387e8d442DA1D7149C81388f46',
+export const AVALANCHE_FUJI = {
+  chainId: 43113,
+  chainIdHex: '0xa869',
+  name: 'Avalanche Fuji',
+  rpcUrl: 'https://api.avax-test.network/ext/bc/C/rpc',
+  explorer: 'https://testnet.snowtrace.io',
+  nativeCurrency: { name: 'Avalanche', symbol: 'AVAX', decimals: 18 },
+  /** Checkout supplies the explicitly configured six-decimal payment token. */
+  usdt: '',
 } as const;
 
 type EthereumProvider = {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
   isMetaMask?: boolean;
-  isWhiteWallet?: boolean;
   providers?: EthereumProvider[];
 };
 
 function pickProvider(): EthereumProvider | null {
   if (typeof window === 'undefined') return null;
-  const eth = (window as unknown as { ethereum?: EthereumProvider; whitewallet?: EthereumProvider }).ethereum;
-  const ww = (window as unknown as { whitewallet?: EthereumProvider }).whitewallet;
-  if (ww) return ww;
+  const eth = (window as unknown as { ethereum?: EthereumProvider }).ethereum;
   if (!eth) return null;
   if (eth.providers?.length) {
     const preferred =
-      eth.providers.find((p) => p.isWhiteWallet) ||
       eth.providers.find((p) => p.isMetaMask) ||
       eth.providers[0];
     return preferred ?? eth;
@@ -35,16 +31,16 @@ function pickProvider(): EthereumProvider | null {
 }
 
 function walletNetwork(chainId: number) {
-  if (chainId === 1874) return WHITECHAIN_SEPOLIA;
-  if (chainId === 1875) return { ...WHITECHAIN_SEPOLIA, chainId: 1875, chainIdHex: '0x753', name: 'Whitechain', rpcUrl: 'https://rpc.whitechain.io', explorer: 'https://explorer.whitechain.io' };
-  throw new Error('Unsupported Whitechain network');
+  if (chainId === 43113) return AVALANCHE_FUJI;
+  if (chainId === 43114) return { ...AVALANCHE_FUJI, chainId: 43114, chainIdHex: '0xa86a', name: 'Avalanche C-Chain', rpcUrl: 'https://api.avax.network/ext/bc/C/rpc', explorer: 'https://snowtrace.io' };
+  throw new Error('Unsupported Avalanche network');
 }
 
-export async function connectWhitechainWallet(chainId = 1874): Promise<{ address: string; provider: EthereumProvider }> {
+export async function connectAvalancheWallet(chainId = 43113): Promise<{ address: string; provider: EthereumProvider }> {
   const network = walletNetwork(chainId);
   const provider = pickProvider();
   if (!provider) {
-    throw new Error('No EVM wallet found. Install WhiteWallet (when available) or MetaMask, then connect to Whitechain Testnet (1874).');
+    throw new Error('No EVM wallet found. Connect an Avalanche-compatible wallet to Fuji (43113).');
   }
   const accounts = (await provider.request({ method: 'eth_requestAccounts' })) as string[];
   const address = accounts[0];
@@ -80,12 +76,12 @@ export async function connectWhitechainWallet(chainId = 1874): Promise<{ address
 
 function encodeUsdtTransfer(to: string, amountHuman: string): string {
   if (!/^0x[0-9a-fA-F]{40}$/.test(to)) throw new Error('Invalid merchant wallet');
-  if (!/^\d+(\.\d{1,6})?$/.test(amountHuman)) throw new Error('USDT amount must have at most 6 decimal places');
-  // transfer(address,uint256) selector + args; amount as 6-decimal USDT
+  if (!/^\d+(\.\d{1,6})?$/.test(amountHuman)) throw new Error('stablecoin amount must have at most 6 decimal places');
+  // transfer(address,uint256) selector + args; amount as 6-decimal stablecoin
   const [whole, frac = ''] = amountHuman.split('.');
   const fracPad = (frac + '000000').slice(0, 6);
   const units = BigInt(whole || '0') * 1_000_000n + BigInt(fracPad || '0');
-  if (units <= 0n) throw new Error('USDT amount must be positive');
+  if (units <= 0n) throw new Error('stablecoin amount must be positive');
   const selector = '0xa9059cbb';
   const toWord = to.replace(/^0x/, '').toLowerCase().padStart(64, '0');
   const amtWord = units.toString(16).padStart(64, '0');
@@ -93,16 +89,16 @@ function encodeUsdtTransfer(to: string, amountHuman: string): string {
 }
 
 /** Wallet authorization binds a visible transaction to exactly one purchase. */
-export async function authorizeWhitechainPayment(input: { payment_tx: string; context: string; chainId?: number }): Promise<{ customer_wallet: string; payment_signature: string }> {
-  const { address, provider } = await connectWhitechainWallet(input.chainId ?? 1874);
-  const message = `Bagseven payment confirmation\nContext: ${input.context}\nChain: ${input.chainId ?? 1874}\nTransaction: ${input.payment_tx.toLowerCase()}`;
+export async function authorizeAvalanchePayment(input: { payment_tx: string; context: string; chainId?: number }): Promise<{ customer_wallet: string; payment_signature: string }> {
+  const { address, provider } = await connectAvalancheWallet(input.chainId ?? 43113);
+  const message = `Bagseven payment confirmation\nContext: ${input.context}\nChain: ${input.chainId ?? 43113}\nTransaction: ${input.payment_tx.toLowerCase()}`;
   const hex = '0x' + Array.from(new TextEncoder().encode(message)).map((v) => v.toString(16).padStart(2, '0')).join('');
   const signature = await provider.request({ method: 'personal_sign', params: [hex, address] });
   if (typeof signature !== 'string' || !/^0x[0-9a-fA-F]{130}$/.test(signature)) throw new Error('Wallet did not authorize this purchase');
   return { customer_wallet: address, payment_signature: signature };
 }
 
-export async function payUsdtOnWhitechain(input: {
+export async function payStablecoinOnAvalanche(input: {
   merchantWallet: string;
   amount: string;
   usdt?: string;
@@ -110,9 +106,9 @@ export async function payUsdtOnWhitechain(input: {
   context?: string;
   onTransactionSubmitted?: (hash: string) => void;
 }): Promise<{ payment_tx: string; customer_wallet: string; payment_signature?: string }> {
-  const { address, provider } = await connectWhitechainWallet(input.chainId ?? 1874);
-  const usdt = input.usdt || ((input.chainId ?? 1874) === 1874 ? WHITECHAIN_SEPOLIA.usdt : '');
-  if (!/^0x[0-9a-fA-F]{40}$/.test(usdt)) throw new Error('The checkout has no valid USDT contract');
+  const { address, provider } = await connectAvalancheWallet(input.chainId ?? 43113);
+  const usdt = input.usdt || ((input.chainId ?? 43113) === 43113 ? AVALANCHE_FUJI.usdt : '');
+  if (!/^0x[0-9a-fA-F]{40}$/.test(usdt)) throw new Error('The checkout has no valid stablecoin contract');
   const data = encodeUsdtTransfer(input.merchantWallet, input.amount);
   const payment_tx = (await provider.request({
     method: 'eth_sendTransaction',
@@ -131,14 +127,80 @@ export async function payUsdtOnWhitechain(input: {
   while (Date.now() < deadline) {
     const receipt = await provider.request({ method: 'eth_getTransactionReceipt', params: [payment_tx] }) as { status: string; blockNumber: string } | null;
     if (receipt) {
-      if (receipt.status !== '0x1') throw new Error('Whitechain payment reverted');
+      if (receipt.status !== '0x1') throw new Error('Avalanche payment reverted');
       const tip = await provider.request({ method: 'eth_blockNumber' }) as string;
       if (BigInt(tip) - BigInt(receipt.blockNumber) >= 1n) {
-        const authorization = input.context ? await authorizeWhitechainPayment({ payment_tx, context: input.context, chainId: input.chainId }) : { customer_wallet: address };
+        const authorization = input.context ? await authorizeAvalanchePayment({ payment_tx, context: input.context, chainId: input.chainId }) : { customer_wallet: address };
         return { payment_tx, ...authorization };
       }
     }
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   throw new Error(`Payment is still pending. Retry confirmation with transaction ${payment_tx}`);
+}
+
+async function confirmedWalletTransaction(provider: EthereumProvider, hash: string) {
+  if (!/^0x[0-9a-fA-F]{64}$/.test(hash)) throw new Error('Wallet returned an invalid transaction hash');
+  const deadline = Date.now() + 120000;
+  while (Date.now() < deadline) {
+    const receipt = await provider.request({ method: 'eth_getTransactionReceipt', params: [hash] }) as { status: string; blockNumber: string } | null;
+    if (receipt) {
+      if (receipt.status !== '0x1') throw new Error('Wallet transaction reverted');
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  throw new Error(`Transaction pending: ${hash}. Check its receipt before retrying.`);
+}
+
+/** Explicit customer action: bounded ERC-20 approval, then the fixed-plan subscription. */
+export async function subscribeOnAvalanche(input: {
+  contract: string; subscribeData: string; amount: string; usdt: string; chainId: number; checkoutId: string;
+  onTransactionSubmitted?: (hash: string) => void;
+}) {
+  for (const address of [input.contract, input.usdt]) if (!/^0x[\da-fA-F]{40}$/.test(address)) throw new Error('Invalid subscription address');
+  if (!/^0x[\da-fA-F]{136}$/.test(input.subscribeData)) throw new Error('Invalid subscription transaction');
+  const { address, provider } = await connectAvalancheWallet(input.chainId);
+  const [whole, fraction = ''] = input.amount.split('.');
+  if (!/^\d+(\.\d{1,6})?$/.test(input.amount)) throw new Error('Invalid subscription amount');
+  const amount = BigInt(whole!) * 1000000n + BigInt(fraction.padEnd(6, '0'));
+  const owner = address.slice(2).padStart(64, '0'); const spender = input.contract.slice(2).padStart(64, '0');
+  const allowance = BigInt(await provider.request({ method: 'eth_call', params: [{ to: input.usdt, data: `0xdd62ed3e${owner}${spender}` }, 'latest'] }) as string);
+  if (allowance < amount) {
+    const approve = async (value: bigint) => {
+      const hash = await provider.request({ method: 'eth_sendTransaction', params: [{ from: address, to: input.usdt, value: '0x0', data: `0x095ea7b3${spender}${value.toString(16).padStart(64, '0')}` }] }) as string;
+      await confirmedWalletTransaction(provider, hash);
+    };
+    // Reset existing allowance for stablecoin variants which require zero-first approval.
+    if (allowance > 0n) await approve(0n);
+    await approve(amount * 12n);
+  }
+  const hash = await provider.request({ method: 'eth_sendTransaction', params: [{ from: address, to: input.contract, value: '0x0', data: input.subscribeData }] }) as string;
+  input.onTransactionSubmitted?.(hash);
+  await confirmedWalletTransaction(provider, hash);
+  return { payment_tx: hash, ...await authorizeAvalanchePayment({ payment_tx: hash, context: `checkout:${input.checkoutId}`, chainId: input.chainId }) };
+}
+
+/** Returns only after the paying wallet has signed and its cancellation has landed. */
+export async function cancelAvalancheSubscription(input: { contract: string; key: string; payer: string; chainId: number; cancelData: string }) {
+  const { address, provider } = await connectAvalancheWallet(input.chainId);
+  if (address.toLowerCase() !== input.payer.toLowerCase()) throw new Error('Connect the wallet that pays this subscription');
+  if (!/^0x[\da-fA-F]{40}$/.test(input.contract) || !/^0x[\da-fA-F]{64}$/.test(input.key) || !/^0x[\da-fA-F]{72}$/.test(input.cancelData)) throw new Error('Invalid cancellation transaction');
+  const hash = await provider.request({ method: 'eth_sendTransaction', params: [{ from: address, to: input.contract, value: '0x0', data: input.cancelData }] }) as string;
+  await confirmedWalletTransaction(provider, hash);
+  return hash;
+}
+
+export async function renewSubscriptionAllowance(input: { contract: string; payer: string; chainId: number; usdt: string; amount: string }) {
+  const { address, provider } = await connectAvalancheWallet(input.chainId);
+  if (address.toLowerCase() !== input.payer.toLowerCase()) throw new Error('Connect the wallet that pays this subscription');
+  if (![input.contract, input.usdt].every(value => /^0x[\da-fA-F]{40}$/.test(value)) || !/^\d+(\.\d{1,6})?$/.test(input.amount)) throw new Error('Invalid allowance terms');
+  const [whole, fraction = ''] = input.amount.split('.');
+  const units = BigInt(whole!) * 1000000n + BigInt(fraction.padEnd(6, '0'));
+  if (units <= 0n) throw new Error('Invalid allowance amount');
+  const spender = input.contract.slice(2).padStart(64, '0');
+  for (const amount of [0n, units * 12n]) {
+    const hash = await provider.request({ method: 'eth_sendTransaction', params: [{ from: address, to: input.usdt, value: '0x0', data: `0x095ea7b3${spender}${amount.toString(16).padStart(64, '0')}` }] }) as string;
+    await confirmedWalletTransaction(provider, hash);
+  }
 }

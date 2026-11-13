@@ -31,35 +31,14 @@ export function StatusBadges() {
   }
   if (!status) return <div className="text-sm text-[var(--muted)]">Loading track status…</div>;
 
-  const worldLive =
-    !status.tracks.world.mock_proofs &&
-    (status.tracks.world.mode === 'idkit' ||
-      status.tracks.world.mode === 'agent_pass' ||
-      status.tracks.world.mode === 'dual' ||
-      status.tracks.world.mode === 'live' ||
-      status.tracks.world.mode === 'oidc');
-  const worldLabel =
-    status.tracks.world.mode === 'unconfigured'
-      ? 'Setup needed'
-      : status.tracks.world.mock_proofs
-        ? 'Proofs off'
-        : status.tracks.world.mode === 'dual'
-          ? 'IDKit + Agent Pass'
-          : status.tracks.world.mode === 'idkit'
-            ? 'IDKit'
-            : status.tracks.world.mode === 'agent_pass'
-              ? 'Agent Pass'
-              : status.tracks.world.mode === 'live' || status.tracks.world.mode === 'oidc'
-                ? 'Live'
-                : 'Offline';
   const badges = [
-    { label: 'World', value: worldLabel, live: worldLive },
+    { label: 'Account', value: 'Email + wallet', live: true },
     {
-      label: 'Whitechain',
-      value: status.tracks.whitechain.demo_settle ? 'Settle off' : status.tracks.whitechain.network,
-      live: !status.tracks.whitechain.demo_settle,
+      label: 'Avalanche',
+      value: status.tracks.avalanche.demo_settle ? 'Settle off' : status.tracks.avalanche.network,
+      live: !status.tracks.avalanche.demo_settle,
     },
-    { label: 'Arkiv', value: status.tracks.arkiv.live ? 'Live' : 'Local store', live: status.tracks.arkiv.live },
+    { label: 'Registry', value: status.tracks.registry.live ? 'Live' : 'Local store', live: status.tracks.registry.live },
   ];
 
   return (

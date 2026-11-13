@@ -47,24 +47,27 @@ if (!existsSync(master)) {
   // Derived values below are refreshed from their canonical source on every run.
   delete values.GATEWAY_AUTH_TOKEN;
   delete values.NEXT_PUBLIC_BAGSEVEN_PUBLISHABLE_KEY;
-  delete values.NEXT_PUBLIC_WORLD_APP_ID;
-  delete values.NEXT_PUBLIC_WORLD_RP_ID;
-  delete values.NEXT_PUBLIC_WORLD_IDKIT_ACTION;
-  delete values.NEXT_PUBLIC_WORLD_IDKIT_ENVIRONMENT;
-  delete values.NEXT_PUBLIC_WHITECHAIN_CHAIN_ID;
-  delete values.NEXT_PUBLIC_WHITECHAIN_USDT;
-  delete values.NEXT_PUBLIC_WHITECHAIN_RPC_URL;
-  delete values.NEXT_PUBLIC_WHITECHAIN_EXPLORER;
+  delete values.NEXT_PUBLIC_AVALANCHE_CHAIN_ID;
+  delete values.NEXT_PUBLIC_AVALANCHE_USDC;
+  delete values.NEXT_PUBLIC_AVALANCHE_RPC_URL;
+  delete values.NEXT_PUBLIC_AVALANCHE_EXPLORER;
   delete values.NEXT_PUBLIC_BAGSEVEN_API_URL;
-  delete values.WORLD_REDIRECT_URI;
   const header = '# Private production source. Edit here, then run pnpm setup:prod again.\n' +
     '# Generated import files are overwritten; this source and its secrets are preserved.\n' +
     '# Replace every REPLACE_* value. Railway references are expanded by Railway only.\n' +
-    '# Defaults: live World + Arkiv, live Whitechain testnet (1874), dual-gate required.\n';
+    '# Defaults: Avalanche Fuji (43113) and email plus wallet authentication, dual-gate required.\n';
   save(master, header + serialize(values));
 }
 
 const values = parseEnv(readFileSync(master, 'utf8'));
+for (const key of ['PROVIDER_SCOPE_SIGNING_KEY', 'X402_PAYMENT_ENCRYPTION_KEY']) {
+  if (!values[key] || values[key].startsWith('REPLACE_')) {
+    values[key] = randomBytes(32).toString('hex');
+    save(master, readFileSync(master, 'utf8').replace(new RegExp(`^${key}=.*\\n?`, 'm'), '') +
+      `\n${key}=${JSON.stringify(values[key])}\n`);
+  }
+  if (!/^[a-f0-9]{64}$/i.test(values[key])) throw new Error(`${key} must be 64 hexadecimal characters; existing value preserved.`);
+}
 const deploymentPath = resolve(root, '.railway/deployment.json');
 const embeddedMcp = existsSync(deploymentPath) ? JSON.parse(readFileSync(deploymentPath, 'utf8')).embeddedMcp === true : values.BAGSEVEN_MCP_EMBEDDED === 'true';
 values.BAGSEVEN_MCP_EMBEDDED = String(embeddedMcp);
@@ -91,15 +94,12 @@ const derived = {
   GATEWAY_AUTH_TOKEN: values.POLICY_INTERNAL_TOKEN,
   NEXT_PUBLIC_BAGSEVEN_PUBLISHABLE_KEY: values.BAGSEVEN_PUBLISHABLE_KEY,
   NEXT_PUBLIC_BAGSEVEN_API_URL: `${consoleUrl}/api/public`,
-  WORLD_REDIRECT_URI: `${consoleUrl}/app/mint`,
-  NEXT_PUBLIC_WHITECHAIN_EXPLORER: values.WHITECHAIN_NETWORK === 'mainnet'
-    ? 'https://explorer.whitechain.io' : 'https://explorer.testnet.whitechain.io',
+  NEXT_PUBLIC_AVALANCHE_EXPLORER: values.AVALANCHE_NETWORK === 'mainnet'
+    ? 'https://snowtrace.io' : 'https://testnet.snowtrace.io',
 };
 for (const [key, source] of Object.entries({
-  NEXT_PUBLIC_WORLD_APP_ID: 'WORLD_APP_ID', NEXT_PUBLIC_WORLD_RP_ID: 'WORLD_RP_ID',
-  NEXT_PUBLIC_WORLD_IDKIT_ACTION: 'WORLD_IDKIT_ACTION', NEXT_PUBLIC_WORLD_IDKIT_ENVIRONMENT: 'WORLD_IDKIT_ENVIRONMENT',
-  NEXT_PUBLIC_WHITECHAIN_CHAIN_ID: 'WHITECHAIN_CHAIN_ID', NEXT_PUBLIC_WHITECHAIN_USDT: 'WHITECHAIN_USDT',
-  NEXT_PUBLIC_WHITECHAIN_RPC_URL: 'WHITECHAIN_RPC_URL',
+  NEXT_PUBLIC_AVALANCHE_CHAIN_ID: 'AVALANCHE_CHAIN_ID', NEXT_PUBLIC_AVALANCHE_USDC: 'AVALANCHE_USDC',
+  NEXT_PUBLIC_AVALANCHE_RPC_URL: 'AVALANCHE_RPC_URL',
 })) derived[key] = values[source];
 
 for (const target of targets) {

@@ -1,2 +1,5 @@
 export * from './client.js';
+export * from './accounts.js';
+export * from './credentials.js';
+export * from './embed-designs.js';
 export * from './schema/index.js';

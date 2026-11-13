@@ -4,7 +4,7 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'Bagseven — Agents spend under a mandate',
   description:
-    'Humans mint a public, expiring entitlement on Arkiv. Money settles on Whitechain. Unique humans via World. SDK + MCP is the product.',
+    'Humans mint a public, expiring entitlement on Registry. Money settles on Avalanche. Unique humans via email and wallet. SDK + MCP is the product.',
   icons: { icon: '/icon.svg' },
 };
 

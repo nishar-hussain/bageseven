@@ -57,7 +57,7 @@ export default function FeaturesPage() {
     <div className="mx-auto max-w-5xl space-y-5">
       <PageHeader
         title="Features"
-        description="Gate anything — boolean on/off or numeric credits. Living grants are Arkiv-powered until paid_through."
+        description="Gate anything — boolean on/off or numeric credits. Living grants are Registry-powered until paid_through."
         action={
           <PrimaryButton onClick={() => setShowCreate((v) => !v)}>{showCreate ? 'Close' : 'New feature'}</PrimaryButton>
         }
@@ -68,7 +68,7 @@ export default function FeaturesPage() {
           <h2 className="text-[15px] font-semibold">New feature</h2>
           <p className="mt-1 text-[13px] text-[var(--muted)]">
             Id is a stable slug used in SDK / MCP checks (e.g. <code className="fi-mono text-xs">api_access</code>). Pick boolean
-            (flag) or numeric (metered credits) — both write living Arkiv entitlements.
+            (flag) or numeric (metered credits) — both write living Registry entitlements.
           </p>
           <form onSubmit={(e) => void create(e)} className="mt-4 grid gap-3 md:grid-cols-2">
             <label className="block text-xs font-semibold uppercase text-[var(--muted)]">

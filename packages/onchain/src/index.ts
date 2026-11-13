@@ -10,6 +10,7 @@ import {
   type Hex,
   type PublicClient,
   type WalletClient,
+  type Chain,
 } from 'viem';
 import { keccak256, stringToHex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -18,45 +19,48 @@ import { BagMandateAbi } from './abi.js';
 import { BagMandateBytecode } from './bytecode.js';
 
 export { BagMandateAbi } from './abi.js';
-export { ProviderGasManager, providerGasEnabled, gasAuthorizationMessage, verifyProviderScope, ARKIV_ENGINE } from './provider-gas.js';
+export { ProviderGasManager, providerGasEnabled, gasAuthorizationMessage, verifyProviderScope } from './provider-gas.js';
 export type { GasAuthorization } from './provider-gas.js';
 
-/** Whitechain Testnet (Sepolia) — product money rail. */
-export const WHITECHAIN_CHAIN_ID = 1874;
-export const WHITECHAIN_NETWORK = 'eip155:1874';
-export const WHITECHAIN_RPC_URL = 'https://rpc.testnet.whitechain.io';
-export const WHITECHAIN_EXPLORER = 'https://explorer.testnet.whitechain.io';
+/** Avalanche C-Chain is the product money rail. Fuji is the hackathon default. */
+export const AVALANCHE_FUJI_CHAIN_ID = 43113;
+export const AVALANCHE_FUJI_NETWORK = 'eip155:43113';
+export const AVALANCHE_FUJI_RPC_URL = 'https://api.avax-test.network/ext/bc/C/rpc';
+export const AVALANCHE_FUJI_EXPLORER = 'https://testnet.snowtrace.io';
 
-export const whitechainSepolia = defineChain({
-  id: WHITECHAIN_CHAIN_ID,
-  name: 'Whitechain Testnet',
-  nativeCurrency: { name: 'WhiteBIT Coin', symbol: 'WBT', decimals: 18 },
-  rpcUrls: { default: { http: [WHITECHAIN_RPC_URL] } },
-  blockExplorers: { default: { name: 'Whitechain Explorer', url: WHITECHAIN_EXPLORER } },
+export const avalancheFuji = defineChain({
+  id: AVALANCHE_FUJI_CHAIN_ID,
+  name: 'Avalanche Fuji',
+  nativeCurrency: { name: 'Avalanche', symbol: 'AVAX', decimals: 18 },
+  rpcUrls: { default: { http: [AVALANCHE_FUJI_RPC_URL] } },
+  blockExplorers: { default: { name: 'SnowTrace', url: AVALANCHE_FUJI_EXPLORER } },
 });
 
-export const whitechainMainnet = defineChain({
-  id: 1875,
-  name: 'Whitechain',
-  nativeCurrency: { name: 'WhiteBIT Coin', symbol: 'WBT', decimals: 18 },
-  rpcUrls: { default: { http: ['https://rpc.whitechain.io'] } },
-  blockExplorers: { default: { name: 'Whitechain Explorer', url: 'https://explorer.whitechain.io' } },
+export const avalancheMainnet = defineChain({
+  id: 43114,
+  name: 'Avalanche C-Chain',
+  nativeCurrency: { name: 'Avalanche', symbol: 'AVAX', decimals: 18 },
+  rpcUrls: { default: { http: ['https://api.avax.network/ext/bc/C/rpc'] } },
+  blockExplorers: { default: { name: 'SnowTrace', url: 'https://snowtrace.io' } },
 });
 
 /** Shared server configuration: never mix a network, RPC, and token implicitly. */
-export function whitechainConfig(env: NodeJS.ProcessEnv = process.env) {
-  const chain = env.WHITECHAIN_NETWORK === 'mainnet' ? whitechainMainnet : whitechainSepolia;
-  const requested = Number(env.WHITECHAIN_CHAIN_ID || env.CHAIN_ID || chain.id);
-  if (requested !== chain.id) throw new Error(`WHITECHAIN_CHAIN_MISMATCH: ${env.WHITECHAIN_NETWORK || 'testnet'} requires chain ${chain.id}, got ${requested}`);
+export function avalancheConfig(env: NodeJS.ProcessEnv = process.env) {
+  const network = env.AVALANCHE_NETWORK ?? 'fuji';
+  const chain: Chain = network === 'mainnet' ? avalancheMainnet : avalancheFuji;
+  const requested = Number(env.AVALANCHE_CHAIN_ID || env.CHAIN_ID || chain.id);
+  if (requested !== chain.id) throw new Error(`AVALANCHE_CHAIN_MISMATCH: ${network} requires chain ${chain.id}, got ${requested}`);
   return {
     chain,
     chainId: chain.id,
-    rpcUrl: env.WHITECHAIN_RPC_URL || env.RPC_URL || chain.rpcUrls.default.http[0],
-    explorer: chain.blockExplorers.default.url,
-    usdt: env.WHITECHAIN_USDT?.trim() || (chain.id === 1874 ? '0xaa7962d073935D387e8d442DA1D7149C81388f46' : ''),
-    confirmations: Math.max(1, Number(env.WHITECHAIN_CONFIRMATIONS || 2)),
+    rpcUrl: env.AVALANCHE_RPC_URL || env.RPC_URL || chain.rpcUrls.default.http[0]!,
+    explorer: chain.blockExplorers!.default.url,
+    // A provider must choose the Fuji/mainnet stablecoin explicitly; never guess a token address.
+    usdt: env.AVALANCHE_USDC?.trim() || '',
+    confirmations: Math.max(1, Number(env.AVALANCHE_CONFIRMATIONS || 2)),
   };
 }
+
 
 /** The local anvil chain (chainId 31337). */
 export const localChain = defineChain({
@@ -87,36 +91,36 @@ export interface MandateClientOpts {
   chainId?: number;
 }
 
-export const SUPPORTED_CHAIN_IDS = [WHITECHAIN_CHAIN_ID, 1875] as const;
+export const SUPPORTED_CHAIN_IDS = [AVALANCHE_FUJI_CHAIN_ID, 43114] as const;
 export type SupportedChainId = (typeof SUPPORTED_CHAIN_IDS)[number];
 
 export const chainConfig = {
-  1875: { id: 1875, name: 'Whitechain', network: 'eip155:1875', nativeSymbol: 'WBT', defaultRpcUrl: 'https://rpc.whitechain.io', explorer: 'https://explorer.whitechain.io', usdc: '' },
-  [WHITECHAIN_CHAIN_ID]: {
-    id: WHITECHAIN_CHAIN_ID,
-    name: 'Whitechain Testnet',
-    network: WHITECHAIN_NETWORK,
-    nativeSymbol: 'WBT',
-    defaultRpcUrl: WHITECHAIN_RPC_URL,
-    explorer: WHITECHAIN_EXPLORER,
+  43114: { id: 43114, name: 'Avalanche C-Chain', network: 'eip155:43114', nativeSymbol: 'AVAX', defaultRpcUrl: 'https://api.avax.network/ext/bc/C/rpc', explorer: 'https://snowtrace.io', usdc: '' },
+  [AVALANCHE_FUJI_CHAIN_ID]: {
+    id: AVALANCHE_FUJI_CHAIN_ID,
+    name: 'Avalanche Fuji',
+    network: AVALANCHE_FUJI_NETWORK,
+    nativeSymbol: 'AVAX',
+    defaultRpcUrl: AVALANCHE_FUJI_RPC_URL,
+    explorer: AVALANCHE_FUJI_EXPLORER,
     usdc: '',
   },
 } as const;
 
 export function chainForId(chainId: number) {
-  if (chainId === 1875) return whitechainMainnet;
-  if (chainId === WHITECHAIN_CHAIN_ID) return whitechainSepolia;
-  throw new Error(`unsupported chain id ${chainId}; expected Whitechain Testnet (${WHITECHAIN_CHAIN_ID})`);
+  if (chainId === 43114) return avalancheMainnet;
+  if (chainId === AVALANCHE_FUJI_CHAIN_ID) return avalancheFuji;
+  throw new Error(`unsupported chain id ${chainId}; expected Avalanche Fuji (${AVALANCHE_FUJI_CHAIN_ID})`);
 }
 
 export function chainConfigForId(chainId: number) {
-  if (chainId === 1875) return chainConfig[1875];
-  if (chainId === WHITECHAIN_CHAIN_ID) return chainConfig[WHITECHAIN_CHAIN_ID];
-  throw new Error(`unsupported chain id ${chainId}; expected Whitechain Testnet (${WHITECHAIN_CHAIN_ID})`);
+  if (chainId === 43114) return chainConfig[43114];
+  if (chainId === AVALANCHE_FUJI_CHAIN_ID) return chainConfig[AVALANCHE_FUJI_CHAIN_ID];
+  throw new Error(`unsupported chain id ${chainId}; expected Avalanche Fuji (${AVALANCHE_FUJI_CHAIN_ID})`);
 }
 
 export function defaultChainId(env: NodeJS.ProcessEnv = process.env): number {
-  return Number(env.CHAIN_ID ?? WHITECHAIN_CHAIN_ID);
+  return Number(env.AVALANCHE_CHAIN_ID ?? env.CHAIN_ID ?? AVALANCHE_FUJI_CHAIN_ID);
 }
 
 const abi: any = BagMandateAbi as any;
@@ -127,8 +131,10 @@ export class MandateClient {
   readonly address: Address;
   private chainVerified?: Promise<void>;
 
-  constructor(privateKey: Hex | ReturnType<typeof privateKeyToAccount>, opts: MandateClientOpts) {
-    const chain = opts.chainId === 31337 ? localChain : chainForId(opts.chainId ?? WHITECHAIN_CHAIN_ID);
+  static readOnly(opts: MandateClientOpts) { return new MandateClient(null, opts); }
+
+  constructor(privateKey: Hex | ReturnType<typeof privateKeyToAccount> | null, opts: MandateClientOpts) {
+    const chain = opts.chainId === 31337 ? localChain : chainForId(opts.chainId ?? AVALANCHE_FUJI_CHAIN_ID);
     const transport = opts.rpcFallbackUrl && opts.rpcFallbackUrl !== opts.rpcUrl
       ? fallback([
         http(opts.rpcUrl, { retryCount: 2, retryDelay: 500 }),
@@ -137,11 +143,12 @@ export class MandateClient {
       : http(opts.rpcUrl, { retryCount: 2, retryDelay: 500 });
     this.publicClient = createPublicClient({ chain, transport });
     const account = typeof privateKey === 'string' ? privateKeyToAccount(privateKey) : privateKey;
-    this.address = account.address;
-    this.wallet = createWalletClient({ account, chain, transport });
+    this.address = account?.address ?? '0x0000000000000000000000000000000000000000';
+    this.wallet = createWalletClient({ account: account ?? undefined, chain, transport });
   }
 
   async deploy(caps: MandateCaps): Promise<Address> {
+    if (!this.wallet.account) throw Error('READ_ONLY_MANDATE_CLIENT: use the provider-authorized signer');
     const hash = await this.wallet.deployContract({
       abi,
       bytecode: BagMandateBytecode,
@@ -238,13 +245,14 @@ export class MandateClient {
 
   private async read(fn: string, args: unknown[], contract: Address): Promise<unknown> {
     this.chainVerified ??= this.publicClient.getChainId().then((id) => {
-      if (id !== this.publicClient.chain?.id) throw new Error('WHITECHAIN_RPC_CHAIN_MISMATCH: on-chain reads are connected to another network');
+      if (id !== this.publicClient.chain?.id) throw new Error('AVALANCHE_RPC_CHAIN_MISMATCH: on-chain reads are connected to another network');
     });
     await this.chainVerified;
     return this.publicClient.readContract({ address: contract, abi, functionName: fn, args });
   }
 
   private async write(contract: Address, contractAbi: any, fn: string, args: unknown[]): Promise<Hex> {
+    if (!this.wallet.account) throw Error('READ_ONLY_MANDATE_CLIENT: use the provider-authorized signer');
     const hash = await this.wallet.writeContract({ address: contract, abi: contractAbi, functionName: fn, args } as any);
     return hash;
   }
@@ -373,3 +381,7 @@ export function workerKey(workerId: string): Hex {
 export function canonicalWithdraw(input: { mandateId: string; amount: string; to: Address; chainId: number }): string {
   return ['bagseven-withdraw-v1', input.mandateId, input.amount, input.to, input.chainId].join('|');
 }
+
+export { SubscriptionAbi, SubscriptionBytecode, SubscriptionRuntime } from './subscription-artifact.js';
+export { EntitlementRegistryAbi, EntitlementRegistryBytecode, EntitlementRegistryRuntime } from './entitlement-registry-artifact.js';
+export { FUJI_DEPLOYMENT, assertPublicFuji, prepareFujiRegistry, validateRegistryPlan, validateSignedRegistry, verifyFujiRegistry, type RegistryDeploymentPlan } from './fuji-deployment.js';

@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import console from 'node:console';
 import process from 'node:process';
+import { privateKeyToAccount } from 'viem/accounts';
 
 const env = process.env;
 async function check(name, url, options = {}, expected = 200) {
@@ -23,25 +24,19 @@ try {
   assert.equal(discovery.issuer, env.BAGSEVEN_MCP_PUBLIC_URL);
   const plans = await check('billing database read', `${env.DAEMON_URL}/v1/plans`, { headers: { authorization: `Bearer ${env.BAGSEVEN_SECRET_KEY}` } });
   assert.ok(Array.isArray(plans.plans));
-  await check('live Arkiv entitlement read', `${env.DAEMON_URL}/internal/grants/live`, { headers: { authorization: `Bearer ${env.DAEMON_AUTH_TOKEN}` } });
+  await check('live Registry entitlement read', `${env.DAEMON_URL}/internal/grants/live`, { headers: { authorization: `Bearer ${env.DAEMON_AUTH_TOKEN}` } });
   const headers = { authorization: `Bearer ${env.POLICY_INTERNAL_TOKEN}` };
   const mandates = await check('gateway -> policy -> database/cache', `${env.GATEWAY_URL}/v1/mandates?owner_address=0x0000000000000000000000000000000000000001`, { headers });
   assert.ok(Array.isArray(mandates.mandates));
   const config = await check('policy signing identity', `${env.GATEWAY_URL}/v1/mandate-config`, { headers });
-  assert.equal(config.operator_address.toLowerCase(), env.DAEMON_EXECUTOR_ADDRESS.toLowerCase());
-  const world = await check('World session challenge', `${env.DAEMON_URL}/internal/world/rp-signature`, {
-    method: 'POST', headers: { authorization: `Bearer ${env.DAEMON_AUTH_TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ purpose: 'session' }),
-  });
-  assert.equal(world.rp_id, env.WORLD_RP_ID);
+  assert.ok(/^0x[\da-f]{64}$/i.test(env.DAEMON_OPERATOR_KEY ?? ''), 'DAEMON_OPERATOR_KEY must be configured for the intended mandate operator');
+  assert.equal(config.operator_address.toLowerCase(), privateKeyToAccount(env.DAEMON_OPERATOR_KEY).address.toLowerCase());
   if (env.NEXT_PUBLIC_CONSOLE_URL) {
-    const config = await check('dashboard World login readiness', `${env.NEXT_PUBLIC_CONSOLE_URL}/api/auth/world`);
-    assert.equal(config.idkit, true);
-    assert.equal(config.signing_configured, true);
-    assert.equal(config.mock_proofs, false);
-    assert.equal(config.app_id, env.WORLD_APP_ID);
-    await check('dashboard -> daemon World challenge', `${env.NEXT_PUBLIC_CONSOLE_URL}/api/auth/world/challenge`, { method: 'POST', headers: { origin: env.NEXT_PUBLIC_CONSOLE_URL } });
+    const response = await globalThis.fetch(`${env.NEXT_PUBLIC_CONSOLE_URL}/app/login`);
+    assert.equal(response.status, 200);
+    assert.ok((await response.text()).includes('Email me a sign-in link'));
   }
-  console.log('HOSTED_BACKEND_CHECKS_OK. World consent, provider funding and customer checkout remain separate human/wallet steps.');
+  console.log('HOSTED_BACKEND_CHECKS_OK. email and wallet consent, provider funding and customer checkout remain separate human/wallet steps.');
 } catch (error) {
   console.error(`Hosted check failed: ${error.message}`);
   process.exitCode = 1;

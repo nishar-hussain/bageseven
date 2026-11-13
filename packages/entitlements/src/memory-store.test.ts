@@ -2,22 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { MemoryGrantStore } from './memory-store.js';
 
 describe('MemoryGrantStore', () => {
-  it('mints a live grant and refuses World deny', async () => {
+  it('mints a live grant and refuses email and wallet deny', async () => {
     const store = new MemoryGrantStore();
-    await expect(store.mint({
-      feature: 'ocr',
-      holder: '0xabc',
-      remaining: '5',
-      ttl_seconds: 60,
-      world_denied: true,
-    })).rejects.toThrow(/WORLD_DENIED/);
 
     const grant = await store.mint({
       feature: 'ocr',
       holder: '0xabc',
       remaining: '5',
       ttl_seconds: 120,
-      settlement_network: 'whitechain',
+      settlement_network: 'avalanche',
       payment_tx: '0xpay',
     });
     expect(grant.remaining).toBe('5');

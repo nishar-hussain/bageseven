@@ -5,7 +5,7 @@ description: Use Bagseven MCP tools to inspect living entitlements, consume prep
 
 # Bagseven
 
-Bagseven separates three facts: Whitechain records payment, Arkiv grants determine current access, and `renewal_enabled` determines future renewal. World verifies the human; Bagseven OAuth authenticates the agent.
+Bagseven separates three facts: Avalanche records payment, Avalanche registry grants determine current access, and `renewal_enabled` determines future renewal. Email and signed wallets establish inbox and wallet control; Bagseven OAuth authenticates the agent.
 
 ## Connect and discover
 
@@ -35,9 +35,9 @@ Start with `bagseven_status` and `list_features`; discover the installed tool sc
 
 ## Buy access
 
-Discover active provider plans and confirm the user's intended plan, feature, price, holder and worker. Use `create_checkout_session` to return the hosted wallet checkout. `mint_with_world` and `buy_credits` also route to plan checkout; they do not bypass payment or accept pasted World proofs.
+Discover active provider plans and confirm the user's intended plan, feature, price, holder and worker. Use `create_checkout_session` to return the hosted wallet checkout. `buy_access` and `buy_credits` also route to plan checkout; they do not bypass payment or accept pasted email and wallet proofs.
 
-A returned checkout URL is pending, not a purchase receipt. Poll `get_checkout_session` only as needed and confirm a living grant after the actual payment is verified. The human approves wallet transactions and World consent. Agents never ask for World credentials or wallet private keys.
+A returned checkout URL is pending, not a purchase receipt. Poll `get_checkout_session` only as needed and confirm a living grant after the actual payment is verified. The human approves wallet transactions and email and wallet consent. Agents never ask for email and wallet credentials or wallet private keys.
 
 ## Make a new payment
 

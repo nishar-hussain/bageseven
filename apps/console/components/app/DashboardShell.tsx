@@ -50,7 +50,7 @@ const settingsNav: NavItem[] = [
   { href: '/app/account', label: 'Account', icon: UserRound },
   { href: '/app/attention', label: 'Needs attention', icon: AlertTriangle },
   { href: '/app/settings', label: 'Tracks', icon: Settings2 },
-  { href: '/app/arkiv', label: 'Arkiv studio', icon: Layers },
+  { href: '/app/registry', label: 'Registry studio', icon: Layers },
 ];
 
 function NavLink({ item, active }: { item: NavItem; active: boolean }) {

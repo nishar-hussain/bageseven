@@ -8,50 +8,34 @@ import {
   walletConnectWallet,
 } from '@rainbow-me/rainbowkit/wallets';
 import { createConfig, http } from 'wagmi';
+import { injected } from 'wagmi/connectors';
 
-/** Whitechain Testnet — product money rail (chain id 1874). */
-export const whitechainTestnet = {
-  id: 1874,
-  name: 'Whitechain Testnet',
-  iconUrl: 'https://explorer.testnet.whitechain.io/favicon.ico',
-  iconBackground: '#0f172a',
-  nativeCurrency: { name: 'WhiteBIT Coin', symbol: 'WBT', decimals: 18 },
+/** Avalanche Fuji C-Chain — Bagseven's hackathon settlement network (chain id 43113). */
+export const avalancheFuji = {
+  id: 43113,
+  name: 'Avalanche Fuji',
+  iconUrl: 'https://build.avax.network/favicon.ico',
+  iconBackground: '#e84142',
+  nativeCurrency: { name: 'Avalanche', symbol: 'AVAX', decimals: 18 },
   rpcUrls: {
-    default: { http: [process.env.NEXT_PUBLIC_WHITECHAIN_RPC_URL || 'https://rpc.testnet.whitechain.io'] },
+    default: { http: [process.env.NEXT_PUBLIC_AVALANCHE_FUJI_RPC_URL || 'https://api.avax-test.network/ext/bc/C/rpc'] },
   },
   blockExplorers: {
     default: {
-      name: 'Whitechain Explorer',
-      url: process.env.NEXT_PUBLIC_WHITECHAIN_EXPLORER || 'https://explorer.testnet.whitechain.io',
+      name: 'SnowTrace',
+      url: process.env.NEXT_PUBLIC_AVALANCHE_EXPLORER || 'https://testnet.snowtrace.io',
     },
   },
 } as const satisfies Chain;
 
-/** Whitechain mainnet (1875). */
-export const whitechainMainnet = {
-  id: 1875,
-  name: 'Whitechain',
-  iconUrl: 'https://explorer.whitechain.io/favicon.ico',
-  iconBackground: '#0f172a',
-  nativeCurrency: { name: 'WhiteBIT Coin', symbol: 'WBT', decimals: 18 },
-  rpcUrls: {
-    default: { http: [process.env.NEXT_PUBLIC_WHITECHAIN_MAINNET_RPC_URL || 'https://rpc.whitechain.io'] },
-  },
-  blockExplorers: {
-    default: { name: 'Whitechain Explorer', url: 'https://explorer.whitechain.io' },
-  },
-} as const satisfies Chain;
-
 const projectId =
-  process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID?.trim() ||
-  // Local/dev fallback so ConnectButton mounts; set a real id from cloud.walletconnect.com for prod.
-  'bagseven_local_dev_project';
+  process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID?.trim();
 
 /**
  * Explicit wallet list — avoid getDefaultConfig() Coinbase/Base Account path
  * (pulls @coinbase/cdp-sdk → missing @x402/evm under Turbopack).
  */
-const connectors = connectorsForWallets(
+const connectors = projectId ? connectorsForWallets(
   [
     {
       groupName: 'Suggested',
@@ -62,19 +46,13 @@ const connectors = connectorsForWallets(
     appName: 'Bagseven',
     projectId,
   },
-);
+) : [injected({ shimDisconnect: true })];
 
 export const wagmiConfig = createConfig({
   connectors,
-  chains: [whitechainTestnet, whitechainMainnet, {
-    id: 7794095, name: 'Arkiv Rabdi', nativeCurrency: { name: 'Golem', symbol: 'tGLM', decimals: 18 },
-    rpcUrls: { default: { http: ['https://rpc.rabdi.db-chain.testnet.arkiv.network'] } },
-    blockExplorers: { default: { name: 'Arkiv Explorer', url: 'https://explorer.rabdi.db-chain.testnet.arkiv.network' } },
-  }],
+  chains: [avalancheFuji],
   transports: {
-    [whitechainTestnet.id]: http(whitechainTestnet.rpcUrls.default.http[0]),
-    [whitechainMainnet.id]: http(whitechainMainnet.rpcUrls.default.http[0]),
-    7794095: http('https://rpc.rabdi.db-chain.testnet.arkiv.network'),
+    [avalancheFuji.id]: http(avalancheFuji.rpcUrls.default.http[0]),
   },
   ssr: true,
 });

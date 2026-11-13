@@ -1,226 +1,55 @@
-# Developer guide
+# Developer integration
 
-Bagseven is a product, not a demo harness. Humans mint access. Humans and agents `checkEntitlement`. Agents spend under a mandate. Access lives on Arkiv until `paid_through`. Money settles on Whitechain. Unique humans via World. The dashboard is a Fianto-shaped operator app; the SDK + MCP are the product surfaces.
+## One customer billing embed
 
-If you are an LLM, also read [`../llms.txt`](../llms.txt), [`../AGENTS.md`](../AGENTS.md), and [`LIVE.md`](./LIVE.md) for the go-live credential checklist.
+Configure the unified billing experience at `/app/builder`. Choose the provider's active plans, edit copy and styling, preview desktop/mobile, then Save draft or Publish embed. The live preview uses a short-lived token for the signed-in provider's own account. Payment, allowance and renewal-cancellation transactions still require explicit wallet approval. Builder preview does not fabricate customers, grants, prices or successful payments.
 
-## Mental model
+React installation uses the existing `@bagseven/sdk/react` workspace package and passes `component="cmp_customer"`, selected `planIds`, theme and the holder-scoped customer token. The SDK includes wallet connection and navigation between Plans, My access and Checkout; a host can still supply a custom `walletSlot`. `initialView` controls the starting section; a supplied checkout session opens Checkout. React code contains the chosen configuration as a snapshot; copy it again when changing that installation's styling.
 
-Three clocks, all independent:
+Website installation references the published design at `/embed?design=<uuid>&parent=<merchant-origin>`. Its JavaScript listens for `bagseven:ready`, fetches `/api/billing/customer-token` from the merchant's authenticated backend, then sends `{type:"bagseven:authorize", token, holder, checkoutSessionId?}` to the iframe. The customer-token endpoint is implemented by the merchant: authenticate its current customer, call the Node SDK's `identify({holder, expiresIn:900})` using a server-side secret key, and return the token with that same holder. Never accept an arbitrary unauthenticated holder from the browser. Return `Cache-Control: no-store`; never expose the secret API key. Both sides validate exact origins and window sources, and the iframe requests refreshed credentials every fourteen minutes. New installation snippets never place tokens in URLs or saved designs. A standalone published page can show public plans; customer actions need the authenticated host integration.
 
-| Clock | Question | Source of truth |
-| --- | --- | --- |
-| Payment | Did money move? | Whitechain `payment_tx` |
-| Renewal | Will we collect again? | `renewal_enabled` on the grant |
-| Access | Can they use the feature *now*? | Living Arkiv grant (`remaining` + `paid_through`) |
+Builder's “Preview published embed” exercises this same iframe authentication channel using the provider's own preview account. Drafts and published snapshots use migration 0020. Apply it before deploying console changes. The public design endpoint returns only the published configuration and never its owner, drafts, customer email or credentials. Published plan IDs are validated against the provider's active catalog. Existing `/embed?component=...` links and React component IDs remain compatible.
 
-**Access vs payment:** `paid_run` and SDK consume use prepaid grants without a USDT mandate. New payments (`bagseven_fetch`) need mandate remaining **and** a living grant. Fail closed on payment checks.
+Use the existing `@bagseven/sdk` workspace package for entitlement checks, consumption, checkout and embedded billing. Browser traffic goes through the console BFF; secret API keys and daemon tokens remain on the backend. Publishable keys support permitted reads, and customer tokens are holder-scoped.
 
-The daemon uses `BAGSEVEN_MCP_WORKER` as the default worker for dashboard mint and credit purchases, storing the binding on the grant. Paid runs use an explicit `worker_id`, then the grant's saved worker, then this server default for older unbound grants. Prepaid runs check grant scope and available credits without mandate capacity; new payments through bagseven_fetch still require a registered worker and mandate. Set this variable on the daemon as well as the MCP process.
+Configure `AVALANCHE_NETWORK=fuji`, `AVALANCHE_CHAIN_ID=43113`, and `AVALANCHE_RPC_URL`. Set the exact six-decimal stablecoin contract as `AVALANCHE_USDC`. Network, receipt token, payer, recipient, amount and confirmation depth must match before access is issued. No token address or successful payment is synthesized.
 
-The LLM never authorizes money. Policy issues a spend token; daemon executes. See [DECISIONS.md](./DECISIONS.md).
+Browser helpers exported from `@bagseven/sdk/wallet` are `connectAvalancheWallet`, `authorizeAvalanchePayment`, `payStablecoinOnAvalanche`, `subscribeOnAvalanche`, `cancelAvalancheSubscription`, and `renewSubscriptionAllowance`. Checkout supplies its configured token address. Funding, allowances, subscription creation and cancellation require wallet approval.
 
-## Repo map
+The registry store implements all GrantStore methods. Decimal credits use 18-decimal atomic units and are bounded by uint128. Private metadata is scoped by chain, contract and grant key. Contract consumption IDs prevent duplicate decrements; reservation finalization cannot both commit and release. Registry writes use the provider's authorized signer and a durable signed-transaction journal.
 
-```
-apps/landing     marketing  :3001
-apps/console     dashboard  :3000  /app  (magic-link auth, BFF)
-services/gateway public API :4000
-services/daemon  dual-gate, grants, World, Whitechain :4001
-services/policy  budgets / spend tokens :4003
-packages/sdk           React + Node + agent entitlement SDK
-packages/entitlements  Arkiv + memory store
-packages/world         Agent Pass verify
-packages/notify        Resend (from bags@cesthq.com)
-```
+Discovery filters run in PostgreSQL against indexed holder, feature, worker and expiry fields before bounded parallel contract reads. Renewal workers select at most 100 due subscriptions per cycle, honor retry delays and use database advisory locks to coordinate collectors. Payment and entitlement writes remain independently journaled before broadcast.
 
-Do not add a third UI.
+For Anvil development, run `pnpm setup`, `pnpm start:local`, then `pnpm mcp:local`. To populate one explicitly selected local workspace, set `LOCAL_PROVIDER_EMAIL=your-email` when running `pnpm seed:local`. This creates three receipt plans, provider gas authorization funded with local test AVAX, and three contract-backed grants. It does not create a customer subscription or allowance. Local wallet payments must use the configured Anvil RPC at `http://localhost:58545` with chain ID 43113; public Fuji RPCs cannot see Anvil contracts. Use public Anvil development accounts only. Keep the Anvil database and addresses separate from Fuji deployment configuration.
 
-## Local
+For local offline unit tests only, explicitly select `ENTITLEMENT_STORE=memory`. Production requires `ENTITLEMENT_STORE=avalanche`, a deployed registry, `DATABASE_URL`, and `ENTITLEMENT_SUBJECT_SECRET`. Apply migrations through 0020. Do not rotate the subject secret without an explicit identity migration.
 
-```bash
-pnpm run setup
-pnpm start:local   # same as pnpm dev
-pnpm status:local  # show the five service ports
-pnpm stop:local    # stop this checkout's services; keep data containers
-```
+The existing receipt app runs with `pnpm demo:dapp` on ports 5177/5178. Set `DEMO_PROVIDER_ID` and `DEMO_HOLDER` to the verified-email local fixture; merchant requests use `PROVIDER_SCOPE_SIGNING_KEY`, and active plans are selected by provider and feature rather than hardcoded names. `pnpm --filter @bagseven/demo-dapp seed:demo` explicitly creates missing feature access on local Anvil using the provider-funded registry signer; it requires the known Anvil provider owner, refuses public RPCs and never creates a customer subscription. Reloading the app does not mint access or refill credits. `pnpm demo:check` performs actual OCR, consumes one local scan credit, one JSON export credit and one insights credit, verifies retry safety and checks that backend and browser SDK balances agree. Pro CSV export checks access without decrementing its boolean grant. Pricing marks a monthly plan current only from an actual non-terminal subscription for that plan; possessing prepaid feature credits does not disable checkout.
 
-Requires Node 24+, pnpm 10.33.0, and a running Docker engine. Setup installs locked dependencies, creates local secrets, starts isolated Postgres (`55432`), Redis (`56379`), and Anvil (`58545`), builds the workspace, and applies migrations. It preserves an existing `.env`; use `--force` only to replace it.
+Local acceptance commands include `pnpm smoke` and `pnpm smoke:mcp` for authenticated reads, `node --env-file=.env scripts/test-provider-gas.mjs` for provider authorization boundaries, `node --import tsx scripts/test-subscriptions-local.mjs` for real isolated renewal transactions, `node --env-file=.env --import tsx scripts/test-subscription-persistence.mjs` for durable recovery, and `pnpm test:x402` for isolated mandate-funded EIP-3009 settlement, reconciliation and refunds. The persistence/x402 tests create and remove their own local test databases; they do not require your private keystore or public Fuji funds.
 
-Anvil uses chain ID `1874` to exercise the Whitechain mandate contract path with local tokens. Setup deploys a local USDC faucet, funds a mandate, and writes its worker UUID to `BAGSEVEN_MCP_WORKER`. Reruns reuse the worker; chain state persists in a Docker volume. This is a local chain impersonating Whitechain Testnet, not the public Whitechain RPC. An existing environment needs `RPC_URL=http://localhost:58545` and `CHAIN_ID=1874` to opt into local seeding; custom RPC configurations are preserved. Recreate the Anvil volume if it was previously chain `43113`.
+MCP tools include status, entitlement checking/consumption, `buy_access`, checkout creation, `paid_run`, renewal cancellation, denial explanations, and bounded `bagseven_fetch` payments. Remote clients use HTTPS streamable HTTP at `/mcp`, OAuth PKCE, and email-code plus wallet-signature consent. Agents receive Bagseven tokens and never receive inbox credentials or wallet private keys.
 
-| URL | Surface |
-| --- | --- |
-| http://localhost:3001 | Landing |
-| http://localhost:3000/app | Dashboard |
-| http://localhost:3000/app/sdk | SDK playground (Provider + Guard + Embed) |
-| http://localhost:3000/embed?token= | Token-gated entitlement portal |
-| http://localhost:4000 | Gateway |
-| http://localhost:4001 | Daemon |
-| http://localhost:4003 | Policy |
+OAuth sessions are bound to the verified email, signed wallet and client. Holder-scoped grants and subscriptions cannot be accessed through another account's login; new spending requires the signed wallet to own the bound worker's mandate. An explicitly configured static operator credential retains service-level access and must stay private. OAuth credentials and consent are shared through PostgreSQL, with atomic single-use code/refresh exchanges and shared attempt limits. HTTP requests use stateless transports; no process-local session map or replica affinity is required.
 
-Sign in with **any email**. Resend sends the link from `bags@cesthq.com`. Without `RESEND_API_KEY`, the login page prints the link.
+Verify with `pnpm test`, `pnpm typecheck`, and `node scripts/test-entitlement-registry.mjs`. Rebuild contract artifacts with `node scripts/compile-entitlement-registry.mjs` and `node scripts/compile-subscription.mjs` after contract changes.
 
-`pnpm start` also starts the local stack. Starting again shuts down the previous launcher and its process tree, waits for the ports to close, builds shared libraries, then launches the five services. macOS/Linux ownership checks leave processes from another checkout running and report the conflicting port. Ctrl+C and `pnpm stop:local` shut down owned children. Remove a stale local stack lock only after verifying its recorded process is no longer running; ordinary restarts handle stale locks automatically.
+## Isolated x402 payments
 
-Local startup uses `GATEWAY_PORT`, `DAEMON_PORT` and `POLICY_PORT` separately; a generic inherited `PORT` is ignored for the multi-service launcher. Railway's individual services still honor `PORT`. The local launcher uses the installed pnpm executable through the normal PATH, without generating a Corepack shim.
+Use the existing Spending page to approve a payment authority for an active provider-bound mandate and agent. Connect that mandate's owner wallet and review the exact chain, token, merchant, HTTPS resource origin, per-payment ceiling and expiry before signing. This approval transfers no funds. Configure a separate, backed-up `X402_PAYMENT_ENCRYPTION_KEY` on the daemon only. AES-GCM binds each encrypted key to its authority. `X402Keyring` allows replacement with a KMS/HSM backend without changing payment orchestration. Do not reuse gas-encryption or provider-scope keys.
 
-## Auth
+`X402_FACILITATOR_URL` defaults to PayAI. Its standard v2 adapter probes network support; approval also probes the configured token's EIP-3009 interface. Adding a facilitator means implementing `X402Facilitator`, validating its compatibility and retaining the same on-chain evidence rules. Public interface probes do not prove a funded settlement.
 
-- **World is primary** (`POST /api/auth/world`). Mock World works locally when `WORLD_MOCK_PROOFS=true`.
-- Session cookie `bagseven_session` (HMAC, 8h) carries `world_human_id` and optional `email` / `email_verified_at`.
-- **Email verify-later:** Account → OTP (`/api/auth/email/start` + `/verify`). Unverified email is fine for using the app; receipts/recovery want verification.
-- Magic link is **recovery / invite only**, not the login hero.
-- Optional invite-only when email is used: `AUTH_ALLOWLIST=a@x.com,b@y.com`.
-- Browser never holds `DAEMON_*` keys.
+Send a stable `idempotency_key` with `bagseven_fetch` for an x402 resource. The daemon reserves one living entitlement credit and funds a stable isolated payer through the existing mandate's `execute`. The vault enforces its allocation and spending caps on-chain. Downstream merchant/origin/expiry policy belongs to the approved server signer; it is not an on-chain whitelist. Funding bytes, reserved gas and the payment job commit atomically before broadcast. EIP-3009 signatures commit before external verification or submission. Jobs use database locks, fenced leases and one unresolved allocation per payer. Tokens sent directly to a payer do not enlarge a job's authorized amount.
 
-## Email
+`bagseven_x402_payment(payment_id)` reconciles the job. Provider BFF routes under `/api/daemon/x402` expose scoped authority management, bounded payment lists, reconciliation and wallet recovery drafts. No private key is returned. Settlement needs a confirmed token transfer and matching authorization nonce; HTTP success is insufficient. Pending jobs reconcile in bounded batches. After confirmed authorization expiry, unused funding can return only to the original vault. Provider revocation stops new signing, but an existing signature can settle before expiry. Refunds restore the reserved access credit, not the vault's already-consumed spending quota. The Spending page displays recovery drafts for explicit wallet review; it never sends them automatically.
 
-From: `Bagseven <bags@cesthq.com>` (`RESEND_FROM`).
+Run `node --env-file-if-exists=.env --import tsx scripts/test-x402-local.mjs` with local PostgreSQL and Anvil installed. It creates and deletes its own database and chain, exercises actual token transfers, lost responses, concurrent retries, revocation, refunds and crash recovery. It does not send public-network payments.
 
-| Event | Who gets it |
-| --- | --- |
-| Magic link | The address they typed |
-| Mint / deny / credits / paid_run / cancel | Signed-in user **and** `OPERATOR_NOTIFY_EMAIL` if set (product ops copy) |
+## Wallet-approved Fuji deployment and local upgrades
 
-Email + DNS: [HOSTING.md](./HOSTING.md).
+The existing Registry studio prepares public Fuji registry deployment transactions. Preparation verifies the currently connected wallet using a deployment-specific nonce/domain-bound signature, separate from account-wallet linking. The proof is single-use when issued, valid for ten minutes, bound to the signed-in verified email and website, and cannot authorize agent spending or replace the account wallet. Switching wallets requires preparing a new draft; an old draft cannot be sent from a different wallet. The wallet must use the public Fuji genesis, not an Anvil RPC sharing chain ID 43113. Review and approve the separate deployment transaction, then verify its sender, bytecode, runtime and two public-chain confirmations. The server stores the verified manifest without switching the local environment or enrolling any customers.
 
-## Product loop (what to click)
+`pnpm upgrade:local-x402` is explicitly Anvil-only and requires the known development owner, local PostgreSQL, no active customer subscriptions and no unresolved x402 allocations. It backs up configuration, PostgreSQL and Anvil state before creating an EIP-3009 faucet token and a provider-bound mandate. Existing vault balances, old subscription records and grant history remain untouched; old local plan discovery entries retire and three fresh receipt plans are created. The signing journal and a local upgrade journal retain exact deployment bytes before broadcast. If Anvil was reset while PostgreSQL retained consumed nonces, the guarded development-only recovery aligns that nonce range without replaying old payments. A completed rerun verifies deployment identity and creates no additional funding, plans or grants. Backups and journals are private ignored files under `.data`; never use this command on Fuji or with production keys.
 
-1. Landing → Start free → **Continue with World (mock)** → Overview  
-2. Account → optionally verify email with OTP  
-3. Plans → create a thin plan (feature + USDT + credits + payout wallet)  
-4. Checkouts → open session → public `/checkout?session=` → WhiteWallet/EVM pay (or demo tx) → grant live  
-5. SDK page → Provider + Guard + Embed checkout  
-6. MCP → `create_checkout_session` / `check_entitlement` / `consume_entitlement` / `paid_run`  
-
-Live tracks: set World / Whitechain / Arkiv keys in `.env`. Leave mock flags **off** in production.
-
-## SDK
-
-```bash
-npm install @bagseven/sdk
-```
-
-### 1. Provider (human app)
-
-```tsx
-import { BagsevenProvider, FeatureFlagGuard, BagsevenEmbed } from '@bagseven/sdk/react';
-
-<BagsevenProvider publishableKey={pk}>
-  <FeatureFlagGuard feature="ocr"><OcrButton /></FeatureFlagGuard>
-  <BagsevenEmbed accessToken={token} initialView="portal" />
-</BagsevenProvider>
-```
-
-`pk_` can identify and check. It cannot consume or mint. Copy-paste this from `/app/sdk`.
-
-### 2. identify → embed token
-
-```ts
-import { BagsevenClient } from '@bagseven/sdk/node';
-const client = new BagsevenClient({ apiKey: process.env.BAGSEVEN_SECRET_KEY!, baseUrl: 'http://127.0.0.1:4001' });
-const { token } = await client.identify({ holder: 'user@example.com' });
-```
-
-Holder-scoped JWT (`bgs_tok_…`, ~15 min). Drop it in `BagsevenEmbed` or `/embed?token=`.
-
-### 3. Server `checkEntitlement` (authoritative)
-
-```ts
-const ent = await client.checkEntitlement('ocr', { holder: 'user@example.com' });
-// { enabled, remaining, allocation, paid_through, arkiv_entity_key, payment_tx }
-await client.consumeEntitlement({ feature: 'ocr', holder: 'user@example.com', idempotencyKey: 'run-1' });
-```
-
-React is UI gating. Authoritative checks always go through Node / daemon.
-
-### 4. MCP (agent)
-
-Same verbs: `check_entitlement` / `consume_entitlement` / `create_checkout_session`. Secret consume and `paid_run` consume prepaid credits without a mandate; new payments through `bagseven_fetch` require mandate remaining ∧ living grant. Agents never hold World credentials.
-
-### Plans + checkout
-
-```ts
-await client.createPlan({ feature: 'ocr', name: 'OCR Starter', amount: '5.00', credits: '10', merchant_wallet: '0x…' });
-await client.createCheckoutSession({ plan_id, holder });
-// Buyer: BagsevenEmbed checkoutSessionId=… or /checkout?session=
-```
-
-Public routes also include `POST/GET /v1/plans`, `POST /v1/checkout-sessions`, `GET|POST /v1/public/checkout/:id`. No payment-link product line.
-
-Demo (daemon running): `pnpm sdk:demo` — plan → checkout confirm → human Guard → agent consume → grant evaporates.
-
-## MCP tools
-
-`bagseven_status`, `grant_status`, `check_entitlement`, `consume_entitlement`, `mint_with_world`, `buy_credits`, `create_checkout_session`, `paid_run`, `cancel_renewal`, `explain_denial`, `bagseven_fetch`
-
-```bash
-BAGSEVEN_MCP_WORKER=<uuid> BAGSEVEN_MCP_PORT=4009 pnpm mcp:local
-```
-
-**ChatGPT / remote:** expose `:4009` over HTTPS (`BAGSEVEN_MCP_PUBLIC_URL`), set `MCP_OAUTH_REQUIRED=true`. World consent runs on Bagseven’s authorize page; ChatGPT stores a Bagseven access token. Plugin Server URL is typically `https://…/mcp`. Durable notes: [`../AGENTS.md`](../AGENTS.md).
-
-## Design
-
-[design.md](./design.md) — Fianto tokens (`#0002f8`, landing dark, dashboard `#f2f2f2`). Landing and dashboard stay separate.
-
-## Tests / smoke
-
-```bash
-pnpm smoke
-pnpm test
-pnpm lint
-pnpm typecheck
-pnpm build
-pnpm --filter @bagseven/console typecheck
-pnpm --filter @bagseven/daemon typecheck
-```
-
-SDK loop against a running daemon: `pnpm sdk:demo`.
-
-`pnpm smoke` is read-only: service health and authenticated daemon track status. It creates no grants, consumes no credits, sends no mail and makes no payments. `pnpm test` builds the workspace libraries and runs the complete unit/integration test collection without starting services or building the Next.js sites. `pnpm lint` checks source directly; production builds remain a separate `pnpm build` step. `pnpm mcp:local` parses quoted `.env` values and starts MCP directly through Node; the local launcher checks its dedicated port and stops only an older instance from the same checkout.
-
-For full HTTP and MCP checks, use a disposable local development checkout/environment with memory grants, mocked World, no live signing/storage credentials, and local Anvil. Run `NOTIFY_MODE=log pnpm start:local`, then `NOTIFY_MODE=log pnpm smoke:e2e` in another terminal. The check refuses public endpoints and live credentials. It checks landing/docs, World-primary login and recovery, dashboard routes/BFF scope, SDK checks and idempotent prepaid consumption, MCP checkout confirmation, entitlement-only agents, renewal cancellation, expiry, and a bounded local token payment. Prepaid access does not require a mandate; new payments do. `NOTIFY_MODE=log` suppresses email delivery. Browser interaction/visual QA is separate from these HTTP checks. Do not overwrite an existing live `.env` to run this fixture.
-
-### MCP mandate and agent tools
-
-The MCP catalog includes owner-scoped `list_mandates`, `get_mandate`, `list_agents`, `get_agent`, owner-signed `prepare_mandate` / `create_mandate`, `prepare_mandate_funding`, and `list_agent_entitlements`. Use `list_features` and `list_plans` to choose a capability and provider plan, then `create_checkout_session` with the intended `worker_id` for a root or child. Checkout returns the existing hosted wallet URL; payment creates the worker-bound Arkiv grant. `mint_with_world` and `buy_credits` now guide callers to provider checkout rather than asking agents for World credentials or producing unpaid grants.
-
-`bagseven_spawn` defaults to the bound root and mandate. A configured signer must match the actual owner/operator, or an owner signature must be supplied. Direct payments accept `idempotency_key`; reuse the same inputs and key for retries. Uncertain attempted payments remain held for reconciliation.
-
-See [the real MCP verification](testing/mcp-agents-mandates-live-2026-11-07.md) for scope, evidence and operational limits.
-
-## Agent skills
-
-`skills/bagseven/` teaches connected agents the live MCP workflows: entitlement discovery, prepaid usage, provider checkout, new payments, owner-signed mandates and denials. `skills/bagseven-development/` teaches developers the SDK, service boundaries, verification and Railway/Vercel deployment. Both use standard `SKILL.md` frontmatter, self-contained references and optional Codex UI metadata. A skill does not connect MCP, issue credentials or publish the private SDK package.
-
-Install from a checkout:
-
-```bash
-npx skills add . --list
-npx skills add . --skill bagseven bagseven-development --agent codex --global
-```
-
-Choose another supported agent or omit `--agent` for the installer's selection. For a project-local installation, omit `--global`. Invoke `$bagseven` or `$bagseven-development` in Codex after its skill catalog refreshes; other agents use their own skill invocation UI. To refresh a local-source install after changing the skill, rerun the local install command.
-
-### Distribute through GitHub and skills.sh
-
-Keep each skill in its own `skills/<name>/SKILL.md` folder. Supporting files must stay inside that skill folder so installation works outside this monorepo. Do not include `.env`, `.env.prod`, tokens, test receipts with personal data or local filesystem paths. The supplied skills contain public instructions only.
-
-Commit and push the reviewed skill folders and their documentation to the intended GitHub branch. There is no separate npm package release for these instruction files. Once the skills are on the remote repository, users can inspect and install them with:
-
-```bash
-npx skills add nishar-hussain/bageseven --list
-npx skills add nishar-hussain/bageseven --skill bagseven bagseven-development
-# Optional global Codex install:
-npx skills add nishar-hussain/bageseven --skill bagseven bagseven-development --agent codex --global
-```
-
-Public discovery requires an accessible public source; a private repository installation requires the installer's GitHub access. Do not change repository visibility merely to list a skill. If only the skills should be public, copy the two self-contained skill folders into a separate public repository and substitute that owner/repository in the command.
-
-According to the [skills.sh FAQ](https://skills.sh/docs/faq), skills are tracked and appear on the leaderboard through CLI installation telemetry; there is no separate leaderboard submission command. A local install or discovery check does not prove that a remote listing is published. The [CLI documentation](https://skills.sh/docs/cli) describes telemetry; `DISABLE_TELEMETRY=1` opts out. Do not generate artificial installs to influence rankings.
-
-For later GitHub-sourced updates, users can run `npx skills update`. Skill distribution is separate from deploying Bagseven, connecting its MCP server or publishing `@bagseven/sdk`.
-
-When editing skills, validate their frontmatter and links, check examples against current MCP schemas/SDK exports, and rerun local discovery. Read-only checks, prepaid consumption, new payments, worker mismatch, cancelled renewal, pending checkout and restart recovery should remain distinct workflows.
+`pnpm mcp:tunnel` starts or reuses a local ngrok HTTPS tunnel, persists the active public origin, and starts MCP with a matching OAuth issuer. OAuth stays required. Use a current ngrok agent. Free ephemeral ngrok hostnames can change; keep the process running during a demo and use managed HTTPS hosting for production. The portable plugin generator `node scripts/package-mcp-plugin.mjs` uses the repository's logo and skill, excludes credentials, and verifies remote OAuth discovery. A verified native ChatGPT App ID in the private plugin state enables web-chat support; otherwise the package connects remote MCP in supporting desktop clients. Preserve installed plugin identity when updating a package, and leave old user connections intact unless removal is explicitly requested.

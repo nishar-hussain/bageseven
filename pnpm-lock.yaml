@@ -20,9 +20,6 @@ importers:
       '@bagseven/server':
         specifier: workspace:*
         version: link:packages/server
-      '@bagseven/world':
-        specifier: workspace:*
-        version: link:packages/world
       '@eslint/js':
         specifier: ^10.0.1
         version: 10.0.1(eslint@10.10.0(jiti@2.7.0))
@@ -83,15 +80,15 @@ importers:
 
   apps/console:
     dependencies:
+      '@bagseven/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@bagseven/notify':
         specifier: workspace:*
         version: link:../../packages/notify
       '@bagseven/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
-      '@bagseven/world':
-        specifier: workspace:*
-        version: link:../../packages/world
       '@rainbow-me/rainbowkit':
         specifier: ^2.2.11
         version: 2.2.11(@tanstack/react-query@5.107.0(@types/react@19.3.0)(react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(typescript@5.9.3)(viem@2.56.8(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.6.5))(wagmi@2.19.5(@tanstack/query-core@5.107.0)(@tanstack/react-query@5.107.0(@types/react@19.3.0)(react@19.3.0))(@types/react@19.3.0)(@x402/core@2.30.0)(@x402/evm@2.30.0(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10))(@x402/svm@2.30.0(@solana/kit@8.6.0(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10))(@solana/sysvars@8.6.0(typescript@5.9.3))(typescript@5.9.3))(bufferutil@4.1.0)(react@19.3.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(viem@2.56.8(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.6.5))(zod@4.6.5))
@@ -101,12 +98,6 @@ importers:
       '@tanstack/react-query':
         specifier: ^5.107.0
         version: 5.107.0(@types/react@19.3.0)(react@19.3.0)
-      '@worldcoin/idkit':
-        specifier: ^4.6.0
-        version: 4.6.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
-      '@worldcoin/idkit-core':
-        specifier: ^4.6.0
-        version: 4.6.0
       '@x402/core':
         specifier: 2.30.0
         version: 2.30.0
@@ -246,12 +237,18 @@ importers:
 
   packages/entitlements:
     dependencies:
-      '@arkiv-network/sdk':
-        specifier: ^1.0.1
-        version: 1.0.1(typescript@5.9.3)(viem@2.56.8(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.6.5))
+      '@bagseven/db':
+        specifier: workspace:*
+        version: link:../db
       '@bagseven/money':
         specifier: workspace:*
         version: link:../money
+      '@bagseven/onchain':
+        specifier: workspace:*
+        version: link:../onchain
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(@types/pg@8.23.1)(pg@8.23.0)
       viem:
         specifier: ^2.56.8
         version: 2.56.8(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.6.5)
@@ -288,9 +285,15 @@ importers:
       '@types/react':
         specifier: ^19.3.0
         version: 19.3.0
+      '@types/react-test-renderer':
+        specifier: ^19.3.1
+        version: 19.3.1
       react:
         specifier: ^19.3.0
         version: 19.3.0
+      react-test-renderer:
+        specifier: 19.3.0
+        version: 19.3.0(react@19.3.0)
 
   packages/server:
     dependencies:
@@ -306,18 +309,6 @@ importers:
       ioredis:
         specifier: ^6.0.0
         version: 6.0.0
-      zod:
-        specifier: ^4.6.5
-        version: 4.6.5
-
-  packages/world:
-    dependencies:
-      '@worldcoin/idkit-core':
-        specifier: ^4.6.0
-        version: 4.6.0
-      viem:
-        specifier: ^2.56.8
-        version: 2.56.8(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.6.5)
       zod:
         specifier: ^4.6.5
         version: 4.6.5
@@ -342,9 +333,6 @@ importers:
       '@bagseven/server':
         specifier: workspace:*
         version: link:../../packages/server
-      '@bagseven/world':
-        specifier: workspace:*
-        version: link:../../packages/world
       '@x402/core':
         specifier: 2.28.0
         version: 2.28.0
@@ -420,16 +408,6 @@ packages:
   '@alloc/quick-lru@5.3.0':
     resolution: {integrity: sha512-U4+70Pc5ZS9osnCBCE5Jha/ciHM+Yp+CNMNC/7HvYbNRk1Ldd+f7qO65W5qfhu/TCv+/ozljlXXe9Nj8419DMA==}
     engines: {node: '>=10'}
-
-  '@arkiv-network/sdk@1.0.1':
-    resolution: {integrity: sha512-DCOFdGunn4I5nYrvIV/YIkMCkLZM7EQNSyNPtqpmQkP2JzTEfRLBJleBSB2rokWMa833/9P8DMiwsEXACr3CUQ==}
-    engines: {node: '>=18.0.0'}
-    peerDependencies:
-      typescript: '>=5.0.0'
-      viem: ^2.0.0
-    peerDependenciesMeta:
-      typescript:
-        optional: true
 
   '@babel/code-frame@7.29.7':
     resolution: {integrity: sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw==}
@@ -1732,9 +1710,6 @@ packages:
     resolution: {integrity: sha512-jCs9ldd7NwzpgXDIf6P3+NrHh9/sD6CQdxHyjQI+h/6rDNo88ypBxxz45UDuZHz9r3tNz7N/VInSVoVdtXEI4A==}
     engines: {node: ^14.21.3 || >=16}
 
-  '@noble/secp256k1@2.3.0':
-    resolution: {integrity: sha512-0TQed2gcBbIrh7Ccyw+y/uZQvbJwm7Ao4scBUxqpBCcsOlZG0O4KGfjtNAy/li4W8n1xt3dxrwJ0beZ2h2G6Kw==}
-
   '@oxc-project/types@0.150.0':
     resolution: {integrity: sha512-rDS5/31E9HfPl/CIzGrn0DOlvBbXFseQ5URJ9sYMfstbKLD/c6Gm9vmRzRGDdAXyOIL4zmO37lc9RIwYqVruZw==}
 
@@ -2520,9 +2495,6 @@ packages:
       typescript:
         optional: true
 
-  '@stablelib/utf8@1.0.2':
-    resolution: {integrity: sha512-sDL1aB2U8FIpj7SjQJMxbOFIFkKvDKQGPHSrYejHZhtLNSK3qHe6ZIfa0woWkOiaJsdYslFzrc0VWXJZHmSIQQ==}
-
   '@swc/helpers@0.5.15':
     resolution: {integrity: sha512-JQ5TuMi45Owi4/BIMAJBoSQoOJu12oOk/gADqlcUL9JEdHB8vyjUSsxqeNXnmXHjYKMi2WcYtezGEEhqUI/E2g==}
 
@@ -2743,6 +2715,9 @@ packages:
     peerDependencies:
       '@types/react': ^19.3.0
 
+  '@types/react-test-renderer@19.3.1':
+    resolution: {integrity: sha512-9AwMfeBOcXsN5kC4oAauNTOKEwqLHtc69tkJC2CihQ5fCELDwzfQvookvtyaxm6i+vc5LLD0V5OLB8arzY8Smw==}
+
   '@types/react@19.3.0':
     resolution: {integrity: sha512-N0rFCuH9YoxG9/m61l9MfpJKfmLOVU0em7ipIz6TRgSSkvReLB9vL85GB+yr8Bs5leqpvg96JSwF4ZS1s4viQg==}
 
@@ -2962,30 +2937,6 @@ packages:
 
   '@walletconnect/window-metadata@1.0.1':
     resolution: {integrity: sha512-9koTqyGrM2cqFRW517BPY/iEtUDx2r1+Pwwu5m7sJ7ka79wi3EyqhqcICk/yDmv6jAS1rjKgTKXlEhanYjijcA==}
-
-  '@worldcoin/idkit-core@4.6.0':
-    resolution: {integrity: sha512-d5JwqXPMWZvIp7ksC5+pt58Vuu9nognsHml603HDYaSBn6p7lPcBVksscSTlN2Saa/QMxXiQUrbpjVJIrb+n1g==}
-    peerDependencies:
-      expo-crypto: ^57.0.3
-    peerDependenciesMeta:
-      expo-crypto:
-        optional: true
-
-  '@worldcoin/idkit-server@1.2.0':
-    resolution: {integrity: sha512-CvaiX5idPbPsETBkbbD1cwueM2WJn2CNQ3vMZbFf7LKbJP+IKmvbxW3pubG5OThRKuciqEAHocxnuGLRYI9WuQ==}
-    engines: {node: '>=18'}
-
-  '@worldcoin/idkit@4.6.0':
-    resolution: {integrity: sha512-pDS3+V/z9rAzuT6flUjZMUZBWQXEJBleM1YDyj0mBJwPsWJ0EJDwrCNxFKKGQqCowdTdq+va/Zb0hIrnCMj/PQ==}
-    peerDependencies:
-      expo-crypto: ^57.0.3
-      react: '>=18'
-      react-dom: '>=18'
-    peerDependenciesMeta:
-      expo-crypto:
-        optional: true
-      react-dom:
-        optional: true
 
   '@x402/core@2.28.0':
     resolution: {integrity: sha512-Da/7zKxCKqpBoB4Msc9tFgkAv7tJTD8nG+DSSm+QdXAyJS4PQsmgVSKe17rDJTtlu0pwNbLcOje6MyQ6kaDkig==}
@@ -5008,6 +4959,9 @@ packages:
     peerDependencies:
       react: ^19.3.0
 
+  react-is@19.3.1:
+    resolution: {integrity: sha512-RRieF6IyxQBkcK6pP8xOHprLTPW6QjRkbGdImtqNme+/hYVwCZkLQLdlZGOhUqXwkS9IEynaGvPJtv6XB/cz0Q==}
+
   react-promise-suspense@0.3.4:
     resolution: {integrity: sha512-I42jl7L3Ze6kZaq+7zXWSunBa3b1on5yfvUW6Eo/3fFOj6dZ5Bqmcd264nJbTK/gn1HjjILAjSwnZbV4RpSaNQ==}
 
@@ -5044,6 +4998,11 @@ packages:
     peerDependenciesMeta:
       '@types/react':
         optional: true
+
+  react-test-renderer@19.3.0:
+    resolution: {integrity: sha512-AUxgv+hRbqjRgx4xVwiWL6cvDDKPAva1VWLXQIMoevqQn9us//C5TX9LEnBGH47D0zvJpjwjxb1umzgOMvE8Wg==}
+    peerDependencies:
+      react: ^19.3.0
 
   react@19.3.0:
     resolution: {integrity: sha512-E8LUcbtBWt20bbl2YoHfx4ZDBdxVTfOKtCZn9cDSJ4l6/nuoApcpIBcj47t2wZoVX8g2ZHuMHbiShgCR1T5Sog==}
@@ -5407,10 +5366,6 @@ packages:
 
   tr46@0.0.3:
     resolution: {integrity: sha512-N3WMsuqV66lT30CrXNbEjx4GEwlow3v6rr4mCcv6prnfwhS01rkgyFdjPNBYd9br7LpXV1+Emh01fHnq2Gdgrw==}
-
-  tr46@5.1.1:
-    resolution: {integrity: sha512-hdF5ZgjTqgAntKkklYw0R03MG2x/bSzTtkxmIRw/sTNV8YXsCJ1tfLAX23lhxhHJlEf3CRCOCGGWw3vI3GaSPw==}
-    engines: {node: '>=18'}
 
   ts-api-utils@2.5.0:
     resolution: {integrity: sha512-OJ/ibxhPlqrMM0UiNHJ/0CKQkoKF243/AEmplt3qpRgkW8VG7IfOS41h7V8TjITqdByHzrjcS/2si+y4lIh8NA==}
@@ -5793,14 +5748,6 @@ packages:
   webidl-conversions@3.0.1:
     resolution: {integrity: sha512-2JAn3z8AR6rjK8Sm8orRC0h/bcl/DqL7tRPdGZ4I1CjdF+EaMLmYxBHyXuKL849eucPFhvBoxMsflfOb8kxaeQ==}
 
-  webidl-conversions@7.0.0:
-    resolution: {integrity: sha512-VwddBukDzu71offAQR975unBIGqfKZpM+8ZX6ySk8nYhVoo5CYaZyzt3YBvYtRtO+aoGlqxPg/B87NGVZ/fu6g==}
-    engines: {node: '>=12'}
-
-  whatwg-url@14.2.0:
-    resolution: {integrity: sha512-De72GdQZzNTUBBChsXueQUnPKDkg/5A5zp7pFDuQAj5UFoENpiACU0wlCvzpAGnTkj++ihpKwKyYewn/XNUbKw==}
-    engines: {node: '>=18'}
-
   whatwg-url@5.0.0:
     resolution: {integrity: sha512-saE57nupxk6v3HY35+jzBwYa0rKSy0XR8JSxZPwgLr7ys0IBzhGviA1/TUGJLmSVqs8pb9AnvICXEuOHLprYTw==}
 
@@ -5988,12 +5935,6 @@ snapshots:
   '@adraffy/ens-normalize@1.11.1': {}
 
   '@alloc/quick-lru@5.3.0': {}
-
-  '@arkiv-network/sdk@1.0.1(typescript@5.9.3)(viem@2.56.8(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.6.5))':
-    dependencies:
-      viem: 2.56.8(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.6.5)
-    optionalDependencies:
-      typescript: 5.9.3
 
   '@babel/code-frame@7.29.7':
     dependencies:
@@ -7110,8 +7051,6 @@ snapshots:
 
   '@noble/hashes@1.8.0': {}
 
-  '@noble/secp256k1@2.3.0': {}
-
   '@oxc-project/types@0.150.0': {}
 
   '@paulmillr/qr@0.2.1': {}
@@ -8148,8 +8087,6 @@ snapshots:
     transitivePeerDependencies:
       - fastestsmallesttextencoderdecoder
 
-  '@stablelib/utf8@1.0.2': {}
-
   '@swc/helpers@0.5.15':
     dependencies:
       tslib: 2.8.1
@@ -8347,6 +8284,10 @@ snapshots:
   '@types/range-parser@1.2.7': {}
 
   '@types/react-dom@19.3.0(@types/react@19.3.0)':
+    dependencies:
+      '@types/react': 19.3.0
+
+  '@types/react-test-renderer@19.3.1':
     dependencies:
       '@types/react': 19.3.0
 
@@ -9114,28 +9055,6 @@ snapshots:
     dependencies:
       '@walletconnect/window-getters': 1.0.1
       tslib: 1.14.1
-
-  '@worldcoin/idkit-core@4.6.0':
-    dependencies:
-      '@noble/ciphers': 1.3.0
-      '@noble/hashes': 1.8.0
-      '@scure/base': 1.2.6
-      '@stablelib/utf8': 1.0.2
-      '@worldcoin/idkit-server': 1.2.0
-      whatwg-url: 14.2.0
-
-  '@worldcoin/idkit-server@1.2.0':
-    dependencies:
-      '@noble/hashes': 1.8.0
-      '@noble/secp256k1': 2.3.0
-
-  '@worldcoin/idkit@4.6.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
-    dependencies:
-      '@worldcoin/idkit-core': 4.6.0
-      qrcode: 1.5.4
-      react: 19.3.0
-    optionalDependencies:
-      react-dom: 19.3.0(react@19.3.0)
 
   '@x402/core@2.28.0':
     dependencies:
@@ -11182,6 +11101,8 @@ snapshots:
       react: 19.3.0
       scheduler: 0.28.0
 
+  react-is@19.3.1: {}
+
   react-promise-suspense@0.3.4:
     dependencies:
       fast-deep-equal: 2.0.1
@@ -11214,6 +11135,12 @@ snapshots:
       tslib: 2.8.1
     optionalDependencies:
       '@types/react': 19.3.0
+
+  react-test-renderer@19.3.0(react@19.3.0):
+    dependencies:
+      react: 19.3.0
+      react-is: 19.3.1
+      scheduler: 0.28.0
 
   react@19.3.0: {}
 
@@ -11678,10 +11605,6 @@ snapshots:
 
   tr46@0.0.3: {}
 
-  tr46@5.1.1:
-    dependencies:
-      punycode: 2.3.1
-
   ts-api-utils@2.5.0(typescript@5.9.3):
     dependencies:
       typescript: 5.9.3
@@ -12033,13 +11956,6 @@ snapshots:
   webextension-polyfill@0.10.0: {}
 
   webidl-conversions@3.0.1: {}
-
-  webidl-conversions@7.0.0: {}
-
-  whatwg-url@14.2.0:
-    dependencies:
-      tr46: 5.1.1
-      webidl-conversions: 7.0.0
 
   whatwg-url@5.0.0:
     dependencies:

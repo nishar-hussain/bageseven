@@ -48,9 +48,6 @@ async function proxy(req: FastifyRequest, reply: FastifyReply, cfg: NodeJS.Proce
   // Never forward browser actor headers as authoritative to policy from the open internet —
   // only the authenticated console BFF should set these after session checks.
   if (typeof req.headers['x-bagseven-actor'] === 'string') headers['x-bagseven-actor'] = req.headers['x-bagseven-actor'];
-  if (typeof req.headers['x-bagseven-world-human'] === 'string') {
-    headers['x-bagseven-world-human'] = req.headers['x-bagseven-world-human'];
-  }
   for (const name of ['x-bagseven-provider', 'x-bagseven-provider-scope']) {
     if (typeof req.headers[name] === 'string') headers[name] = req.headers[name];
   }

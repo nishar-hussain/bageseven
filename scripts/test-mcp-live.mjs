@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Real local MCP stdio clients -> running daemon/policy -> public Whitechain and Arkiv.
-// Public HTTP OAuth is verified separately; no World proofs or payment receipts are mocked.
+// Real local MCP stdio clients -> running daemon/policy -> public Avalanche and Registry.
+// Public HTTP OAuth is verified separately; no account credentials or payment receipts are mocked.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, existsSync, appendFileSync } from 'node:fs';
 import { parseEnv } from 'node:util';
@@ -8,19 +8,19 @@ import { createPublicClient, createWalletClient, http, parseAbi, parseEther, par
 import { privateKeyToAccount } from 'viem/accounts';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { MandateClient, whitechainConfig } from '@bagseven/onchain';
-import { ArkivGrantStore } from '@bagseven/entitlements';
+import { MandateClient, avalancheConfig } from '@bagseven/onchain';
+import { RegistryGrantStore } from '@bagseven/entitlements';
 const e = parseEnv(readFileSync('.env', 'utf8'));
-assert.equal(e.WHITECHAIN_DEMO_SETTLE, 'false'); assert.equal(e.WORLD_MOCK_PROOFS, 'false'); assert.equal(e.ENTITLEMENT_STORE, 'arkiv');
-const rail = whitechainConfig(e); assert.equal(rail.chainId, 1874);
-const payer = privateKeyToAccount(e.WHITECHAIN_PRIVATE_KEY), executor = privateKeyToAccount(e.DAEMON_EXECUTOR_KEY);
+assert.equal(e.AVALANCHE_DEMO_SETTLE, 'false'); assert.equal(e.ENTITLEMENT_STORE, 'avalanche');
+const rail = avalancheConfig(e); assert.equal(rail.chainId, 43113);
+const payer = privateKeyToAccount(e.AVALANCHE_PRIVATE_KEY), executor = privateKeyToAccount(e.DAEMON_EXECUTOR_KEY);
 const rpc = createPublicClient({ chain: rail.chain, transport: http(rail.rpcUrl) });
 const wallet = createWalletClient({ account: payer, chain: rail.chain, transport: http(rail.rpcUrl) });
 const tokenAbi = parseAbi(['function balanceOf(address) view returns(uint256)', 'function transfer(address,uint256) returns(bool)']);
 const balance = address => rpc.readContract({ address: rail.usdt, abi: tokenAbi, functionName: 'balanceOf', args: [address] });
 const report = 'docs/testing/mcp-agents-mandates-live-2026-11-07.json';
-const priorRun = JSON.parse(readFileSync('docs/testing/whitechain-public-payment-2026-11-07.json', 'utf8'));
-const state = existsSync(report) ? JSON.parse(readFileSync(report, 'utf8')) : { scope: 'Real trusted local MCP clients, PostgreSQL, public Whitechain 1874 and live Arkiv; OAuth tested separately', checks: [], provider: '0x2E9302Da9c2925b2b4e22C47E3c26C46220C46CC', root_worker: e.BAGSEVEN_MCP_WORKER, token: rail.usdt };
+const priorRun = JSON.parse(readFileSync('docs/testing/avalanche-public-payment-2026-11-07.json', 'utf8'));
+const state = existsSync(report) ? JSON.parse(readFileSync(report, 'utf8')) : { scope: 'Real trusted local MCP clients, PostgreSQL, public Avalanche 43113 and live Registry; OAuth tested separately', checks: [], provider: '0x2E9302Da9c2925b2b4e22C47E3c26C46220C46CC', root_worker: e.BAGSEVEN_MCP_WORKER, token: rail.usdt };
 const save = () => writeFileSync(report, JSON.stringify(state, null, 2) + '\n');
 const pass = name => { if (!state.checks.includes(name)) state.checks.push(name); save(); console.log('PASS', name); };
 const wait = async hash => { const receipt = await rpc.waitForTransactionReceipt({ hash, confirmations: 2, timeout: 120000 }); assert.equal(receipt.status, 'success'); return receipt; };
@@ -57,7 +57,7 @@ try {
   const signature = await payer.signMessage({ message: prepared.message });
   state.created_mandate = await root.call('create_mandate', { ...terms, signature }); save();
  }
- pass('MCP prepared owner approval and deployed a real signed Whitechain mandate with its root agent');
+ pass('MCP prepared owner approval and deployed a real signed Avalanche mandate with its root agent');
  if (!state.fund_tx) {
   const prepared = await root.call('prepare_mandate_funding', { mandate_id: state.created_mandate.mandate_id, amount: '0.01' });
   assert.equal(prepared.requires_wallet_approval, true); assert.equal(prepared.transaction.to.toLowerCase(), rail.usdt.toLowerCase());
@@ -80,7 +80,7 @@ try {
   if (!record.payment_tx) { record.payment_tx = await wallet.writeContract({ address: rail.usdt, abi: tokenAbi, functionName: 'transfer', args: [state.provider, 50000n] }); save(); }
   await wait(record.payment_tx);
   if (!record.grant) {
-   const context = `Bagseven payment confirmation\nContext: checkout:${record.checkout.id}\nChain: 1874\nTransaction: ${record.payment_tx.toLowerCase()}`;
+   const context = `Bagseven payment confirmation\nContext: checkout:${record.checkout.id}\nChain: 43113\nTransaction: ${record.payment_tx.toLowerCase()}`;
    const paid = await api(`/v1/public/checkout/${record.checkout.id}/confirm`, { payment_tx: record.payment_tx, customer_wallet: payer.address, payment_signature: await payer.signMessage({ message: context }) });
    assert.equal(paid.verification, 'verified'); assert.equal(paid.grant.worker_id, worker); record.grant = paid.grant; save();
   }
@@ -90,7 +90,7 @@ try {
  }
  const rootAccess = await purchase('root_access', state.root_worker);
  const childAccess = await purchase('child_access', state.child.agent_id);
- pass('Real provider checkouts minted separate live Arkiv grants for root and child with exact 0.1% fees');
+ pass('Real provider checkouts minted separate live Registry grants for root and child with exact 0.1% fees');
  assert.equal((await root.call('check_entitlement', { feature: 'research_fetch' })).enabled, true);
  assert.ok((await root.call('list_agent_entitlements')).grants.every(g => g.worker_id === state.root_worker));
  child = await connect(state.child.agent_id);
@@ -112,19 +112,19 @@ try {
  if (!state.child_spend) { state.child_spend = await child.call('bagseven_fetch', childArgs); save(); }
  assert.equal(state.child_spend.decision, 'allow'); assert.ok(state.child_spend.tx_hash);
  pass('A separately bound child MCP client spent real USDT within its on-chain allocation');
- const childGrantBefore = await ArkivGrantStore.fromEnv(e).get(childAccess.grant.id);
+ const childGrantBefore = await RegistryGrantStore.fromEnv(e).get(childAccess.grant.id);
  const beforeDenied = await balance(status.mandate.contract_address);
  await child.denied('bagseven_fetch', { amount: '0.002', recipient: state.provider, idempotency_key: 'mcp-live-deny-child-cap' });
  await root.denied('bagseven_fetch', { amount: '0.20', recipient: state.provider, idempotency_key: 'mcp-live-deny-root-cap' });
  await root.denied('paid_run', { grant_id: childAccess.grant.id, amount: '0.0001' });
  assert.equal(await balance(status.mandate.contract_address), beforeDenied);
- assert.equal((await ArkivGrantStore.fromEnv(e).get(childAccess.grant.id)).remaining, childGrantBefore.remaining);
+ assert.equal((await RegistryGrantStore.fromEnv(e).get(childAccess.grant.id)).remaining, childGrantBefore.remaining);
  pass('Overspending and cross-agent entitlement use were denied without moving funds or burning credits');
  await root.call('cancel_renewal', { grant_id: rootAccess.grant.id });
  assert.equal((await root.call('check_entitlement', { feature: 'research_fetch' })).enabled, true);
- const fresh = await ArkivGrantStore.fromEnv(e).get(rootAccess.grant.id); assert.equal(fresh.renewal_enabled, false); assert.equal(fresh.remaining, '2');
- pass('Cancellation disabled renewal while preserving paid-through access; independent Arkiv reads confirm usage');
- const ownerClient = new MandateClient(e.WHITECHAIN_PRIVATE_KEY, { rpcUrl: rail.rpcUrl, chainId: 1874 });
+ const fresh = await RegistryGrantStore.fromEnv(e).get(rootAccess.grant.id); assert.equal(fresh.renewal_enabled, false); assert.equal(fresh.remaining, '2');
+ pass('Cancellation disabled renewal while preserving paid-through access; independent Registry reads confirm usage');
+ const ownerClient = new MandateClient(e.AVALANCHE_PRIVATE_KEY, { rpcUrl: rail.rpcUrl, chainId: 43113 });
  if (!state.revoke_tx) { state.revoke_tx = await ownerClient.revoke(state.created_mandate.contract_address); save(); }
  await wait(state.revoke_tx);
  const revoked = await root.call('get_mandate', { mandate_id: state.created_mandate.mandate_id });

@@ -13,7 +13,9 @@ const db = createDb({ connectionString: process.env.DATABASE_URL });
 const results = [];
 function proof() {
   const payload = Buffer.from(JSON.stringify({ provider, expires: Date.now() + 60000 })).toString('base64url');
-  return `${payload}.${createHmac('sha256', process.env.PROVIDER_GAS_ENCRYPTION_KEY).update(`bagseven-provider-scope-v1:${payload}`).digest('base64url')}`;
+  const secret = process.env.PROVIDER_SCOPE_SIGNING_KEY || (process.env.NODE_ENV !== 'production' ? process.env.PROVIDER_GAS_ENCRYPTION_KEY : undefined);
+  if (!secret) throw Error('Provider scope signing key required');
+  return `${payload}.${createHmac('sha256', secret).update(`bagseven-provider-scope-v1:${payload}`).digest('base64url')}`;
 }
 async function request(path, { body, scoped = true, gateway = false } = {}) {
   const response = await fetch(`http://localhost:${gateway ? 4000 : 4001}${path}`, { method: body ? 'POST' : 'GET',
@@ -29,7 +31,7 @@ function check(name, actual, expected) {
 try {
   check('Service bearer alone cannot impersonate a provider', (await request('/internal/provider-gas', { scoped: false })).status, 403);
   check('Fresh provider has no gas account', (await request('/internal/provider-gas')).body.configured, false);
-  const prepare = await request('/internal/provider-gas/prepare', { body: { owner: owner.address, whitechainBudget: '0.05', arkivBudget: '0.05', whitechainTxLimit: '0.02', arkivTxLimit: '0.01', expires: Date.now() + 3600000 } });
+  const prepare = await request('/internal/provider-gas/prepare', { body: { owner: owner.address, avalancheBudget: '0.05', registryBudget: '0.05', avalancheTxLimit: '0.02', registryTxLimit: '0.01', expires: Date.now() + 3600000 } });
   check('Prepare account and reviewable limits', prepare.status, 200);
   const wrong = await other.signMessage({ message: prepare.body.message });
   check('Other wallet cannot authorize', (await request('/internal/provider-gas/authorize', { body: { signature: wrong } })).status, 403);
@@ -37,16 +39,16 @@ try {
   check('Owner authorizes bounded signing', (await request('/internal/provider-gas/authorize', { body: { signature } })).status, 200);
   check('Authorization nonce cannot be replayed', (await request('/internal/provider-gas/authorize', { body: { signature } })).status, 409);
   const status = await request('/internal/provider-gas');
-  check('Account remains unfunded on Whitechain', status.body.balances.whitechain, '0');
-  check('Account remains unfunded on Arkiv', status.body.balances.arkiv, '0');
+  check('Account remains unfunded on Avalanche', status.body.balances.avalanche, '0');
+  check('Account remains unfunded on Registry', status.body.balances.registry, '0');
   check('Status never returns an encrypted or private signing key', JSON.stringify(status.body).includes('encryptedKey'), false);
   const plan = await request('/v1/plans', { body: { feature: 'ocr', name: 'Unfunded provider regression', amount: '0.01', credits: '1', ttl_seconds: 120, merchant_wallet: owner.address } });
   check('Provider can prepare a plan without charging gas', plan.status, 200);
   const checkout = await request('/v1/checkout-sessions', { body: { plan_id: plan.body.plan.id, holder: 'gas-test-customer' } });
   check('Checkout blocked before a customer pays an unfunded provider', checkout.body.error.code, 'PROVIDER_GAS_EMPTY');
   check('Revoke delegated signing', (await request('/internal/provider-gas/revoke', { body: {} })).status, 200);
-  const terms = { owner_address: owner.address, operator_address: owner.address, budget_per_window: '1', window_seconds: 86400, lifetime_cap: '10', per_purchase_cap: '0.1', per_seller_pct: 10000, max_depth: 2, chain_id: 1874 };
-  const message = canonicalMandate({ owner: owner.address.toLowerCase(), operator: owner.address.toLowerCase(), budgetPerWindow: '1', windowSeconds: 86400, lifetimeCap: '10', perPurchaseCap: '0.1', perSellerPct: 10000, maxDepth: 2, chainId: 1874 });
+  const terms = { owner_address: owner.address, operator_address: owner.address, budget_per_window: '1', window_seconds: 86400, lifetime_cap: '10', per_purchase_cap: '0.1', per_seller_pct: 10000, max_depth: 2, chain_id: 43113 };
+  const message = canonicalMandate({ owner: owner.address.toLowerCase(), operator: owner.address.toLowerCase(), budgetPerWindow: '1', windowSeconds: 86400, lifetimeCap: '10', perPurchaseCap: '0.1', perSellerPct: 10000, maxDepth: 2, chainId: 43113 });
   const denied = await request('/v1/mandates', { gateway: true, body: { ...terms, signature: await owner.signMessage({ message }) } });
   check('Gateway preserves provider scope; revoked account cannot fall back to platform deployment', denied.body.error.code, 'PROVIDER_GAS_REQUIRED');
   console.log(JSON.stringify({ passed: results.length, checks: results, blockchainTransactionsBroadcast: 0 }, null, 2));

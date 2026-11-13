@@ -1,85 +1,21 @@
-# Bagseven
+# Bagseven on Avalanche
 
-Infrastructure for autonomous agents: a **mandate** (spend ceiling) plus a **living entitlement** (Arkiv grant). Humans mint. Humans and agents check through an SDK. Agents spend through MCP. Settlement is Whitechain. Unique humans via World.
+Paid service access and bounded agent spending on Avalanche C-Chain. Providers sell plans; customers approve stablecoin payments and recurring subscriptions with their wallet. The entitlement registry tracks credits and paid-through times. Applications use the SDK, and assistants use MCP.
 
-The LLM proposes. Deterministic code disposes.
+Sign in with verified email, then link a wallet by signing an expiring ownership message. Email is used for receipts and recovery. Wallet signatures authorize financial actions. These credentials do not establish unique-person identity.
 
-## Two URLs
+## Run
 
-| Surface | URL | What |
-| --- | --- | --- |
-| **Landing** | http://localhost:3001 | Marketing (`apps/landing`) |
-| **Dashboard** | http://localhost:3000/app | Operator app (`apps/console`) |
-| **SDK** | http://localhost:3000/app/sdk | Drop-in React snippet + live embed |
+Use Node 24, pnpm, PostgreSQL and Redis. Install with `pnpm install`, configure `.env` from `.env.example`, apply `pnpm db:migrate`, and build with `pnpm build`. Start existing services with `pnpm start:local`; start MCP with `pnpm mcp:local`.
 
-Sign-in is **World-primary** (`/app/login`, mock locally). Email is optional and verified later via OTP from Account. Magic link remains recovery/invite only.
+Live entitlements require a deployed `BagEntitlementRegistry`, `ENTITLEMENT_STORE=avalanche`, `AVALANCHE_ENTITLEMENT_REGISTRY`, and a persistent `ENTITLEMENT_SUBJECT_SECRET`. Fuji uses chain 43113. Set the exact six-decimal payment token in `AVALANCHE_USDC`; no token address is guessed. Providers must sign a fresh gas authorization and fund the dedicated signer with AVAX. Production never falls back to a platform gas wallet.
 
-## Start
+For public Fuji registry deployment, use `pnpm fuji:registry import`, `plan`, then `deploy` in your own terminal. Foundry prompts for secrets locally and uses an encrypted keystore; never paste keys into chat. See [secure deployment and recovery](docs/HOSTING.md#secure-public-fuji-registry-deployment).
 
-```bash
-pnpm run setup      # .env, postgres/redis/anvil, build, migrate, funded local worker
-pnpm start:local    # landing + dashboard + gateway + policy + daemon
-# pnpm dev is the same command
-```
+## Verify
 
-Use `pnpm run setup` explicitly: `pnpm setup` invokes pnpm's built-in shell configuration command instead of this repository's setup script. `pnpm setup:platform` is also available as an unambiguous alias.
+`pnpm test` builds libraries and runs regressions. `pnpm typecheck` checks the workspace. `node scripts/test-entitlement-registry.mjs` uses an isolated local EVM to verify registry credit accounting, retry safety, holds, expiry, and cancellation. Local tests do not prove public deployment readiness.
 
-If `pnpm` itself errors with a missing global path, your shell shim is broken — use `corepack pnpm` or reinstall: `corepack prepare pnpm@10.33.0 --activate`.
+Read [product semantics](docs/PRODUCT.md), [developer integration](docs/DEVELOPERS.md), and [hosting](docs/HOSTING.md). The existing console is on port 3000, landing on 3001, daemon on 4001, policy on 4003, gateway on 4000, and MCP on 4009.
 
-Then: landing → **Start free** → **Continue with World** (mock locally) → Overview → Mint / Credits / Grants.
-
-Setup creates a funded mandate and saves `BAGSEVEN_MCP_WORKER` in `.env`. World proofs and Whitechain settlement use local mock modes; Arkiv uses memory. The isolated Anvil chain runs on `58545` as Whitechain chain ID `1874`, without real funds.
-
-Verify the full local flow without sending email:
-
-Use a disposable local development `.env` without live signing/storage credentials. The smoke check refuses public RPCs and live credentials; do not replace your live `.env` to run it.
-
-```bash
-NOTIFY_MODE=log pnpm start:local
-# In another terminal:
-NOTIFY_MODE=log pnpm smoke:e2e
-```
-
-For normal development, `pnpm start` / `pnpm start:local` starts or restarts this checkout's five services, `pnpm status:local` shows their ports, and `pnpm stop:local` stops them while keeping Postgres/Redis/Anvil running. `pnpm smoke` performs read-only health checks. Run `pnpm test`, `pnpm lint`, `pnpm typecheck` and `pnpm build` for code checks; unit tests do not require a running stack or a frontend production build.
-
-**What ships + demo + World vs MCP auth:** [docs/PRODUCT.md](./docs/PRODUCT.md)
-
-Docs: [docs/](./docs/README.md) · [docs/DEVELOPERS.md](./docs/DEVELOPERS.md) · [docs/HOSTING.md](./docs/HOSTING.md) · [llms.txt](./llms.txt) · [AGENTS.md](./AGENTS.md)
-
-## Dual-gate
-
-Every paid tool call must pass **both**:
-
-1. Mandate remaining (policy / `SIGNER_MODE=dev`)
-2. Living Arkiv grant (`remaining` + `paid_through`)
-
-Access is a queryable Arkiv object, not a private `/check` flag. Cancel renewal does not kill the period already paid.
-
-## Layout
-
-```
-apps/landing     marketing :3001
-apps/console     dashboard :3000 /app
-services/gateway :4000
-services/daemon  :4001
-services/policy  :4003
-packages/        sdk entitlements world notify db money onchain server
-```
-
-## MCP
-
-```bash
-BAGSEVEN_MCP_WORKER=<uuid> pnpm mcp:local
-```
-
-Tools: `bagseven_status`, `grant_status`, `check_entitlement`, `consume_entitlement`, `mint_with_world`, `buy_credits`, `paid_run`, `cancel_renewal`, `explain_denial`, `bagseven_fetch`.
-
-## Agent skills
-
-The reusable skills are [bagseven](./skills/bagseven/SKILL.md) for connected MCP agents and [bagseven-development](./skills/bagseven-development/SKILL.md) for SDK integration and platform maintenance. Install from this checkout with `npx skills add . --skill bagseven bagseven-development`. Remote installation and skills.sh distribution steps are in [the developer guide](./docs/DEVELOPERS.md#agent-skills).
-
-## Production deployment
-
-Deploy landing and console on **Vercel**, and daemon, gateway, policy, MCP, Postgres and Redis on **Railway**. Service configs and variable templates are in `deploy/railway/` and `deploy/vercel/`; follow [docs/HOSTING.md](./docs/HOSTING.md) for setup, shared secrets and the live World / Whitechain / Arkiv tracks. World is the primary login; `AUTH_ALLOWLIST` controls email recovery access.
-
-Run `pnpm setup:prod`, fill in the root `.env.prod`, then rerun it to generate private per-service imports. Railway Root Directory is `/` for every backend service (root `railway.json` defaults to daemon). Deploy the Vercel projects separately with roots `apps/landing` and `apps/console`.
+Isolated x402 payments use a separately approved EIP-3009 signer, funded only through an agent's on-chain mandate. Manage it on the existing Spending page; use `bagseven_x402_payment` to reconcile uncertain payments. See [developer lifecycle and local verification](docs/DEVELOPERS.md#isolated-x402-payments) and [hosting requirements](docs/HOSTING.md). Apply migrations through 0020 and preserve the separate payment-custody key.

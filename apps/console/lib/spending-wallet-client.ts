@@ -5,7 +5,7 @@ export type SpendingWallet = { request: (args: { method: string; params?: unknow
 /** Check native balance before opening a transfer approval for provider gas. */
 export async function fundProviderGas(wallet: SpendingWallet, input: { owner: string; to: string; value: bigint; symbol: string }) {
   const balance = BigInt(await wallet.request({ method: 'eth_getBalance', params: [input.owner, 'latest'] }) as string);
-  const insufficient = () => new Error(`Your connected wallet has ${formatEther(balance)} ${input.symbol}. Add enough ${input.symbol} for the deposit and network fees, then try again. Gas funds are separate on Whitechain and Arkiv.`);
+  const insufficient = () => new Error(`Your connected wallet has ${formatEther(balance)} ${input.symbol}. Add enough ${input.symbol} for the deposit and network fees, then try again.`);
   if (balance <= input.value) throw insufficient();
   const transaction = { from: input.owner, to: input.to, value: `0x${input.value.toString(16)}` };
   const gas = BigInt(await wallet.request({ method: 'eth_estimateGas', params: [transaction] }) as string);

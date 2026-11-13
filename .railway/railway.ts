@@ -14,7 +14,8 @@ export default defineRailway((ctx) => {
     const template = parseEnv(readFileSync(new URL(`../deploy/railway/${name}.env.example`, import.meta.url), 'utf8'));
     const env = Object.fromEntries(Object.keys(template).map(key => [key, ctx.shared[key]]));
     Object.assign(env, { NODE_ENV: 'production', HOST: '::', PORT: String(port) });
-    if (name !== 'mcp') Object.assign(env, { DATABASE_URL: database.env.DATABASE_URL, REDIS_URL: cache.env.REDIS_URL });
+    Object.assign(env, { DATABASE_URL: database.env.DATABASE_URL });
+    if (name !== 'mcp') Object.assign(env, { REDIS_URL: cache.env.REDIS_URL });
     if (name === 'daemon' || name === 'gateway') env.POLICY_URL = 'http://${{policy.RAILWAY_PRIVATE_DOMAIN}}:4003';
     if (name === 'daemon') Object.assign(env, { BAGSEVEN_DATA_DIR: '/data', BAGSEVEN_MCP_EMBEDDED: String(embeddedMcp) });
     if (name === 'mcp') env.DAEMON_URL = 'http://${{daemon.RAILWAY_PRIVATE_DOMAIN}}:4001';
