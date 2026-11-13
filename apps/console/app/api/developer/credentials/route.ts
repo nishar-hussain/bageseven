@@ -1,33 +1,42 @@
-import { NextResponse } from 'next/server';
-import { getSession, sessionIsValid } from '../../../../lib/auth';
+import { NextRequest, NextResponse } from 'next/server';
+import { ProviderApiKeys } from '@bagseven/db';
+import { getSession, sessionHolder, sessionIsValid } from '../../../../lib/auth';
+import { consoleDatabase } from '../../../../lib/account-profiles';
 import { EMBED_COMPONENTS } from '../../../../lib/bagseven-sdk-components';
 
-/** Session-gated: merchant credentials to drop Bagseven into their platform. */
-export async function GET() {
+const headers = { 'Cache-Control': 'private, no-store', 'Referrer-Policy': 'no-referrer' };
+function response(body: unknown, status = 200) { return NextResponse.json(body, { status, headers }); }
+async function owner() {
   const session = await getSession();
-  if (!sessionIsValid(session) || !session) {
-    return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: 'Sign in required' } }, { status: 401 });
+  return sessionIsValid(session) && session?.email_verified_at && session.wallet_address ? sessionHolder(session) : null;
+}
+function sameOrigin(req: NextRequest) { return req.headers.get('origin') === new URL(req.url).origin; }
+export async function GET() {
+  const provider = await owner();
+  if (!provider) return response({ error: { message: 'Verify your email and wallet to manage API keys.' } }, 401);
+  const keys = await new ProviderApiKeys(consoleDatabase()).list(provider);
+  return response({ keys, components: EMBED_COMPONENTS.map(c => ({ id: c.id, label: c.label, blurb: c.blurb })), public_api_path: '/api/public', embed_base_path: '/embed' });
+}
+export async function POST(req: NextRequest) {
+  if (!sameOrigin(req)) return response({ error: { message: 'Same-origin request required.' } }, 403);
+  const provider = await owner();
+  if (!provider) return response({ error: { message: 'Verify your email and wallet to manage API keys.' } }, 401);
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body.name !== 'string' || !body.name.trim() || body.name.trim().length > 80 || !['sk','pk'].includes(body.kind) || !Number.isInteger(body.days) || body.days < 1 || body.days > 365)
+    return response({ error: { message: 'Supply a name, key type and expiry of 1–365 days.' } }, 400);
+  try { return response(await new ProviderApiKeys(consoleDatabase()).create(provider, body.name, body.kind, body.days), 201); }
+  catch (error) {
+    if (error instanceof Error && error.message === 'API_KEY_RATE_LIMIT') return response({ error: { message: 'Key creation limit reached. Try again in one hour.' } }, 429);
+    if (error instanceof Error && error.message.startsWith('API_KEY_LIMIT')) return response({ error: { message: 'You have 10 active keys. Revoke an unused key first.' } }, 409);
+    throw error;
   }
-
-  const publishable =
-    process.env.NEXT_PUBLIC_BAGSEVEN_PUBLISHABLE_KEY?.trim() ||
-    process.env.BAGSEVEN_PUBLISHABLE_KEY?.trim() ||
-    '';
-  const secret = process.env.BAGSEVEN_SECRET_KEY?.trim() || process.env.DAEMON_AUTH_TOKEN?.trim() || '';
-  const origin = process.env.BAGSEVEN_PUBLIC_URL?.trim() || process.env.NEXT_PUBLIC_APP_URL?.trim() || '';
-
-  return NextResponse.json({
-    publishable_key: publishable || null,
-    secret_key: secret || null,
-    secret_key_hint: secret ? `${secret.slice(0, 8)}…${secret.slice(-4)}` : null,
-    embed_base_path: '/embed',
-    public_api_path: '/api/public',
-    components: EMBED_COMPONENTS.map((c) => ({ id: c.id, label: c.label, blurb: c.blurb })),
-    notes: [
-      'Publishable key (pk_) is safe in browser / BagsevenProvider.',
-      'Secret key (sk_) stays on your server — use BagsevenClient to identify customers and create plans.',
-      'Pass component=cmp_pricing|cmp_checkout|cmp_portal|cmp_customer on /embed or BagsevenEmbed.',
-    ],
-    public_origin: origin || null,
-  });
+}
+export async function DELETE(req: NextRequest) {
+  if (!sameOrigin(req)) return response({ error: { message: 'Same-origin request required.' } }, 403);
+  const provider = await owner();
+  if (!provider) return response({ error: { message: 'Verify your email and wallet to manage API keys.' } }, 401);
+  const id = req.nextUrl.searchParams.get('id') || '';
+  if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id)) return response({ error: { message: 'Invalid key ID.' } }, 400);
+  if (!await new ProviderApiKeys(consoleDatabase()).revoke(provider, id)) return response({ error: { message: 'Key not found.' } }, 404);
+  return response({ revoked: true });
 }

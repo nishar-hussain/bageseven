@@ -67,11 +67,17 @@ export function listeningPids(port, rows = processTable()) {
 }
 
 export function portAvailable(port) {
-  return new Promise((resolve, reject) => {
+  // Check both address families in the OS inventory before probing sockets;
+  // macOS can also permit a specific-address bind beside a wildcard listener.
+  if (listeningPids(port, process.platform === 'linux' ? processTable() : []).length) return Promise.resolve(false);
+  const probe = host => new Promise((resolve, reject) => {
     const server = createServer();
-    server.once('error', error => error.code === 'EADDRINUSE' ? resolve(false) : reject(error));
-    server.listen({ port, host: '::' }, () => server.close(() => resolve(true)));
+    server.once('error', error => error.code === 'EADDRINUSE' ? resolve(false)
+      : host === '::1' && ['EADDRNOTAVAIL', 'EAFNOSUPPORT'].includes(error.code) ? resolve(true) : reject(error));
+    server.listen({ port, host }, () => server.close(() => resolve(true)));
   });
+  // macOS permits an IPv6 socket alongside an occupied IPv4-only port.
+  return Promise.all([probe('127.0.0.1'), probe('::1')]).then(results => results.every(Boolean));
 }
 
 function alive(pid) {

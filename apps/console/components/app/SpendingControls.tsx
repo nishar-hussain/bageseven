@@ -1,6 +1,6 @@
 'use client';
 
-import { withWalletOperation } from '../../lib/bagseven-sdk-wallet';
+import { paymentTokenLabel, withWalletOperation } from '../../lib/bagseven-sdk-wallet';
 import { errorMessage } from '../../lib/error-message';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
@@ -39,6 +39,7 @@ export function SpendingControls({ selectedId, overview, onChange, onCreated }: 
   }, []);
   const current = overview?.mandate_id === selectedId ? overview : null;
   const available = current?.onchain_state.status === 'available';
+  const currency = paymentTokenLabel(config?.chain_id, config?.token);
 
   async function ownerWallet(expected?: string) {
     if (!config) throw new Error('Spending configuration has not loaded');
@@ -118,7 +119,7 @@ export function SpendingControls({ selectedId, overview, onChange, onCreated }: 
   }
   return <section className="space-y-4 rounded-2xl border border-[var(--line)] bg-white p-5 shadow-[var(--sh)]">
     <h2 className="text-base font-semibold">Manage agent spending</h2>
-    <p className="text-sm text-[var(--muted)]">These permissions apply to new stablecoin payments. Using prepaid service credits does not require a funded permission. Your owner wallet approves each change.</p>
+    <p className="text-sm text-[var(--muted)]">These permissions apply to new {currency} payments. Using prepaid service credits does not require a funded permission. Your owner wallet approves each change.</p>
     <p className="text-sm text-[var(--muted)]">Provider gas must be funded and authorized before creating a permission. <Link href="/app/settings" className="text-[var(--blue)] underline">Configure provider-funded gas</Link>.</p>
     <div className="flex flex-wrap items-center gap-3 text-sm">
       <span className="break-all text-[var(--muted)]">{isConnected && address ? `Connected: ${address}` : 'Connect a wallet to manage your spending permissions.'}</span>
@@ -135,20 +136,20 @@ export function SpendingControls({ selectedId, overview, onChange, onCreated }: 
         <form onSubmit={e => { e.preventDefault(); void run(create); }} className="mt-3 space-y-3">
           <label className="block text-sm">Agent operator wallet<input required value={operator} onChange={e => setOperator(e.target.value)} className={inputClass} pattern="0x[0-9a-fA-F]{40}" /></label>
           <div className="grid gap-3 sm:grid-cols-3">
-            <label className="text-sm">Budget per window (stablecoin)<input required value={budget} onChange={e => setBudget(e.target.value)} className={inputClass} inputMode="decimal" /></label>
-            <label className="text-sm">Lifetime limit (stablecoin)<input required value={lifetime} onChange={e => setLifetime(e.target.value)} className={inputClass} inputMode="decimal" /></label>
-            <label className="text-sm">Maximum per payment (stablecoin)<input required value={purchase} onChange={e => setPurchase(e.target.value)} className={inputClass} inputMode="decimal" /></label>
+            <label className="text-sm">Budget per window ({currency})<input required value={budget} onChange={e => setBudget(e.target.value)} className={inputClass} inputMode="decimal" /></label>
+            <label className="text-sm">Lifetime limit ({currency})<input required value={lifetime} onChange={e => setLifetime(e.target.value)} className={inputClass} inputMode="decimal" /></label>
+            <label className="text-sm">Maximum per payment ({currency})<input required value={purchase} onChange={e => setPurchase(e.target.value)} className={inputClass} inputMode="decimal" /></label>
             <label className="text-sm">Window (hours)<input required type="number" min="1" value={windowHours} onChange={e => setWindowHours(e.target.value)} className={inputClass} /></label>
             <label className="text-sm">Limit per provider (% of lifetime)<input required type="number" min="1" max="100" value={sellerPct} onChange={e => setSellerPct(e.target.value)} className={inputClass} /></label>
             <label className="text-sm">Maximum delegation depth<input required type="number" min="0" max="10" value={depth} onChange={e => setDepth(e.target.value)} className={inputClass} /></label>
           </div>
-          <p className="text-xs text-[var(--muted)]">Limits are fixed at creation. Creating a permission does not transfer stablecoin or change the agent bound to your MCP connection.</p>
+          <p className="text-xs text-[var(--muted)]">Limits are fixed at creation. Creating a permission does not transfer {currency} or change the agent bound to your MCP connection.</p>
           <button className={buttonClass} type="submit">Sign and create permission</button>
         </form>
       </details>
       {current && <div className="space-y-4 border-t border-[var(--line)] pt-4">
         <p className="text-sm font-semibold">Selected permission</p>
-        <label className="block text-sm">Amount (stablecoin)<input value={amount} onChange={e => setAmount(e.target.value)} className={inputClass} inputMode="decimal" placeholder="0.10" /></label>
+        <label className="block text-sm">Amount ({currency})<input value={amount} onChange={e => setAmount(e.target.value)} className={inputClass} inputMode="decimal" placeholder="0.10" /></label>
         <div className="flex flex-wrap gap-2">
           <button type="button" disabled={!available || current.onchain_revoked || !amount} onClick={() => void run(() => transact('fund'))} className={buttonClass}>Fund from wallet</button>
           <button type="button" disabled={!available || !amount} onClick={() => void run(() => transact('withdraw'))} className={buttonClass}>Withdraw to owner</button>

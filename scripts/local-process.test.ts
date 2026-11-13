@@ -31,6 +31,13 @@ async function launch(file: string, cwd: string): Promise<number> {
 }
 
 describe('local service process lifecycle', () => {
+  it('detects a receipt server bound only to the IPv4 loopback address', async () => {
+    const root = fixture();
+    writeFileSync(join(root, 'ipv4.mjs'), `import {createServer} from 'node:net';
+const server=createServer();server.listen(0,'127.0.0.1',()=>process.send({port:server.address().port}));`);
+    const port = await launch(join(root, 'ipv4.mjs'), root);
+    expect(await portAvailable(port)).toBe(false);
+  });
   it('stops the owning supervisor and waits for slow socket release without respawning', async () => {
     const root = fixture();
     writeFileSync(join(root, 'supervisor.mjs'), `import {fork} from 'node:child_process';

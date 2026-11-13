@@ -51,6 +51,7 @@ try {
   const balance = () => client.readContract({ address: token, abi: tokenArtifact.abi, functionName: 'balanceOf', args: [merchant.address] });
   const first = await subscribed();
   assert.equal(await balance(), amount);
+  await assert.rejects(client.simulateContract({ address: first.address, abi: SubscriptionAbi, functionName: 'subscribe', account: merchant, args: [keccak256(stringToHex('self-purchase')), (await client.getBlock()).timestamp + 3600n] }), /SelfPayment/);
   const [, due] = await first.state();
   await assert.rejects(client.simulateContract({ address: first.address, abi: SubscriptionAbi, functionName: 'charge', account: collector, args: [first.key, due] }), /NotDue/);
   await test.setNextBlockTimestamp({ timestamp: due }); await test.mine({ blocks: 1 });

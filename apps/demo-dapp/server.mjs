@@ -41,7 +41,7 @@ async function bootstrap() {
       ]),
     ),
   );
-  const identified = await client.identify({ holder: HOLDER, expiresIn: 3600 });
+  const identified = await client.identify({ holder: HOLDER, email: process.env.DEMO_CUSTOMER_EMAIL, expiresIn: 3600 });
   const { plans } = await internal("GET", "/v1/plans?active=true");
   return {
     holder: HOLDER,

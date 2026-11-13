@@ -30,3 +30,13 @@ describe('api keys', () => {
     expect(isPublicEntitlementPath('/internal/grants/mint')).toBe(false);
   });
 });
+
+it('binds the trusted billing contact to the signed customer token', () => {
+  const token = issueEmbedToken('customer-123', env, 60, 'buyer@example.com');
+  expect(authenticateRequest(`Bearer ${token}`, env)).toMatchObject({ kind: 'embed', holder: 'customer-123', billingEmail: 'buyer@example.com' });
+});
+
+it('does not let public browser keys read private customer access', async () => {
+  const { assertCanRead } = await import('./api-keys.js');
+  expect(() => assertCanRead(authenticateRequest('Bearer pk_product', env), 'customer')).toThrow(/Customer access token required/);
+});

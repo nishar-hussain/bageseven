@@ -37,13 +37,13 @@ describe.skipIf(!url)('durable customer invoices (isolated PostgreSQL schema)', 
     const plan = await billing.createPlan({ provider_id: 'atomic', name: 'One time', feature: 'ocr', amount: '1', merchant_wallet: '0x' + '11'.repeat(20) });
     await db.$client.query("create function reject_invoice() returns trigger language plpgsql as 'begin raise exception ''test invoice failure''; end'; create trigger reject_invoice before insert on billing_documents for each row execute function reject_invoice()");
     try {
-      await expect(billing.createCheckout({ plan_id: plan.id, holder: 'buyer' })).rejects.toMatchObject({ cause: { message: 'test invoice failure' } });
+      await expect(billing.createCheckout({ plan_id: plan.id, holder: 'buyer', billing_email: 'buyer@example.com' })).rejects.toMatchObject({ cause: { message: 'test invoice failure' } });
       expect((await db.$client.query('select id from checkout_sessions where plan_id=$1', [plan.id])).rowCount).toBe(0);
     } finally { await db.$client.query('drop trigger reject_invoice on billing_documents; drop function reject_invoice()'); }
   });
   it('records a verified one-time payment independently of unfinished entitlement fulfillment', async () => {
     const plan = await billing.createPlan({ provider_id: 'once-provider', name: 'Scan credits', feature: 'ocr', amount: '1', merchant_wallet: '0x' + '11'.repeat(20) });
-    const session = await billing.createCheckout({ plan_id: plan.id, holder: 'one-time-buyer' });
+    const session = await billing.createCheckout({ plan_id: plan.id, holder: 'one-time-buyer', billing_email: 'one-time-buyer@example.com' });
     const hash = '0x' + 'ab'.repeat(32), payer = '0x' + '12'.repeat(20);
     await billing.claimPayment(hash, session.id, payer);
     const id = billingDocumentId('checkout:' + session.id);
@@ -57,7 +57,7 @@ describe.skipIf(!url)('durable customer invoices (isolated PostgreSQL schema)', 
   });
   it('preserves original terms, deduplicates first-period receipts, and records each renewal exactly once', async () => {
     const plan = await billing.createPlan({ provider_id: 'provider-a', name: 'Monthly', feature: 'ocr', amount: '10', interval: 'month', ttl_seconds: 2592000, merchant_wallet: '0x' + '22'.repeat(20) });
-    const session = await billing.createCheckout({ plan_id: plan.id, holder: 'buyer@example.com' });
+    const session = await billing.createCheckout({ plan_id: plan.id, holder: 'buyer@example.com', billing_email: 'buyer@example.com' });
     const id = billingDocumentId('checkout:' + session.id);
     expect((await billingDocument(db, 'provider-a', id))?.status).toBe('OPEN');
     const subs = new PostgresSubscriptionStore(db), now = Math.floor(Date.now() / 1000);

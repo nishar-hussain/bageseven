@@ -1,6 +1,7 @@
+import type { Database } from '@bagseven/db';
 import type { FastifyInstance } from 'fastify';
 import { ApiError } from '@bagseven/server';
-import { authenticateRequest, assertCanWrite } from './api-keys.js';
+import { authenticateApiRequest, assertCanWrite } from './api-keys.js';
 import { providerScope } from './billing.js';
 import { Subscriptions } from './subscriptions.js';
 import type { Subscription } from './subscription-types.js';
@@ -23,9 +24,9 @@ export const cancellationDraft = (sub: Subscription) => ({
   note: 'Sign cancellation with the paying wallet, then sync the subscription. Existing paid access remains valid.',
 });
 
-export function registerSubscriptionRoutes(app: FastifyInstance, service: Subscriptions) {
+export function registerSubscriptionRoutes(app: FastifyInstance, service: Subscriptions, db?: Database) {
   async function authorized(req: { headers: { authorization?: string } }, id: string) {
-    const principal = authenticateRequest(req.headers.authorization, process.env);
+    const principal = await authenticateApiRequest(req, db);
     if (principal.kind === 'pk') throw new ApiError(403, 'FORBIDDEN', 'A holder token or secret key is required');
     const sub = await service.store.get(id);
     const provider = providerScope(req);
@@ -34,7 +35,7 @@ export function registerSubscriptionRoutes(app: FastifyInstance, service: Subscr
     return sub;
   }
   app.get('/v1/subscriptions', async req => {
-    const principal = authenticateRequest(req.headers.authorization, process.env);
+    const principal = await authenticateApiRequest(req, db);
     if (principal.kind === 'pk') throw new ApiError(403, 'FORBIDDEN', 'A holder token or secret key is required');
     const query = req.query as { holder?: string };
     if (principal.kind === 'embed' && query.holder && query.holder !== principal.holder) throw new ApiError(403, 'HOLDER_MISMATCH', 'Holder does not match this token');

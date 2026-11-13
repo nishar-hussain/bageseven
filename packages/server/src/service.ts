@@ -23,7 +23,7 @@ export interface CreateServiceOptions {
 
 export async function createService(opts: CreateServiceOptions): Promise<FastifyInstance> {
   const app = Fastify({
-    logger: { name: opts.name, level: process.env.LOG_LEVEL ?? 'info' },
+    logger: { name: opts.name, level: process.env.LOG_LEVEL ?? 'info', redact: ['req.headers.authorization', 'req.headers.cookie', 'res.headers["set-cookie"]'] },
     ...opts.fastifyOptions,
   });
 

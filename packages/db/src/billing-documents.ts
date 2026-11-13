@@ -14,12 +14,12 @@ export const billingDocumentId = (source: string) => `inv_${createHash('md5').up
 /** Call inside the same transaction as the checkout/collection journal write. */
 export async function issueBillingDocument(db: Executor, input: {
   source: string; provider: string; holder: string; terms: BillingDocumentTerms;
-  createdAt?: Date; expiresAt?: Date;
+  createdAt?: Date; expiresAt?: Date; billingEmail?: string;
 }) {
   const id = billingDocumentId(input.source);
-  await db.execute(sql`insert into billing_documents(id,source,provider_id,holder,terms,created_at,expires_at)
+  await db.execute(sql`insert into billing_documents(id,source,provider_id,holder,terms,created_at,expires_at,billing_email)
     values(${id},${input.source},${input.provider},${input.holder},${JSON.stringify(input.terms)}::jsonb,
-      ${input.createdAt ?? new Date()},${input.expiresAt ?? null})
+      ${input.createdAt ?? new Date()},${input.expiresAt ?? null},${input.billingEmail ?? null})
     on conflict(source) do nothing`);
   return id;
 }
@@ -31,4 +31,7 @@ export async function recordDocumentPayment(db: Executor, source: string, hash: 
     where source=${source} and (payment_tx is null or payment_tx=${hash.toLowerCase()})
       and (payer is null or payer=${payer.toLowerCase()}) returning id`);
   if (!result.rows.length) throw Error('BILLING_DOCUMENT_PAYMENT_CONFLICT');
+  await db.execute(sql`insert into billing_email_deliveries(document_id,recipient)
+    select id,billing_email from billing_documents where source=${source} and billing_email is not null
+    on conflict(document_id) do nothing`);
 }

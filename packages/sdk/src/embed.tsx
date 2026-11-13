@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { Entitlement, Subscription } from './types.js';
-import { authorizeAvalanchePayment, connectAvalancheWallet, payStablecoinOnAvalanche, subscribeOnAvalanche, cancelAvalancheSubscription, renewSubscriptionAllowance } from './wallet.js';
+import { type EthereumProvider, getWalletOperation, observeAvalancheAccounts, paymentTokenLabel, authorizeAvalanchePayment, connectAvalancheWallet, payStablecoinOnAvalanche, subscribeOnAvalanche, cancelAvalancheSubscription, renewSubscriptionAllowance } from './wallet.js';
 import { resolveEmbedComponent, type EmbedComponentId } from './components.js';
 import { currentSubscriptionPlans } from './subscription-state.js';
 import { WalletOperationNotice } from './wallet-notice.js';
@@ -10,6 +10,7 @@ import { WalletOperationNotice } from './wallet-notice.js';
 export type EmbedView = 'portal' | 'checkout' | 'consume' | 'credits' | 'unsubscribe' | 'pricing' | 'customer';
 
 type PublicPlan = {
+  payment?: { chain_id: number; usdt: string };
   id: string;
   name: string;
   feature: string;
@@ -270,6 +271,8 @@ export function BagsevenEmbed({
   ctaLabel = 'Choose plan',
   showPoweredBy = true,
   walletSlot,
+  walletProvider,
+  walletAddress,
 }: {
   accessToken?: string;
   apiUrl?: string;
@@ -289,6 +292,10 @@ export function BagsevenEmbed({
   showPoweredBy?: boolean;
   /** Host app wallet UI (e.g. RainbowKit ConnectButton) shown above checkout */
   walletSlot?: ReactNode;
+  /** The host wallet connector’s EIP-1193 provider; never a key or signer secret. */
+  walletProvider?: EthereumProvider;
+  /** Active account supplied by the host connector. Otherwise customers can choose an authorized account. */
+  walletAddress?: string;
 }) {
   const resolved = resolveEmbedComponent(component);
   const startView: EmbedView = checkoutSessionId ? 'checkout' : (initialView ?? resolved?.view ?? 'portal');
@@ -302,9 +309,14 @@ export function BagsevenEmbed({
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [checkoutSubscription, setCheckoutSubscription] = useState<Subscription | null>(null);
   const [plans, setPlans] = useState<PublicPlan[]>([]);
+  const [invoices, setInvoices] = useState<Array<{ id: string; paid_at: string; url: string; terms: { planName: string; amount: string; chainId: number; token: string } }>>([]);
+  const [clock, setClock] = useState(() => Date.now());
+
   const [period, setPeriod] = useState<'month' | 'once'>('month');
   const [checkout, setCheckout] = useState<PublicCheckout | null>(null);
+  const checkoutInvoice = invoices.find(invoice => checkout?.billing_document_url?.endsWith('/' + invoice.id));
   const [sessionId, setSessionId] = useState(checkoutSessionId ?? '');
+  const activeSessionId = useRef(sessionId);
   const [demoTx, setDemoTx] = useState('');
   useEffect(() => {
     if (!checkout?.id) return;
@@ -313,9 +325,34 @@ export function BagsevenEmbed({
   }, [checkout?.id, checkout?.payment_tx]);
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
+  const [connectedAddress, setConnectedAddress] = useState('');
+  const [walletAccounts, setWalletAccounts] = useState<string[]>([]);
+  const [customerEmail, setCustomerEmail] = useState<string | null>(null);
+  useEffect(() => {
+    if (view !== 'checkout' || checkout?.status !== 'PENDING') return;
+    setClock(Date.now());
+    const timer = setInterval(() => setClock(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [view, checkout?.status, checkout?.id]);
+  useEffect(() => observeAvalancheAccounts(accounts => {
+    setWalletAccounts(accounts);
+    setConnectedAddress(previous => {
+      const preferred = walletAddress || previous;
+      return accounts.find(account => account.toLowerCase() === preferred.toLowerCase()) ?? (walletAddress ? '' : accounts[0] ?? '');
+    });
+  }, walletProvider), [walletProvider, walletAddress]);
   const [loading, setLoading] = useState(true);
   const [confirmCancel, setConfirmCancel] = useState<string | null>(null);
   const base = apiUrl.replace(/\/$/, '');
+  const checkoutStorageKey = `bagseven-checkout:${base}:${holder ?? ''}`;
+  useEffect(() => {
+    if (checkoutSessionId) return;
+    try {
+      const saved = sessionStorage.getItem(checkoutStorageKey);
+      if (saved && /^cs_[a-zA-Z0-9_-]+$/.test(saved)) { setSessionId(saved); setView('checkout'); }
+    } catch { /* Checkout still works when storage is unavailable. */ }
+  }, [checkoutStorageKey, checkoutSessionId]);
+  const checkoutRequest = useRef(0);
   const token = accessToken || publishableKey || '';
   const single = Boolean(resolved);
 
@@ -333,6 +370,10 @@ export function BagsevenEmbed({
     if (!data || request !== loadGeneration.current) return;
     const subscribed = await publicGet<{ subscriptions: Subscription[] }>(base, '/subscriptions', accessToken);
     if (request !== loadGeneration.current) return;
+    const billing = await publicGet<{ email: string | null; documents: typeof invoices }>(base, '/billing-documents', accessToken);
+    if (request !== loadGeneration.current) return;
+    setInvoices(billing.documents);
+    setCustomerEmail(billing.email);
     setSubscriptions(subscribed.subscriptions);
     setEntitlements(data.entitlements ?? []);
     setLoading(false);
@@ -347,20 +388,28 @@ export function BagsevenEmbed({
 
   const loadCheckout = useCallback(
     async (id?: string) => {
-      const sid = id ?? sessionId;
+      const sid = id ?? activeSessionId.current;
       if (!sid) return;
+      const request = ++checkoutRequest.current;
       const res = await fetch(`${base}/public/checkout/${encodeURIComponent(sid)}`);
       const json = (await res.json().catch(() => ({}))) as { session?: PublicCheckout; error?: { message?: string } };
       if (!res.ok) throw new Error(json.error?.message ?? `checkout ${res.status}`);
+      if (request !== checkoutRequest.current) return undefined;
       setCheckout(json.session ?? null);
+      try {
+        if (json.session?.status === 'PENDING' || (json.session?.status === 'EXPIRED' && sessionStorage.getItem(`bagseven-payment:${sid}`))) sessionStorage.setItem(checkoutStorageKey, sid);
+        else if (sessionStorage.getItem(checkoutStorageKey) === sid) sessionStorage.removeItem(checkoutStorageKey);
+      } catch { /* Keep the current checkout in memory. */ }
       if (json.session?.status === 'PAID') {
         const state = await fetch(`${base}/public/checkout/${encodeURIComponent(sid)}/subscription`).then(r => r.json()) as { subscription?: Subscription };
+        if (request !== checkoutRequest.current) return undefined;
         setCheckoutSubscription(state.subscription ?? null);
-      }
+      } else setCheckoutSubscription(null);
+      activeSessionId.current = sid;
       setSessionId(sid);
       return json.session;
     },
-    [base, sessionId],
+    [base, checkoutStorageKey],
   );
 
   useEffect(() => {
@@ -383,8 +432,8 @@ export function BagsevenEmbed({
   }, [view, startView, loadPlans]);
 
   useEffect(() => {
-    if (checkoutSessionId) void loadCheckout(checkoutSessionId).catch((e) => setMsg(e instanceof Error ? e.message : String(e)));
-  }, [checkoutSessionId, loadCheckout]);
+    if (sessionId) void loadCheckout(sessionId).catch((e) => setMsg(e instanceof Error ? e.message : String(e)));
+  }, [sessionId, loadCheckout]);
 
   useEffect(() => {
     if (checkout?.status !== 'PENDING' || checkout.subscription_plan?.status !== 'preparing') return;
@@ -393,7 +442,7 @@ export function BagsevenEmbed({
   }, [checkout?.status, checkout?.subscription_plan?.status, loadCheckout]);
 
   const cancelSubscription = async (sub: Subscription) => {
-    await cancelAvalancheSubscription({ contract: sub.contract, key: sub.subscription_key, payer: sub.payer, chainId: sub.chain_id, cancelData: sub.cancel_data });
+    await cancelAvalancheSubscription({ provider: walletProvider, account: connectedAddress || walletAddress || undefined, contract: sub.contract, key: sub.subscription_key, payer: sub.payer, chainId: sub.chain_id, cancelData: sub.cancel_data });
     if (accessToken) await publicPost(base, `/subscriptions/${encodeURIComponent(sub.id)}/sync`, accessToken, {});
     else await fetch(`${base}/public/checkout/${encodeURIComponent(sub.checkout_id)}/subscription/sync`, { method: 'POST' }).then(async r => { if (!r.ok) throw new Error((await r.json()).error?.message || 'Cancellation confirmed; status sync needs retry'); });
     await loadCheckout(sub.checkout_id);
@@ -401,16 +450,18 @@ export function BagsevenEmbed({
   };
   const subscriptionCard = (sub: Subscription) => (
     <Card key={sub.id}>
-      <strong>{sub.feature} · {sub.amount} stablecoin every {Math.round(sub.period_seconds / 86400)} days</strong>
+      <strong>{sub.feature} · {sub.amount} {paymentTokenLabel(sub.chain_id, sub.token)} every {Math.round(sub.period_seconds / 86400)} days</strong>
       <p>{sub.status} · Paid through {formatWhen(sub.paid_through)}</p>
       {!['CANCELLED', 'ENDED'].includes(sub.status) && <p>Next collection attempt: {formatWhen(sub.next_attempt_at)}</p>}
       {sub.last_error && <p role="status">{sub.last_error}</p>}
-      <p style={{ fontSize: 12 }}>Payments are collected from your wallet within the approved plan terms. Your wallet needs stablecoin balance and allowance. Wallet approval and cancellation use AVAX for gas.</p>
+      <p style={{ fontSize: 12 }}>{['CANCELLED', 'ENDED'].includes(sub.status)
+        ? 'Future collections have stopped. Already-paid access remains until the paid-through date.'
+        : `Payments are collected from your wallet within the approved plan terms. Your wallet needs ${paymentTokenLabel(sub.chain_id, sub.token)} balance and allowance. Wallet approval and cancellation use AVAX for gas.`}</p>
       {!['CANCELLED', 'ENDED'].includes(sub.status) && <>
         <GhostBtn disabled={busy} onClick={() => void act(() => cancelSubscription(sub))}>Cancel recurring payment with wallet</GhostBtn>
         <GhostBtn disabled={busy} onClick={() => void act(async () => {
-          await renewSubscriptionAllowance({ contract: sub.contract, payer: sub.payer, chainId: sub.chain_id, usdt: sub.token, amount: sub.amount });
-          setMsg('stablecoin allowance authorized for up to 12 charges. The next due attempt uses this permission; no payment was collected by this action.');
+          await renewSubscriptionAllowance({ provider: walletProvider, account: connectedAddress || walletAddress || undefined, contract: sub.contract, payer: sub.payer, chainId: sub.chain_id, usdt: sub.token, amount: sub.amount });
+          setMsg(`${paymentTokenLabel(sub.chain_id, sub.token)} allowance authorized for up to 12 charges. The next due attempt uses this permission; no payment was collected by this action.`);
         })}>Authorize next 12 charges</GhostBtn>
       </>}
     </Card>
@@ -422,9 +473,9 @@ export function BagsevenEmbed({
     try {
       await fn();
       await load();
-      if (sessionId) await loadCheckout(sessionId);
+      if (activeSessionId.current) await loadCheckout(activeSessionId.current);
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : String(e));
+      setMsg(getWalletOperation().reminder ? '' : e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -433,10 +484,14 @@ export function BagsevenEmbed({
   const startCheckout = async (planId: string) => {
     if (!accessToken) throw new Error('Customer accessToken required — identify the holder first');
     if (!holder) throw new Error('holder required to start checkout');
+    checkoutRequest.current++;
     const r = await publicPost<{ session: PublicCheckout }>(base, '/checkout-sessions', accessToken, {
       plan_id: planId,
       holder,
     });
+    checkoutRequest.current++;
+    try { sessionStorage.setItem(checkoutStorageKey, r.session.id); } catch { /* Use in-memory checkout state. */ }
+    activeSessionId.current = r.session.id;
     setSessionId(r.session.id);
     setCheckout(r.session);
     setView('checkout');
@@ -534,7 +589,7 @@ export function BagsevenEmbed({
                   <div style={{ marginTop: 14, display: 'flex', alignItems: 'baseline', gap: 4 }}>
                     <span style={{ fontSize: 28, fontWeight: 750, letterSpacing: '-0.03em', lineHeight: 1 }}>{p.amount}</span>
                     <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--bs-muted)' }}>
-                      stablecoin{p.interval === 'month' ? '/mo' : ''}
+                      {paymentTokenLabel(p.payment?.chain_id, p.payment?.usdt)}{p.interval === 'month' ? ' / 30 days' : ''}
                     </span>
                   </div>
                   <ul style={{ listStyle: 'none', margin: '16px 0 0', padding: 0, display: 'grid', gap: 8, flex: 1 }}>
@@ -589,14 +644,14 @@ export function BagsevenEmbed({
       <div style={{ marginBottom: 16 }}>
         <h3 style={{ margin: 0, fontSize: 20, fontWeight: 700, letterSpacing: '-0.02em' }}>{heading || 'Your plan'}</h3>
         <p style={{ margin: '6px 0 0', fontSize: 13, color: 'var(--bs-muted)', lineHeight: 1.5 }}>
-          Active entitlements, usage, and renewal.
+          Your access, remaining credits and billing history.
         </p>
       </div>
       {loading ? (
         <Skeleton />
       ) : entitlements.length === 0 ? (
         <Card>
-          <p style={{ margin: 0, fontSize: 14, fontWeight: 650 }}>No active subscription</p>
+          <p style={{ margin: 0, fontSize: 14, fontWeight: 650 }}>No active access</p>
           <p style={{ margin: '6px 0 0', fontSize: 13, color: 'var(--bs-muted)' }}>
             Pick a plan to unlock features for this account.
           </p>
@@ -628,25 +683,7 @@ export function BagsevenEmbed({
                 ) : (
                   <>
                     <CreditBalance remaining={e.remaining} />
-                    {live && accessToken ? (
-                      <div style={{ marginTop: 12 }}>
-                        <GhostBtn
-                          disabled={busy || Number(e.remaining) <= 0}
-                          onClick={() =>
-                            void act(async () => {
-                              await publicPost(base, '/usage/consume', accessToken, {
-                                feature: e.feature,
-                                amount: '1',
-                                idempotencyKey: `embed-${e.feature}-${Date.now()}`,
-                              });
-                              setMsg(`Used 1 ${e.feature} credit`);
-                            })
-                          }
-                        >
-                          {busy ? 'Working…' : 'Use 1 credit'}
-                        </GhostBtn>
-                      </div>
-                    ) : null}
+
                   </>
                 )}
 
@@ -702,6 +739,15 @@ export function BagsevenEmbed({
           })}
         </div>
       )}
+      {invoices.length > 0 && <div style={{ marginTop: 24 }}>
+        <h4 style={{ margin: '0 0 12px' }}>Recent invoices</h4>
+        <div style={{ display: 'grid', gap: 10 }}>{invoices.map(invoice => <Card key={invoice.id}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+            <div><strong>{invoice.terms.planName}</strong><p style={{ margin: '4px 0', fontSize: 12, color: 'var(--bs-muted)' }}>{formatWhen(invoice.paid_at)} · Paid</p></div>
+            <div style={{ textAlign: 'right' }}><strong>{invoice.terms.amount} {paymentTokenLabel(invoice.terms.chainId, invoice.terms.token)}</strong><p style={{ margin: '4px 0', fontSize: 12 }}><a href={invoice.url} target="_blank" rel="noreferrer" style={{ color: 'var(--bs-accent)' }}>Invoice & receipt ↗</a></p></div>
+          </div>
+        </Card>)}</div>
+      </div>}
       {subscriptions.length > 0 && <div style={{ display: 'grid', gap: 12, marginTop: 16 }}><h3>Recurring payments</h3>{subscriptions.map(subscriptionCard)}</div>}
     </section>
   );
@@ -711,7 +757,7 @@ export function BagsevenEmbed({
       <div style={{ marginBottom: 16 }}>
         <h3 style={{ margin: 0, fontSize: 20, fontWeight: 700, letterSpacing: '-0.02em' }}>Checkout</h3>
         <p style={{ margin: '6px 0 0', fontSize: 13, color: 'var(--bs-muted)', lineHeight: 1.5 }}>
-          Pay on Avalanche with the plan’s configured stablecoin. Access activates after payment confirmation.
+          Pay on Avalanche with {paymentTokenLabel(checkout?.chain_id, checkout?.payment?.usdt)}. Access activates after payment confirmation.
         </p>
       </div>
       {!sessionId ? (
@@ -748,28 +794,36 @@ export function BagsevenEmbed({
             <span style={{ fontSize: 12, color: 'var(--bs-muted)', fontWeight: 600 }}>Due now</span>
             <span style={{ fontSize: 24, fontWeight: 750, letterSpacing: '-0.02em' }}>
               {checkout.amount}{' '}
-              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--bs-muted)' }}>stablecoin</span>
+              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--bs-muted)' }}>{paymentTokenLabel(checkout.chain_id, checkout.payment?.usdt)}</span>
             </span>
+          </div>
+
+          <div style={{ marginTop: 16, display: 'grid', gap: 6, fontSize: 12, color: 'var(--bs-muted)' }}>
+            <span>Provider receives payment at <code>{checkout.plan?.merchant_wallet}</code></span>
+            {customerEmail && <span>Invoice email: <strong>{customerEmail}</strong></span>}
+            <span>Your paying wallet: <strong>{connectedAddress || 'Connect a customer wallet'}</strong></span>
+            {checkout.status === 'PENDING' && <span role="timer">{clock < Date.parse(checkout.expires_at) ? `Complete payment within ${Math.ceil((Date.parse(checkout.expires_at) - clock) / 60000)} min` : 'Payment window closed. Choose a plan to open a new checkout.'}</span>}
+            {connectedAddress && connectedAddress.toLowerCase() === checkout.plan?.merchant_wallet.toLowerCase() && <p role="status" style={{ color: 'var(--bs-warn)', margin: '6px 0' }}>This is the provider payout wallet. Switch to your customer wallet to pay.</p>}
           </div>
 
           {checkout.status === 'PAID' ? (
             <div style={{ marginTop: 16 }}>
               <p style={{ margin: 0, color: 'var(--bs-good)', fontSize: 14, fontWeight: 650 }}>
-                Paid — entitlement is live for {checkout.holder}
+                Payment received. Your access is ready.
               </p>
               {checkoutSubscription && subscriptionCard(checkoutSubscription)}
-              {checkout.billing_document_url && <p style={{ marginTop: 12, fontSize: 13 }}><a href={checkout.billing_document_url} target="_blank" rel="noreferrer" style={{ color: 'var(--bs-accent)', textDecoration: 'underline' }}>View invoice & payment receipt</a></p>}
+              {checkoutInvoice && <p style={{ marginTop: 12, fontSize: 13 }}><a href={checkoutInvoice.url} target="_blank" rel="noreferrer" style={{ color: 'var(--bs-accent)', textDecoration: 'underline' }}>View invoice & payment receipt</a></p>}
               <div style={{ marginTop: 12 }}>
                 {accessToken ? <PrimaryBtn onClick={() => setView('portal')}>Go to plan manager</PrimaryBtn> : null}
               </div>
             </div>
-          ) : checkout.status !== 'PENDING' && !(checkout.status === 'EXPIRED' && demoTx && checkout.plan?.interval === 'month') ? (
+          ) : checkout.status !== 'PENDING' && !(checkout.status === 'EXPIRED' && demoTx) ? (
             <p style={{ marginTop: 16, color: 'var(--bs-muted)', fontSize: 13 }}>This checkout is {checkout.status.toLowerCase()}. Open a new checkout before paying.</p>
           ) : (
             <div style={{ marginTop: 16, display: 'grid', gap: 8 }}>
-              {checkout.plan?.interval === 'month' && <p>Approve {checkout.amount} stablecoin every 30 days to this provider. The first payment starts access. A new allowance is limited to 12 charges; you can cancel future collections in the portal.</p>}
+              {checkout.plan?.interval === 'month' && <p>Approve {checkout.amount} {paymentTokenLabel(checkout.chain_id, checkout.payment?.usdt)} every 30 days to this provider. The first payment starts access. A new allowance is limited to 12 charges; you can cancel future collections in the portal.</p>}
               <PrimaryBtn
-                disabled={busy || !checkout.plan || checkout.status !== 'PENDING' || Boolean(demoTx) || (checkout.plan.interval === 'month' && checkout.subscription_plan?.status !== 'ready')}
+                disabled={busy || !checkout.plan || checkout.status !== 'PENDING' || clock >= Date.parse(checkout.expires_at) || connectedAddress.toLowerCase() === checkout.plan.merchant_wallet.toLowerCase() || Boolean(demoTx) || (checkout.plan.interval === 'month' && checkout.subscription_plan?.status !== 'ready')}
                 onClick={() =>
                   void act(async () => {
                     if (!checkout.plan) return;
@@ -782,9 +836,9 @@ export function BagsevenEmbed({
                     const recurring = fresh.plan?.interval === 'month';
                     if (recurring && fresh.subscription_plan?.status !== 'ready') throw new Error('Recurring plan is preparing; wait before authorizing');
                     const paid = recurring
-                      ? await subscribeOnAvalanche({ contract: fresh.subscription_plan!.address, subscribeData: fresh.subscription_plan!.subscribe_data,
+                      ? await subscribeOnAvalanche({ provider: walletProvider, account: connectedAddress || walletAddress || undefined, merchantWallet: fresh.plan!.merchant_wallet, contract: fresh.subscription_plan!.address, subscribeData: fresh.subscription_plan!.subscribe_data,
                           amount: fresh.amount, usdt: fresh.payment.usdt, chainId: fresh.chain_id, checkoutId: fresh.id, onTransactionSubmitted: onSubmitted })
-                      : await payStablecoinOnAvalanche({ merchantWallet: fresh.plan!.merchant_wallet, amount: fresh.amount,
+                      : await payStablecoinOnAvalanche({ provider: walletProvider, account: connectedAddress || walletAddress || undefined, merchantWallet: fresh.plan!.merchant_wallet, amount: fresh.amount,
                           chainId: fresh.chain_id, usdt: fresh.payment.usdt, context: `checkout:${fresh.id}`, onTransactionSubmitted: onSubmitted });
                     await fetch(`${base}/public/checkout/${encodeURIComponent(checkout.id)}/confirm`, {
                       method: 'POST',
@@ -807,16 +861,19 @@ export function BagsevenEmbed({
                   disabled={busy}
                   onClick={() =>
                     void act(async () => {
-                      const { address } = await connectAvalancheWallet(checkout.chain_id);
+                      const { address } = await connectAvalancheWallet(checkout.chain_id, walletProvider, connectedAddress || walletAddress || undefined);
+                      setConnectedAddress(address);
                       setMsg(`Connected ${address}`);
                     })
                   }
                 >
-                  Connect wallet only
+                  {connectedAddress ? `Connected ${connectedAddress.slice(0, 6)}…${connectedAddress.slice(-4)}` : 'Connect wallet only'}
                 </GhostBtn>
               ) : null}
-              <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+              <details open={Boolean(demoTx)}><summary style={{ cursor: 'pointer', fontSize: 12 }}>Already paid? Confirm your payment</summary>
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                 <input
+                  disabled={busy}
                   value={demoTx}
                   onChange={(e) => setDemoTx(e.target.value)}
                   placeholder="Or paste tx hash 0x…"
@@ -835,7 +892,7 @@ export function BagsevenEmbed({
                   disabled={busy || !demoTx || !checkout.plan}
                   onClick={() =>
                     void act(async () => {
-                      const authorization = await authorizeAvalanchePayment({
+                      const authorization = await authorizeAvalanchePayment({ provider: walletProvider, account: connectedAddress || walletAddress || undefined,
                         payment_tx: demoTx.trim(),
                         context: `checkout:${checkout.id}`,
                         chainId: checkout.chain_id,
@@ -866,7 +923,7 @@ export function BagsevenEmbed({
                 >
                   Confirm
                 </button>
-              </div>
+              </div></details>
             </div>
           )}
         </Card>
@@ -904,11 +961,18 @@ export function BagsevenEmbed({
 
   const body = (
     <div className="bagseven-embed" style={themedRoot}>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 12 }}>
+        {!walletAddress && walletAccounts.length > 1 && <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'var(--bs-muted)' }}>Paying account
+          <select aria-label="Paying account" value={connectedAddress} disabled={busy} onChange={event => setConnectedAddress(event.target.value)} style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid var(--bs-line)', background: 'var(--bs-card)', color: 'var(--bs-ink)', maxWidth: '100%' }}>
+            {walletAccounts.map((account, index) => <option key={account} value={account}>Account {index + 1} · {account.slice(0, 6)}…{account.slice(-4)}</option>)}
+          </select>
+        </label>}
+
         {walletSlot ?? <GhostBtn disabled={busy} onClick={() => void act(async () => {
-          const { address } = await connectAvalancheWallet(checkout?.chain_id ?? 43113);
+          const { address } = await connectAvalancheWallet(checkout?.chain_id ?? plans[0]?.payment?.chain_id ?? 43113, walletProvider, connectedAddress || walletAddress || undefined);
+          setConnectedAddress(address);
           setMsg(`Wallet connected: ${address}`);
-        })}>Connect wallet</GhostBtn>}
+        })}>{connectedAddress ? `Wallet ${connectedAddress.slice(0, 6)}…${connectedAddress.slice(-4)}` : 'Connect wallet'}</GhostBtn>}
       </div>
       {resolved ? (
         <div
