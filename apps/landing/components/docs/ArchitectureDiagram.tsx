@@ -4,13 +4,13 @@ import { useState } from 'react';
 import { ArrowRight, CheckCircle2, CreditCard, ShieldCheck } from 'lucide-react';
 
 const flows = [
-  { id: 'access', title: 'Prepaid access', icon: CheckCircle2, description: 'Use credits the customer has already paid for. No new USDT transfer and no funded mandate required.',
+  { id: 'access', title: 'Prepaid access', icon: CheckCircle2, description: 'Use credits the customer has already paid for. No new USDC transfer and no funded mandate required.',
     steps: [{ label: 'Application or agent', detail: 'SDK request or MCP paid_run' }, { label: 'Daemon', detail: 'Authenticate and check holder / worker scope' }, { label: 'Registry grant', detail: 'Check enabled, expiry, and credit balance' }, { label: 'Consume credits', detail: 'Meter the feature with an idempotency key' }, { label: 'Feature access', detail: 'Your service honors the access result' }],
     truth: 'Authority: the living entitlement and its remaining service credits.' },
   { id: 'checkout', title: 'Customer checkout', icon: CreditCard, description: 'The customer pays the provider directly. The backend verifies payment evidence before creating access.',
-    steps: [{ label: 'Plan and session', detail: 'Provider, holder, price, and feature' }, { label: 'Customer wallet', detail: 'Approve the configured USDT transfer' }, { label: 'Avalanche', detail: 'USDT settles to the provider wallet' }, { label: 'Daemon verification', detail: 'Verify receipt, payer signature, and payment reuse' }, { label: 'Registry entitlement', detail: 'Create credits and a paid-through time' }],
+    steps: [{ label: 'Plan and session', detail: 'Provider, holder, price, and feature' }, { label: 'Customer wallet', detail: 'Approve payment; monthly plans also need an explicit allowance' }, { label: 'Avalanche', detail: 'The plan’s USDC payment settles to its provider' }, { label: 'Daemon verification', detail: 'Verify receipt, payer signature, and payment reuse' }, { label: 'Registry entitlement', detail: 'Create credits and a paid-through time' }],
     truth: 'Authority: verified payment evidence, followed by a living grant. The separate 0.1% provider fee is recorded, not split from this transfer.' },
-  { id: 'payment', title: 'New agent payment', icon: ShieldCheck, description: 'Spend USDT within an owner-authorized budget. The required grant and the mandate must both permit the operation.',
+  { id: 'payment', title: 'New agent payment', icon: ShieldCheck, description: 'Spend USDC within an owner-authorized budget. The required grant and the mandate must both permit the operation.',
     steps: [{ label: 'MCP agent', detail: 'Request bagseven_fetch payment' }, { label: 'Daemon', detail: 'Resolve active worker and payment entitlement' }, { label: 'Policy', detail: 'Verify signed intent and reserve authorization' }, { label: 'Mandate contract', detail: 'Enforce caps, vault funds, and worker allocation' }, { label: 'Settle and meter', detail: 'Execute payment and update the request / grant state' }],
     truth: 'Authority: a living payment entitlement plus on-chain spending limits. A database active flag alone is insufficient.' },
 ];

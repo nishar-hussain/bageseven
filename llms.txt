@@ -1,6 +1,6 @@
 # Bagseven
 
-Avalanche C-Chain paid access and agent spending. Fuji chain 43113; mainnet 43114. Payment token is explicitly configured with AVALANCHE_USDC and must have six decimals.
+Avalanche C-Chain paid access and agent spending. Current live configuration targets public Fuji chain 43113. Mainnet 43114 is supported by network helpers but is not a verified launch here. Payment token is explicitly configured with AVALANCHE_USDC and must have six decimals.
 
 Email proves inbox control. Wallet ownership uses a signed, expiring account-bound message. Neither proves unique humanity. Browser uses console BFF APIs; service keys remain server-side.
 
@@ -16,11 +16,15 @@ SDK: @bagseven/sdk; browser wallet helpers connectAvalancheWallet/payStablecoinO
 
 Code: services/daemon/src/grants.ts, billing.ts, subscriptions.ts, avalanche-payment.ts; packages/entitlements/src/avalanche-store.ts; packages/contracts/src/BagEntitlementRegistry.sol; scripts/bagseven-mcp.ts and mcp-account-auth.ts.
 
-Isolated x402: separately approved encrypted payment signer; mandate-enforced funding; durable jobs; EIP-3009 nonce/transfer reconciliation; no refund while a payment signature can settle. Use bagseven_x402_payment for status. Migration 0019 and separate X402_PAYMENT_ENCRYPTION_KEY required.
-Builder: /app/builder customizes one complete customer embed (cmp_customer): plans, wallets, checkout, prepaid credits and renewals. Drafts and explicit published snapshots persist in PostgreSQL with provider scope and revision checks; apply migration 0020. Hosted iframe credentials use an exact-origin parent-window postMessage handshake, never new token-bearing URLs. React and legacy standalone components remain supported.
+Isolated x402: separately approved encrypted payment signer; mandate-enforced funding; durable jobs; EIP-3009 nonce/transfer reconciliation; no refund while a payment signature can settle. Use bagseven_x402_payment for status. Apply all migrations through 0022 and preserve the separate daemon-only X402_PAYMENT_ENCRYPTION_KEY.
+Builder: /app/builder customizes one complete customer embed (cmp_customer): plans, wallets, checkout, prepaid credits and renewals. Drafts and explicit published snapshots persist in PostgreSQL with provider scope and revision checks; apply all migrations through 0022. Hosted iframe credentials use an exact-origin parent-window postMessage handshake, never new token-bearing URLs. React and legacy standalone components remain supported.
 
 Public Fuji activation: pnpm fuji:registry deploy (local keystore approval), pnpm fuji:prepare, pnpm fuji:activate --apply. A separate public-chain database excludes Anvil fixtures. Existing local product ports remain unchanged; hosting is a separate step. Provider gas and customer financial approvals must be newly signed.
 
 Customer billing: /app/customers lists provider-scoped checkout holders. /app/invoices lists issued documents and own purchases. Migration 0022 snapshots invoice terms atomically with checkout/renewal journals; verified payments produce receipts, separately from entitlement fulfillment. Documents are private to issuer and exact holder, printable, and do not assess taxes or auto-send email. Historical unrecorded token/payment times remain unknown.
 
-Account onboarding: email code, wallet connection and ownership signature. Saved wallet bindings persist after disconnect. Reconnect never implicitly replaces an account wallet. Explicit replacement requires a fresh inbox proof and new wallet signature; server preflight and submission both enforce it. Public-Fuji local mode does not return development auth codes or links unless explicit non-production DEV_MODE=true is selected.
+Account onboarding: email code, wallet connection and ownership signature. Saved wallet bindings persist after disconnect. Reconnect never implicitly replaces an account wallet. Explicit replacement requires a fresh inbox proof and new wallet signature; server preflight and submission both enforce it. Public-Fuji local mode uses DEV_MODE=false and returns no development auth codes or links. Preview hints require explicit DEV_MODE=true outside production.
+
+Wallet approval coordination: shared withWalletOperation blocks competing actions and uses same-origin Web Locks when available. No automatic retries or timer-based release of live approvals. A wallet -32002 requires manual review/dismissal in the wallet; acknowledging the application reminder sends nothing.
+
+Documentation: /docs/introduction, /docs/quickstart, /docs/guides/authentication, /docs/guides/builder, /docs/guides/subscriptions, /docs/guides/customers-invoices, /docs/guides/provider-gas, /docs/guides/x402, /docs/guides/mcp, /docs/troubleshooting. Repository details: README.md, docs/PRODUCT.md, docs/DEVELOPERS.md, docs/HOSTING.md, docs/DECISIONS.md, docs/design.md.

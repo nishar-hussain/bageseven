@@ -29,3 +29,9 @@ Facilitator operations sit behind a versioned adapter. On 2026-11-12, PayAI's li
 ## Billing documents are payment evidence, not access authority
 
 Invoice terms are private PostgreSQL snapshots, committed atomically with checkout creation or a renewal journal. Payment verification can precede entitlement fulfillment; a receipt must preserve that distinction. Deterministic source keys deduplicate initial subscription and renewal retries. A conflicting transaction or payer is an error, not an overwrite. Historic missing token/payment-time data stays unknown. Invoice access is restricted to the issuing provider and exact billed holder. This changes neither Avalanche entitlement authority nor wallet payment approval.
+
+## Email-first account binding and explicit wallet actions
+
+Email OTP proves inbox control. A nonce/domain-bound, expiring signature establishes a first wallet binding. Returning sessions hydrate the durable profile; browser disconnect preserves it. Reconnecting the same address does not create a replacement or require a new account-linking signature. Another address is an explicit replacement: fresh inbox proof is checked before preparing the challenge and again at signed submission, with a compare-and-set database update. Financial permissions and payouts retain their original owners and recipients until changed through their own approved flows.
+
+The browser coordinates whole wallet actions with shared state and same-origin Web Locks. Competing actions fail immediately rather than queue. No timer releases a live approval, no transaction is automatically retried, and the app cannot cancel an extension-owned pending request. Acknowledging the reminder changes UI state only. Existing registry connectivity is separate from optional deployment of another registry.
