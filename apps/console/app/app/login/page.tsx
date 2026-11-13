@@ -33,14 +33,23 @@ function LoginForm() {
     [next],
   );
 
+  const readJson = async (response: Response) => {
+    const text = await response.text();
+    if (!text) return {} as { error?: string; challenge?: string; email?: string; dev_hint?: string };
+    try {
+      return JSON.parse(text) as { error?: string; challenge?: string; email?: string; dev_hint?: string };
+    } catch {
+      throw Error(response.ok ? 'Unexpected sign-in response' : `Sign-in failed (${response.status})`);
+    }
+  };
   const sendCode = async (event: React.FormEvent) => {
     event.preventDefault(); if (busy) return;
     setBusy(true); setError(false); setMessage('Sending your verification code…');
     try {
       const response = await fetch('/api/auth/email/start', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email }), signal: AbortSignal.timeout(20000) });
-      const body = await response.json();
+      const body = await readJson(response);
       if (!response.ok) throw Error(body.error || 'Could not send your code');
-      setChallenge(body.challenge); setCode('');
+      setChallenge(body.challenge ?? ''); setCode('');
       setMessage(body.dev_hint ? 'Development code: ' + body.dev_hint : 'Code sent to ' + email + '. Enter it here within 10 minutes.');
     } catch (e) { setError(true); setMessage(e instanceof Error ? e.message : 'Could not send your code'); }
     finally { setBusy(false); }
@@ -50,7 +59,7 @@ function LoginForm() {
     setBusy(true); setError(false); setMessage('Verifying your email…');
     try {
       const response = await fetch('/api/auth/email/verify', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code, challenge }), signal: AbortSignal.timeout(20000) });
-      const body = await response.json(); if (!response.ok) throw Error(body.error || 'Invalid or expired code');
+      const body = await readJson(response); if (!response.ok) throw Error(body.error || 'Invalid or expired code');
       window.location.replace(next);
     } catch (e) { setError(true); setMessage(e instanceof Error ? e.message : 'Could not verify your email'); setBusy(false); }
   };
