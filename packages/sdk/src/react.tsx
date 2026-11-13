@@ -1,4 +1,5 @@
 'use client';
+export { WalletOperationBoundary } from './wallet-notice.js';
 
 import {
   createContext,

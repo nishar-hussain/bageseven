@@ -1,0 +1,245 @@
+.page {
+  min-height: 100svh;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: var(--dash-bg);
+  color: var(--ink);
+}
+.story {
+  background: var(--blue);
+  color: white;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 46px 52px;
+  position: relative;
+  overflow: hidden;
+}
+.story:after {
+  content: '';
+  position: absolute;
+  width: 600px;
+  height: 600px;
+  border: 1px solid #ffffff20;
+  border-radius: 50%;
+  bottom: -260px;
+  right: -280px;
+  box-shadow:
+    0 0 0 65px #ffffff05,
+    0 0 0 130px #ffffff04;
+  pointer-events: none;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font:
+    30px Georgia,
+    serif;
+  letter-spacing: -1px;
+}
+.brand img {
+  filter: invert(1);
+  mix-blend-mode: screen;
+}
+.story h2 {
+  font:
+    clamp(50px, 5.4vw, 82px)/1.03 Georgia,
+    serif;
+  letter-spacing: -3px;
+  margin: 60px 0 25px;
+  max-width: 500px;
+}
+.story p {
+  font-size: 13px;
+  line-height: 1.8;
+  max-width: 320px;
+  color: #dce3ff;
+}
+.story small {
+  font:
+    9px ui-monospace,
+    monospace;
+  letter-spacing: 0.08em;
+  margin-top: 65px;
+}
+.formSide {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 55px 35px;
+}
+.form {
+  width: 100%;
+  max-width: 380px;
+}
+.eyebrow {
+  font:
+    9px ui-monospace,
+    monospace;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--blue);
+  margin-bottom: 22px;
+}
+.form h1 {
+  font:
+    44px/1.1 Georgia,
+    serif;
+  letter-spacing: -1.5px;
+  margin: 0 0 17px;
+}
+.description {
+  font-size: 13px;
+  line-height: 1.85;
+  color: var(--muted);
+  margin-bottom: 30px;
+}
+.form form {
+  display: grid;
+  gap: 12px;
+}
+.form label {
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 0;
+}
+.form input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 12px 13px;
+  background: white;
+  font-size: 13px;
+  color: var(--ink);
+}
+.form input:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+}
+.form button {
+  background: var(--blue);
+  color: white;
+  border: 0;
+  border-radius: 5px;
+  padding: 13px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.form button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+.form button:hover {
+  background: var(--blue-d);
+}
+.note {
+  border-top: 1px solid var(--line);
+  margin-top: 30px;
+  padding-top: 20px;
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.8;
+}
+.message {
+  margin-top: 20px;
+  padding: 14px;
+  border: 1px solid #112d9430;
+  background: var(--blue-t);
+  color: var(--blue);
+  font-size: 12px;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+.messageError {
+  background: var(--warn-t);
+  color: var(--warn);
+  border-color: #a8480f30;
+}
+.steps {
+  display: flex;
+  gap: 9px;
+  margin-bottom: 23px;
+}
+.steps span {
+  font:
+    9px ui-monospace,
+    monospace;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+.steps span:last-child {
+  color: var(--blue);
+  background: var(--blue-t);
+  border-color: #112d9420;
+}
+.wallet {
+  padding: 24px 0;
+  border-block: 1px solid var(--line);
+}
+.continue {
+  width: 100%;
+  margin-top: 18px;
+}
+.back {
+  display: inline-block;
+  margin-top: 23px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.back:hover {
+  color: var(--blue);
+}
+.form .changeEmail { width: auto; background: transparent; color: var(--blue); padding: 8px 0; font-size: 12px; border: 0; }
+.form input:disabled { opacity: .65; }
+@media (max-width: 850px) {
+  .page {
+    grid-template-columns: 0.85fr 1fr;
+  }
+  .story {
+    padding: 35px 30px;
+  }
+  .story h2 {
+    font-size: 54px;
+  }
+  .formSide {
+    padding: 40px 25px;
+  }
+}
+@media (max-width: 650px) {
+  .page {
+    display: flex;
+    flex-direction: column;
+  }
+  .story {
+    padding: 24px;
+  }
+  .story h2 {
+    font-size: 42px;
+    margin: 34px 0 0;
+    letter-spacing: -1.7px;
+  }
+  .story > div > p,
+  .story small {
+    display: none;
+  }
+  .brand {
+    font-size: 26px;
+  }
+  .formSide {
+    padding: 35px 24px 45px;
+    flex: 1;
+  }
+  .form h1 {
+    font-size: 36px;
+  }
+  .description {
+    font-size: 12px;
+    margin-bottom: 25px;
+  }
+  .note {
+    font-size: 10px;
+  }
+}

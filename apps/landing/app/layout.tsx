@@ -2,9 +2,9 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Bagseven — Agents spend under a mandate',
+  title: 'Bagseven — Access, on your terms',
   description:
-    'Humans mint a public, expiring entitlement on Registry. Money settles on Avalanche. Unique humans via email and wallet. SDK + MCP is the product.',
+    'Plans, credits and agent access, connected on Avalanche. Bring checkout, subscriptions and customer entitlements into your app with one Bagseven embed.',
   icons: { icon: '/icon.svg' },
 };
 

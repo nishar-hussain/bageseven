@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { authorizeAvalanchePayment, payStablecoinOnAvalanche, subscribeOnAvalanche, cancelAvalancheSubscription } from './wallet.js';
+import { connectAvalancheWallet, authorizeAvalanchePayment, payStablecoinOnAvalanche, subscribeOnAvalanche, cancelAvalancheSubscription } from './wallet.js';
 const address = '0x1111111111111111111111111111111111111111';
 const hash = `0x${'ab'.repeat(32)}`;
 let request: ReturnType<typeof vi.fn>;
@@ -17,6 +17,16 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 describe('buyer wallet checkout', () => {
+  it('does not open account or network prompts when the wallet is already connected to Fuji', async () => {
+    const original = request.getMockImplementation()!;
+    request.mockImplementation(async args => {
+      if (args.method === 'eth_accounts') return [address];
+      if (['wallet_switchEthereumChain', 'eth_requestAccounts'].includes(args.method)) throw { code: -32002, message: 'A request is already pending in your wallet' };
+      return original(args);
+    });
+    expect((await connectAvalancheWallet()).address).toBe(address);
+    expect(request.mock.calls.map(([args]) => args.method)).toEqual(['eth_accounts', 'eth_chainId', 'eth_chainId']);
+  });
   it('authorizes a bounded allowance before subscribing and preserves the payment receipt', async () => {
     const original = request.getMockImplementation()!;
     request.mockImplementation(async args => args.method === 'eth_call' ? '0x0' : original(args));

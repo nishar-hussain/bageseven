@@ -1,4 +1,6 @@
 /** Browser wallet helpers for Avalanche C-Chain and Fuji. */
+import { withWalletOperation } from './wallet-operations.js';
+export { withWalletOperation, getWalletOperation, subscribeWalletOperation, dismissWalletReminder } from './wallet-operations.js';
 
 export const AVALANCHE_FUJI = {
   chainId: 43113,
@@ -36,17 +38,18 @@ function walletNetwork(chainId: number) {
   throw new Error('Unsupported Avalanche network');
 }
 
-export async function connectAvalancheWallet(chainId = 43113): Promise<{ address: string; provider: EthereumProvider }> {
+async function connectAvalancheWalletImpl(chainId = 43113): Promise<{ address: string; provider: EthereumProvider }> {
   const network = walletNetwork(chainId);
   const provider = pickProvider();
   if (!provider) {
     throw new Error('No EVM wallet found. Connect an Avalanche-compatible wallet to Fuji (43113).');
   }
-  const accounts = (await provider.request({ method: 'eth_requestAccounts' })) as string[];
+  const existing = await provider.request({ method: 'eth_accounts' });
+  const accounts = (Array.isArray(existing) && existing.length ? existing : await provider.request({ method: 'eth_requestAccounts' })) as string[];
   const address = accounts[0];
   if (!address) throw new Error('Wallet returned no accounts');
   try {
-    await provider.request({
+    if (Number(await provider.request({ method: 'eth_chainId' })) !== chainId) await provider.request({
       method: 'wallet_switchEthereumChain',
       params: [{ chainId: network.chainIdHex }],
     });
@@ -89,8 +92,8 @@ function encodeUsdtTransfer(to: string, amountHuman: string): string {
 }
 
 /** Wallet authorization binds a visible transaction to exactly one purchase. */
-export async function authorizeAvalanchePayment(input: { payment_tx: string; context: string; chainId?: number }): Promise<{ customer_wallet: string; payment_signature: string }> {
-  const { address, provider } = await connectAvalancheWallet(input.chainId ?? 43113);
+async function authorizeAvalanchePaymentImpl(input: { payment_tx: string; context: string; chainId?: number }): Promise<{ customer_wallet: string; payment_signature: string }> {
+  const { address, provider } = await connectAvalancheWalletImpl(input.chainId ?? 43113);
   const message = `Bagseven payment confirmation\nContext: ${input.context}\nChain: ${input.chainId ?? 43113}\nTransaction: ${input.payment_tx.toLowerCase()}`;
   const hex = '0x' + Array.from(new TextEncoder().encode(message)).map((v) => v.toString(16).padStart(2, '0')).join('');
   const signature = await provider.request({ method: 'personal_sign', params: [hex, address] });
@@ -98,7 +101,7 @@ export async function authorizeAvalanchePayment(input: { payment_tx: string; con
   return { customer_wallet: address, payment_signature: signature };
 }
 
-export async function payStablecoinOnAvalanche(input: {
+async function payStablecoinOnAvalancheImpl(input: {
   merchantWallet: string;
   amount: string;
   usdt?: string;
@@ -106,7 +109,7 @@ export async function payStablecoinOnAvalanche(input: {
   context?: string;
   onTransactionSubmitted?: (hash: string) => void;
 }): Promise<{ payment_tx: string; customer_wallet: string; payment_signature?: string }> {
-  const { address, provider } = await connectAvalancheWallet(input.chainId ?? 43113);
+  const { address, provider } = await connectAvalancheWalletImpl(input.chainId ?? 43113);
   const usdt = input.usdt || ((input.chainId ?? 43113) === 43113 ? AVALANCHE_FUJI.usdt : '');
   if (!/^0x[0-9a-fA-F]{40}$/.test(usdt)) throw new Error('The checkout has no valid stablecoin contract');
   const data = encodeUsdtTransfer(input.merchantWallet, input.amount);
@@ -130,7 +133,7 @@ export async function payStablecoinOnAvalanche(input: {
       if (receipt.status !== '0x1') throw new Error('Avalanche payment reverted');
       const tip = await provider.request({ method: 'eth_blockNumber' }) as string;
       if (BigInt(tip) - BigInt(receipt.blockNumber) >= 1n) {
-        const authorization = input.context ? await authorizeAvalanchePayment({ payment_tx, context: input.context, chainId: input.chainId }) : { customer_wallet: address };
+        const authorization = input.context ? await authorizeAvalanchePaymentImpl({ payment_tx, context: input.context, chainId: input.chainId }) : { customer_wallet: address };
         return { payment_tx, ...authorization };
       }
     }
@@ -154,13 +157,13 @@ async function confirmedWalletTransaction(provider: EthereumProvider, hash: stri
 }
 
 /** Explicit customer action: bounded ERC-20 approval, then the fixed-plan subscription. */
-export async function subscribeOnAvalanche(input: {
+async function subscribeOnAvalancheImpl(input: {
   contract: string; subscribeData: string; amount: string; usdt: string; chainId: number; checkoutId: string;
   onTransactionSubmitted?: (hash: string) => void;
 }) {
   for (const address of [input.contract, input.usdt]) if (!/^0x[\da-fA-F]{40}$/.test(address)) throw new Error('Invalid subscription address');
   if (!/^0x[\da-fA-F]{136}$/.test(input.subscribeData)) throw new Error('Invalid subscription transaction');
-  const { address, provider } = await connectAvalancheWallet(input.chainId);
+  const { address, provider } = await connectAvalancheWalletImpl(input.chainId);
   const [whole, fraction = ''] = input.amount.split('.');
   if (!/^\d+(\.\d{1,6})?$/.test(input.amount)) throw new Error('Invalid subscription amount');
   const amount = BigInt(whole!) * 1000000n + BigInt(fraction.padEnd(6, '0'));
@@ -178,12 +181,12 @@ export async function subscribeOnAvalanche(input: {
   const hash = await provider.request({ method: 'eth_sendTransaction', params: [{ from: address, to: input.contract, value: '0x0', data: input.subscribeData }] }) as string;
   input.onTransactionSubmitted?.(hash);
   await confirmedWalletTransaction(provider, hash);
-  return { payment_tx: hash, ...await authorizeAvalanchePayment({ payment_tx: hash, context: `checkout:${input.checkoutId}`, chainId: input.chainId }) };
+  return { payment_tx: hash, ...await authorizeAvalanchePaymentImpl({ payment_tx: hash, context: `checkout:${input.checkoutId}`, chainId: input.chainId }) };
 }
 
 /** Returns only after the paying wallet has signed and its cancellation has landed. */
-export async function cancelAvalancheSubscription(input: { contract: string; key: string; payer: string; chainId: number; cancelData: string }) {
-  const { address, provider } = await connectAvalancheWallet(input.chainId);
+async function cancelAvalancheSubscriptionImpl(input: { contract: string; key: string; payer: string; chainId: number; cancelData: string }) {
+  const { address, provider } = await connectAvalancheWalletImpl(input.chainId);
   if (address.toLowerCase() !== input.payer.toLowerCase()) throw new Error('Connect the wallet that pays this subscription');
   if (!/^0x[\da-fA-F]{40}$/.test(input.contract) || !/^0x[\da-fA-F]{64}$/.test(input.key) || !/^0x[\da-fA-F]{72}$/.test(input.cancelData)) throw new Error('Invalid cancellation transaction');
   const hash = await provider.request({ method: 'eth_sendTransaction', params: [{ from: address, to: input.contract, value: '0x0', data: input.cancelData }] }) as string;
@@ -191,8 +194,8 @@ export async function cancelAvalancheSubscription(input: { contract: string; key
   return hash;
 }
 
-export async function renewSubscriptionAllowance(input: { contract: string; payer: string; chainId: number; usdt: string; amount: string }) {
-  const { address, provider } = await connectAvalancheWallet(input.chainId);
+async function renewSubscriptionAllowanceImpl(input: { contract: string; payer: string; chainId: number; usdt: string; amount: string }) {
+  const { address, provider } = await connectAvalancheWalletImpl(input.chainId);
   if (address.toLowerCase() !== input.payer.toLowerCase()) throw new Error('Connect the wallet that pays this subscription');
   if (![input.contract, input.usdt].every(value => /^0x[\da-fA-F]{40}$/.test(value)) || !/^\d+(\.\d{1,6})?$/.test(input.amount)) throw new Error('Invalid allowance terms');
   const [whole, fraction = ''] = input.amount.split('.');
@@ -204,3 +207,15 @@ export async function renewSubscriptionAllowance(input: { contract: string; paye
     await confirmedWalletTransaction(provider, hash);
   }
 }
+
+export function connectAvalancheWallet(chainId = 43113) { return withWalletOperation("Connect wallet", () => connectAvalancheWalletImpl(chainId)); }
+
+export function authorizeAvalanchePayment(input: Parameters<typeof authorizeAvalanchePaymentImpl>[0]) { return withWalletOperation("Confirm purchase ownership", () => authorizeAvalanchePaymentImpl(input)); }
+
+export function payStablecoinOnAvalanche(input: Parameters<typeof payStablecoinOnAvalancheImpl>[0]) { return withWalletOperation("Pay for access", () => payStablecoinOnAvalancheImpl(input)); }
+
+export function subscribeOnAvalanche(input: Parameters<typeof subscribeOnAvalancheImpl>[0]) { return withWalletOperation("Authorize subscription", () => subscribeOnAvalancheImpl(input)); }
+
+export function cancelAvalancheSubscription(input: Parameters<typeof cancelAvalancheSubscriptionImpl>[0]) { return withWalletOperation("Cancel subscription", () => cancelAvalancheSubscriptionImpl(input)); }
+
+export function renewSubscriptionAllowance(input: Parameters<typeof renewSubscriptionAllowanceImpl>[0]) { return withWalletOperation("Renew subscription allowance", () => renewSubscriptionAllowanceImpl(input)); }

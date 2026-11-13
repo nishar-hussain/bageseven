@@ -148,6 +148,20 @@
       "when": 1795305600000,
       "tag": "0020_embed_designs",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1795392000000,
+      "tag": "0021_provider_reporting",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1795478400000,
+      "tag": "0022_billing_documents",
+      "breakpoints": true
     }
   ]
 }

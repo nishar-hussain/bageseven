@@ -57,7 +57,7 @@ export default function FeaturesPage() {
     <div className="mx-auto max-w-5xl space-y-5">
       <PageHeader
         title="Features"
-        description="Gate anything — boolean on/off or numeric credits. Living grants are Registry-powered until paid_through."
+        description="Define what customers can use: time-based feature access or metered credits, backed by the Avalanche registry."
         action={
           <PrimaryButton onClick={() => setShowCreate((v) => !v)}>{showCreate ? 'Close' : 'New feature'}</PrimaryButton>
         }

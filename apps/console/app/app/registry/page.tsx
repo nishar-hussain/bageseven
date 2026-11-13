@@ -74,7 +74,11 @@ export default function RegistryStudioPage() {
         }
       />
 
-      <FujiRegistryDeployment />
+      {registryLive ? <details className="rounded-2xl border border-[var(--line)] bg-white p-5">
+        <summary className="cursor-pointer text-sm font-semibold">Deploy or verify a separate registry</summary>
+        <p className="my-4 text-sm text-[var(--muted)]">The platform already has a connected registry. Selling plans and managing access do not require another deployment. Use this advanced flow only to create or verify a separate registry.</p>
+        <FujiRegistryDeployment />
+      </details> : <FujiRegistryDeployment />}
       <div className="grid gap-4 md:grid-cols-3">
         <SoftCard className="p-4">
           <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">Store</div>

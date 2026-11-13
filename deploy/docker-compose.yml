@@ -30,8 +30,24 @@ services:
       timeout: 5s
       retries: 10
 
-  anvil:
+  # Docker creates named volumes as root; Foundry runs as UID 1000.
+  # Prepare the mount before Anvil so periodic snapshots survive restarts.
+  anvil-state-init:
+    profiles: ["local-anvil"]
     image: ghcr.io/foundry-rs/foundry:stable
+    user: "0:0"
+    entrypoint: ["sh", "-c"]
+    command: ["chown 1000:1000 /data && chmod 700 /data"]
+    volumes:
+      - avalanche-anvil-data:/data
+    restart: "no"
+
+  anvil:
+    profiles: ["local-anvil"]
+    image: ghcr.io/foundry-rs/foundry:stable
+    depends_on:
+      anvil-state-init:
+        condition: service_completed_successfully
     entrypoint: ["anvil"]
     command: ["--host", "0.0.0.0", "--chain-id", "43113", "--state", "/data/state.json", "--state-interval", "1"]
     ports:

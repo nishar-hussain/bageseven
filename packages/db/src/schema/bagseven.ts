@@ -214,7 +214,7 @@ export const billingPlans = pgTable(
     active: text('active').notNull().default('true'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index('idx_billing_plans_feature').on(t.feature)],
+  (t) => [index('idx_billing_plans_feature').on(t.feature), index('idx_billing_plans_provider').on(t.providerId,t.id)],
 );
 
 export const checkoutSessions = pgTable(
@@ -233,6 +233,7 @@ export const checkoutSessions = pgTable(
     platformFeeAmount: text('platform_fee_amount').notNull().default('0'),
     customerWallet: text('customer_wallet'),
     paymentTx: text('payment_tx'),
+    paymentToken: text('payment_token'),
     grantId: text('grant_id'),
     successUrl: text('success_url'),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
@@ -240,6 +241,7 @@ export const checkoutSessions = pgTable(
   },
   (t) => [
     index('idx_checkout_sessions_plan').on(t.planId),
+    index('idx_checkout_sessions_plan_created').on(t.planId,t.createdAt.desc(),t.id.desc()),
     index('idx_checkout_sessions_holder').on(t.holder),
     index('idx_checkout_sessions_status').on(t.status),
     uniqueIndex('idx_checkout_payment_unique').on(t.chainId, t.paymentTx),
@@ -266,12 +268,31 @@ export const billingSubscriptions = pgTable('billing_subscriptions', {
   nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull(),
   status: text('status').notNull(),
   data: jsonb('data').notNull(),
-}, t => [index('idx_subscription_due').on(t.status, t.nextAttemptAt), index('idx_subscription_holder').on(t.holder)]);
+}, t => [index('idx_subscription_due').on(t.status, t.nextAttemptAt), index('idx_subscription_holder').on(t.holder), index('idx_subscription_provider_status').on(t.providerId,t.status,t.nextAttemptAt,t.id)]);
 export const subscriptionPeriods = pgTable('subscription_periods', {
   id: text('id').primaryKey(),
   subscriptionId: text('subscription_id').notNull().references(() => billingSubscriptions.id),
   data: jsonb('data').notNull(),
 });
+
+/** Private invoice snapshots; only verified payment journals can mark these paid. */
+export const billingDocuments = pgTable('billing_documents', {
+  id: text('id').primaryKey(),
+  source: text('source').notNull().unique(),
+  providerId: text('provider_id').notNull(),
+  holder: text('holder').notNull(),
+  terms: jsonb('terms').notNull(),
+  status: text('status').notNull().default('OPEN'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }),
+  paidRecordedAt: timestamp('paid_recorded_at', { withTimezone: true }),
+  paymentTx: text('payment_tx'),
+  payer: text('payer'),
+}, t => [
+  index('idx_billing_documents_provider_created').on(t.providerId, t.createdAt.desc(), t.id.desc()),
+  index('idx_billing_documents_provider_holder').on(t.providerId, t.holder),
+  index('idx_billing_documents_holder_created').on(t.holder, t.createdAt.desc(), t.id.desc()),
+]);
 
 /** Every on-chain action for audit. */
 /** Private discovery metadata; Avalanche contract state remains authoritative for access. */

@@ -1,3 +1,4 @@
+import { appDestination } from '../../../../lib/auth-destination';
 import { NextRequest, NextResponse } from 'next/server';
 import { attachSessionCookie, consumeMagicToken } from '../../../../lib/auth';
 import { accountProfiles } from '../../../../lib/account-profiles';
@@ -14,7 +15,7 @@ export async function GET(req: NextRequest) {
     url.search = 'error=expired';
     return NextResponse.redirect(url);
   }
-  const dest = next.startsWith('/') && !next.startsWith('//') ? next : '/app';
+  const dest = appDestination(next);
   const res = NextResponse.redirect(new URL(dest, req.nextUrl.origin));
   const profile = await accountProfiles().ensure(email);
   return attachSessionCookie(res, {

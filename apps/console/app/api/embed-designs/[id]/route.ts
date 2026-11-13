@@ -7,6 +7,11 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   try {
     const config = await designStore().published(id);
     if (!config) return NextResponse.json({ error: 'This page is not published.' }, { status: 404 });
-    return NextResponse.json({ config: validateDesign(config) }, { headers: { 'cache-control': 'no-store', 'access-control-allow-origin': '*' } });
-  } catch { return NextResponse.json({ error: 'Page unavailable. Try again shortly.' }, { status: 503 }); }
+    return NextResponse.json(
+      { config: validateDesign(config) },
+      { headers: { 'cache-control': 'no-store', 'access-control-allow-origin': '*' } },
+    );
+  } catch {
+    return NextResponse.json({ error: 'Page unavailable. Try again shortly.' }, { status: 503 });
+  }
 }

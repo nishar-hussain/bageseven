@@ -7,6 +7,7 @@ export function errorMessage(error: unknown, fallback = 'Request failed. Please 
     if (typeof value === 'string') {
       const text = value.trim();
       if (!text || text === '[object Object]') return;
+      if (/returned no data.*0x/i.test(text)) return 'Contract data is unavailable on the selected network. Check the deployment and contract address in Network & gas, then retry.';
       if (text.startsWith('{')) { try { return read(JSON.parse(text), depth + 1); } catch { /* Plain message. */ } }
       return text;
     }

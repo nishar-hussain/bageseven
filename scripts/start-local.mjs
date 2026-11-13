@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 /** Start/stop this checkout's existing product services, with one managed owner. */
+import process from 'node:process';
+import console from 'node:console';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -24,7 +26,7 @@ function run(args) {
   return new Promise((resolveRun, reject) => {
     child = spawn(process.execPath, [turbo, ...args], { cwd: root, stdio: 'inherit', env: process.env });
     child.once('error', reject);
-    child.once('exit', (code, signal) => { child = undefined; stopping || code === 0 ? resolveRun() : reject(new Error(`Workspace command exited ${code ?? signal}`)); });
+    child.once('exit', (code, signal) => { child = undefined; if (stopping || code === 0) resolveRun(); else reject(new Error(`Workspace command exited ${code ?? signal}`)); });
   });
 }
 
@@ -92,6 +94,13 @@ async function main() {
   console.log('Building workspace libraries before starting services…');
   await run(['run', 'build', '--filter=./packages/*', '--env-mode=loose']);
   if (stopping) return;
+  if (process.env.DEV_MODE !== 'true' && process.env.AVALANCHE_NETWORK === 'fuji') {
+    const { createPublicClient, http } = await import('viem');
+    const { avalancheFuji } = await import('viem/chains');
+    const { assertPublicFuji } = await import('@bagseven/onchain');
+    await assertPublicFuji(createPublicClient({chain:avalancheFuji,transport:http(process.env.AVALANCHE_RPC_URL)}));
+    console.log('Verified public Fuji genesis; Anvil with the same chain ID is not accepted.');
+  }
   await ensurePortsAvailable(ports, root, { log: console.log });
   console.log(`Starting Bagseven: console :3000, landing :3001, gateway :${ports[2]}, daemon :${ports[3]}, policy :${ports[4]}. Stop with Ctrl+C or pnpm stop:local.`);
   await run(['run', 'dev', '--env-mode=loose', '--filter=@bagseven/gateway', '--filter=@bagseven/policy', '--filter=@bagseven/daemon', '--filter=@bagseven/console', '--filter=@bagseven/landing', '--concurrency=12']);

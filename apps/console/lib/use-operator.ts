@@ -1,5 +1,6 @@
 'use client';
 
+import { useAccountWallet } from '../components/wallet/AccountWallet';
 import { useEffect, useState } from 'react';
 import { entitlementsApi, type MumbaiStatus } from './entitlements-client';
 
@@ -15,57 +16,19 @@ export type Operator = {
 
 /** Verified email and signed wallet for human-friendly defaults. */
 export function useOperator(): Operator {
-  const [email, setEmail] = useState<string | null>(null);
-  const [emailVerified, setEmailVerified] = useState(false);
-  const [walletAddress, setWalletAddress] = useState<string | null>(null);
-  const [mock, setMock] = useState(false);
-  const [holder, setHolder] = useState('');
+  const account = useAccountWallet();
   const [status, setStatus] = useState<MumbaiStatus | null>(null);
-  const [loading, setLoading] = useState(true);
-
+  const [statusLoading, setStatusLoading] = useState(true);
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
-      try {
-        const [meRes, st] = await Promise.all([
-          fetch('/api/me').then(async (r) =>
-            r.ok
-              ? ((await r.json()) as {
-                  email?: string | null;
-                  email_verified?: boolean;
-                  wallet_address?: string | null;
-                  mock?: boolean;
-                  holder?: string;
-                })
-              : null,
-          ),
-          entitlementsApi.status().catch(() => null),
-        ]);
-        if (cancelled) return;
-        setEmail(meRes?.email ?? null);
-        setEmailVerified(Boolean(meRes?.email_verified));
-        setWalletAddress(meRes?.wallet_address ?? null);
-        setMock(Boolean(meRes?.mock));
-        setHolder(meRes?.holder ?? meRes?.email ?? '');
-        setStatus(st);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    void entitlementsApi.status().then(value => { if (!cancelled) setStatus(value); }).catch(() => undefined)
+      .finally(() => { if (!cancelled) setStatusLoading(false); });
+    return () => { cancelled = true; };
   }, []);
+  return { email: account.profile?.email ?? null, emailVerified: Boolean(account.profile?.email_verified),
+    walletAddress: account.profile?.wallet_address ?? null, mock: Boolean(account.profile?.mock),
+    holder: account.profile?.holder ?? '', status, loading: !account.loaded || statusLoading };
 
-  return {
-    email,
-    emailVerified,
-    walletAddress,
-    mock,
-    holder,
-    status,
-    loading,
-  };
 }
 
 /**

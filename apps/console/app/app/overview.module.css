@@ -1,0 +1,705 @@
+.overview {
+  max-width: 1240px;
+  margin: auto;
+  color: var(--ink);
+}
+.intro {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 24px;
+  margin-bottom: 29px;
+}
+.eyebrow {
+  font:
+    9px ui-monospace,
+    monospace;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.intro h1 {
+  font-size: 32px;
+  line-height: 1.2;
+  font-weight: 550;
+  letter-spacing: -1.2px;
+  margin: 0;
+}
+.intro p {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--muted);
+  margin: 9px 0 0;
+}
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.toolbar select,
+.toolbar button {
+  height: 34px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--ink);
+  font-size: 11px;
+  padding: 0 11px;
+}
+.toolbar button {
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+.toolbar > a {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 11px;
+  padding: 10px 13px;
+  background: var(--blue);
+  color: white;
+  border-radius: 5px;
+  margin-left: 5px;
+}
+.toolbar button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+.error {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  background: var(--warn-t);
+  border: 1px solid #a8480f20;
+  color: var(--warn);
+  padding: 13px 16px;
+  border-radius: 6px;
+  margin-bottom: 20px;
+}
+.error p {
+  flex: 1;
+  font-size: 12px;
+  margin: 0;
+  line-height: 1.6;
+}
+.error button {
+  font-size: 11px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-bottom: 24px;
+}
+.stat {
+  position: relative;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 20px;
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+.stat:hover {
+  border-color: #112d9460;
+  box-shadow: 0 3px 15px #10255a09;
+}
+.stat > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.stat > div svg {
+  color: #8a94aa;
+}
+.stat > strong {
+  display: block;
+  font-size: 32px;
+  font-weight: 550;
+  letter-spacing: -1px;
+  font-variant-numeric: tabular-nums;
+  margin-top: 20px;
+}
+.stat p {
+  font-size: 9px;
+  line-height: 1.7;
+  color: var(--muted);
+  margin: 9px 10px 0 0;
+}
+.statArrow {
+  position: absolute;
+  right: 16px;
+  bottom: 17px;
+  color: #8490a8;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.stat:hover .statArrow,
+.stat:focus-visible .statArrow {
+  opacity: 1;
+}
+.primaryGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.9fr) minmax(260px, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.panel {
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  min-width: 0;
+  overflow: hidden;
+}
+.panelHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  padding: 21px 22px;
+  border-bottom: 1px solid #edf0f5;
+}
+.panelHead h2 {
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1.5;
+  margin: 0;
+}
+.panelHead p {
+  font-size: 10px;
+  line-height: 1.6;
+  color: var(--muted);
+  margin: 5px 0 0;
+}
+.panelHead > a {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--blue);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.liveLabel {
+  font-size: 9px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.chartSummary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 22px;
+}
+.chartSummary > strong {
+  font-size: 27px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -1px;
+}
+.chartSummary > strong > span {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--muted);
+  letter-spacing: 0;
+  margin-left: 10px;
+}
+.chartSummary > div {
+  display: flex;
+  gap: 13px;
+  font-size: 9px;
+  color: var(--muted);
+}
+.chartSummary > div > span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.chartSummary i {
+  width: 6px;
+  height: 6px;
+  background: #dce3f8;
+  border-radius: 2px;
+}
+.chartSummary > div > span:last-child i {
+  background: var(--blue);
+}
+.chart {
+  height: 152px;
+  display: flex;
+  align-items: stretch;
+  gap: 3px;
+  margin: 0 22px;
+  background: repeating-linear-gradient(
+    to top,
+    transparent 0,
+    transparent 49px,
+    #edf0f7 50px,
+    transparent 51px
+  );
+  border-bottom: 1px solid var(--line);
+}
+.bar {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  border-radius: 3px 3px 0 0;
+  outline-offset: 2px;
+}
+.bar > span {
+  position: absolute;
+  bottom: 0;
+  left: 10%;
+  width: 80%;
+  border-radius: 2px 2px 0 0;
+  background: #dce3f8;
+  min-height: 1px;
+  transition: height 0.35s ease;
+}
+.bar > span:last-child {
+  background: var(--blue);
+  min-height: 0;
+}
+.bar:hover,
+.selectedBar {
+  background: #112d9410;
+}
+.chartAxis {
+  display: flex;
+  justify-content: space-between;
+  margin: 10px 22px;
+  font:
+    8px ui-monospace,
+    monospace;
+  color: var(--muted);
+}
+.chartDetail {
+  min-height: 32px;
+  margin: 15px 22px 17px;
+  font-size: 10px;
+  line-height: 1.7;
+  color: var(--muted);
+}
+.outcomes {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border-top: 1px solid var(--line);
+  background: #fcfcfd;
+}
+.outcomes > div {
+  padding: 18px 20px;
+  border-right: 1px solid var(--line);
+}
+.outcomes > div:last-child {
+  border: 0;
+}
+.outcomes strong {
+  font-size: 19px;
+  font-weight: 500;
+  display: block;
+}
+.outcomes span {
+  font-size: 9px;
+  display: block;
+  color: var(--muted);
+  margin-top: 5px;
+}
+.rightColumn {
+  display: grid;
+  gap: 16px;
+}
+.count,
+.countWarn {
+  font-size: 11px;
+  min-width: 23px;
+  height: 23px;
+  display: grid;
+  place-items: center;
+  background: var(--soft);
+  border-radius: 5px;
+  color: var(--muted);
+}
+.countWarn {
+  background: var(--warn-t);
+  color: var(--warn);
+}
+.allClear {
+  padding: 24px 22px 26px;
+}
+.allClear > svg {
+  color: var(--blue);
+  margin-bottom: 12px;
+}
+.allClear > strong {
+  display: block;
+  font-size: 11px;
+  font-weight: 500;
+}
+.allClear p {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.8;
+  margin: 9px 0 0;
+}
+.issueSummary {
+  font-size: 11px;
+  line-height: 1.6;
+  padding: 12px 22px;
+  color: var(--warn);
+}
+.issueSummary p {
+  margin: 5px 0;
+}
+.issue {
+  padding: 12px 22px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+}
+.issue svg {
+  color: var(--warn);
+  flex-shrink: 0;
+}
+.issue > span {
+  flex: 1;
+}
+.issue strong {
+  font-weight: 500;
+  display: block;
+}
+.issue small {
+  font-size: 9px;
+  color: var(--muted);
+  display: block;
+  margin-top: 5px;
+}
+.setup {
+  padding: 22px;
+  background: #f0f3fc;
+  border-color: #dce3f5;
+}
+.setup .eyebrow {
+  color: var(--blue);
+  font-size: 8px;
+}
+.setup h2 {
+  font-size: 17px;
+  letter-spacing: -0.4px;
+  font-weight: 500;
+  line-height: 1.4;
+  max-width: 260px;
+  margin: 0;
+}
+.setup p {
+  font-size: 10px;
+  line-height: 1.8;
+  color: var(--muted);
+  margin: 12px 0 17px;
+}
+.setup > a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 500;
+}
+.bottomGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.9fr) minmax(260px, 1fr);
+  gap: 20px;
+  margin-top: 20px;
+  align-items: start;
+}
+.tableWrap {
+  overflow: auto;
+}
+.tableWrap table {
+  border-collapse: collapse;
+}
+.tableWrap table {
+  width: 100%;
+  text-align: left;
+  font-size: 11px;
+}
+.tableWrap th {
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--muted);
+  padding: 12px 22px;
+  background: #fcfcfd;
+  white-space: nowrap;
+}
+.tableWrap td {
+  padding: 14px 22px;
+  border-top: 1px solid #edf0f5;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.tableWrap td strong {
+  font-weight: 500;
+  display: block;
+  font-size: 11px;
+}
+.tableWrap td small {
+  display: block;
+  font:
+    8px ui-monospace,
+    monospace;
+  color: var(--muted);
+  margin-top: 5px;
+}
+.status,
+.paid {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 9px;
+  background: #fafbfe;
+}
+.paid {
+  color: var(--blue);
+  background: #eef2fc;
+  border-color: #dce3f6;
+}
+.empty {
+  padding: 30px 22px;
+  font-size: 11px;
+  line-height: 1.8;
+  color: var(--muted);
+}
+div.empty {
+  text-align: center;
+  padding: 44px 25px;
+  min-height: 235px;
+}
+.empty > svg {
+  margin: 0 auto 15px;
+  color: #8b96ac;
+}
+.empty h3 {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+  margin: 0 0 8px;
+}
+.empty p {
+  font-size: 10px;
+  max-width: 300px;
+  margin: 0 auto 18px;
+}
+.empty a {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--blue);
+  font-size: 10px;
+}
+.planList {
+  padding: 0 22px;
+}
+.planList > a {
+  display: flex;
+  gap: 15px;
+  align-items: center;
+  padding: 17px 0;
+  border-bottom: 1px solid #edf0f5;
+}
+.planList > a:last-child {
+  border: 0;
+}
+.planList > a > span:first-child {
+  flex: 1;
+  min-width: 0;
+}
+.planList strong {
+  font-size: 11px;
+  font-weight: 500;
+  display: block;
+  overflow-wrap: anywhere;
+}
+.planList small {
+  font-size: 9px;
+  color: var(--muted);
+  display: block;
+  margin-top: 5px;
+}
+.planList > a > span:nth-child(2) {
+  text-align: right;
+}
+.planList svg {
+  color: var(--muted);
+}
+.note {
+  padding: 13px 22px;
+  font-size: 9px;
+  line-height: 1.8;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+  margin: 0;
+}
+.footnote {
+  font-size: 9px;
+  line-height: 1.8;
+  color: var(--muted);
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  margin-top: 22px;
+}
+.footnote a {
+  white-space: nowrap;
+  color: var(--blue);
+}
+.spinning {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (max-width: 1100px) {
+  .primaryGrid,
+  .bottomGrid {
+    grid-template-columns: minmax(0, 1.6fr) minmax(240px, 1fr);
+  }
+  .stats {
+    gap: 10px;
+  }
+  .stat {
+    padding: 16px;
+  }
+  .intro {
+    display: block;
+  }
+  .toolbar {
+    margin-top: 20px;
+  }
+  .panelHead {
+    padding: 18px;
+  }
+  .liveLabel {
+    display: none;
+  }
+  .outcomes > div {
+    padding: 16px 12px;
+  }
+}
+@media (max-width: 800px) {
+  .stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .primaryGrid,
+  .bottomGrid {
+    grid-template-columns: 1fr;
+  }
+  .rightColumn {
+    grid-template-columns: 1fr 1fr;
+  }
+  .intro {
+    margin-bottom: 22px;
+  }
+  .stat > strong {
+    margin-top: 15px;
+  }
+  .statArrow {
+    opacity: 1;
+  }
+  .stat p {
+    max-width: 170px;
+  }
+}
+@media (max-width: 500px) {
+  .rightColumn {
+    grid-template-columns: 1fr;
+  }
+  .toolbar > a {
+    margin-left: auto;
+    padding: 10px;
+    font-size: 10px;
+  }
+  .toolbar select {
+    font-size: 10px;
+    padding: 0 8px;
+  }
+  .stats {
+    gap: 9px;
+  }
+  .stat {
+    padding: 15px;
+  }
+  .stat > div {
+    font-size: 10px;
+  }
+  .stat > div svg {
+    display: none;
+  }
+  .stat p {
+    font-size: 8px;
+    min-height: 28px;
+    margin-right: 8px;
+  }
+  .stat > strong {
+    font-size: 29px;
+  }
+  .chartSummary > div {
+    font-size: 8px;
+    gap: 8px;
+  }
+  .chartSummary {
+    padding: 20px 17px;
+  }
+  .chartSummary > strong > span {
+    display: block;
+    font-size: 9px;
+    margin: 5px 0 0;
+  }
+  .chart {
+    margin-inline: 17px;
+    gap: 2px;
+    height: 130px;
+  }
+  .bar > span {
+    left: 0;
+    width: 100%;
+  }
+  .chartDetail {
+    margin-inline: 17px;
+  }
+  .outcomes span {
+    font-size: 8px;
+  }
+  .outcomes > div {
+    padding: 15px 10px;
+  }
+  .footnote {
+    display: block;
+  }
+  .footnote a {
+    display: block;
+    margin-top: 8px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stat,
+  .statArrow,
+  .bar > span {
+    transition: none;
+  }
+  .spinning {
+    animation: none;
+  }
+}

@@ -1,5 +1,6 @@
 /** Creates and removes its own local test database; never deletes application rows. */
 import assert from 'node:assert/strict';
+import { providerOverview, providerCheckouts } from '../apps/console/lib/provider-overview.ts';
 import { createRequire } from 'node:module';
 import { ProviderGasManager, SubscriptionAbi } from '../packages/onchain/dist/index.js';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
@@ -26,6 +27,43 @@ try {
   firstDb = createDb({ connectionString: url.toString() });
   secondDb = createDb({ connectionString: url.toString() });
   await migrate(firstDb, { migrationsFolder: 'packages/db/drizzle' });
+  // Provider overview is business-scoped, not holder-scoped. Another provider's
+  // sale to the same holder must not appear, while this provider's customers do.
+  await firstDb.$client.query(`insert into billing_plans(id,provider_id,feature,name,amount,active,merchant_wallet) values
+    ('overview-plan-a','overview-a','ocr','OCR pack','5','true','0x1111111111111111111111111111111111111111'),
+    ('overview-plan-b','overview-b','ocr','Other provider','99','true','0x2222222222222222222222222222222222222222'),
+    ('overview-old-a','overview-a','ocr','Archived','5','false','0x1111111111111111111111111111111111111111')`);
+  await firstDb.$client.query(`insert into checkout_sessions(id,plan_id,holder,status,amount,expires_at,created_at) values
+    ('overview-paid','overview-plan-a','customer-a','PAID','5',now()+interval '1 day',now()),
+    ('overview-pending','overview-plan-a','customer-b','PENDING','5',now()+interval '1 day',now()),
+    ('overview-expired','overview-plan-a','customer-c','PENDING','5',now()-interval '1 minute',now()),
+    ('overview-foreign','overview-plan-b','overview-a','PAID','99',now()+interval '1 day',now()),
+    ('overview-old','overview-plan-a','customer-a','PAID','5',now()-interval '40 days',now()-interval '40 days')`);
+  await firstDb.$client.query(`insert into billing_subscriptions(id,checkout_id,holder,provider_id,status,next_attempt_at,data) values
+    ('overview-sub','overview-paid','customer-a','overview-a','RECONCILIATION_REQUIRED',now(),'{"planId":"overview-plan-a"}')`);
+  const overview = await providerOverview(firstDb, 'overview-a', 7);
+  assert.equal(overview.metrics.paid, 1); assert.equal(overview.metrics.customers, 1);
+  assert.equal(overview.metrics.checkouts, 3); assert.equal(overview.metrics.pending, 1);
+  assert.equal(overview.metrics.expired, 1); assert.equal(overview.metrics.activePlans, 1);
+  assert.equal(overview.metrics.reconciliation, 1); assert.equal(overview.subscriptions[0].plan, 'OCR pack');
+  assert.equal(overview.activity.length, 7);
+  assert.equal(overview.activity.reduce((n,d)=>n+d.opened,0),3);
+  assert.equal(overview.activity.reduce((n,d)=>n+d.paid,0),1);
+  assert.ok(overview.recent.every(r=>r.id!=='overview-foreign'&&r.id!=='overview-old'));
+  assert.equal(overview.topPlans.length,1);
+  const listed = await providerCheckouts(firstDb,'overview-a','ALL',0);
+  assert.equal(listed.total,4); assert.ok(!listed.sessions.some(r=>r.id==='overview-foreign'));
+  assert.equal((await providerCheckouts(firstDb,'overview-a','ALL',0,7)).total,3);
+  assert.equal((await providerCheckouts(firstDb,'overview-a','PAID',0,7)).total,overview.metrics.paid);
+  assert.equal((await providerCheckouts(firstDb,'overview-a','PENDING',0)).total,1);
+  assert.equal((await providerCheckouts(firstDb,'overview-a','EXPIRED',0)).sessions[0].id,'overview-expired');
+  assert.equal((await providerCheckouts(firstDb,'overview-a','ALL',1)).sessions.length,0);
+  assert.equal((await providerOverview(firstDb,'unknown-provider',7)).metrics.checkouts,0);
+  await firstDb.$client.query(`delete from billing_subscriptions where id='overview-sub'`);
+  await firstDb.$client.query(`delete from checkout_sessions where id like 'overview-%'`);
+  await firstDb.$client.query(`delete from billing_plans where id like 'overview-%'`);
+  console.log('PASS provider overview scope, real cohort counts, expired sessions, per-day activity, issue links and paginated checkout isolation');
+
   const designsA = new EmbedDesignStore(firstDb), designsB = new EmbedDesignStore(secondDb);
   const initialDesign = await designsA.create('provider-a', { name: 'Billing', componentId: 'cmp_customer' });
   assert.equal((await designsB.list('provider-a'))[0].id, initialDesign.id);

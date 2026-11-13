@@ -1,3 +1,5 @@
+import { renderNotificationEmail } from './email.js';
+export { renderNotificationEmail } from './email.js';
 import { Resend } from 'resend';
 
 export type NotifyEvent =
@@ -14,6 +16,8 @@ export interface NotifyPayload {
   title: string;
   body: string;
   href?: string;
+  actionLabel?: string;
+  code?: string;
   meta?: Record<string, string | number | boolean | null | undefined>;
 }
 
@@ -23,34 +27,11 @@ function fromAddress(): string {
 }
 
 function dashboardUrl(): string {
-  return (process.env.NEXT_PUBLIC_CONSOLE_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+  return (process.env.CONSOLE_URL?.trim() || process.env.NEXT_PUBLIC_CONSOLE_URL?.trim() || 'http://localhost:3000').replace(/\/$/, '');
 }
 
 export function notifyConfigured(): boolean {
   return process.env.NOTIFY_MODE !== 'log' && Boolean(process.env.RESEND_API_KEY?.trim());
-}
-
-function htmlEmail(title: string, body: string, href: string, meta?: NotifyPayload['meta']): string {
-  const rows = Object.entries(meta ?? {})
-    .filter(([, v]) => v !== undefined && v !== null && v !== '')
-    .map(
-      ([k, v]) =>
-        `<tr><td style="padding:4px 8px;color:#63636d;font-size:13px">${k}</td><td style="padding:4px 8px;font-family:ui-monospace,Menlo,monospace;font-size:13px">${String(v)}</td></tr>`,
-    )
-    .join('');
-  return `<!doctype html>
-<html><body style="margin:0;background:#f2f2f2;font-family:Switzer,system-ui,sans-serif;color:#0e0e10">
-  <div style="max-width:560px;margin:32px auto;background:#fff;border-radius:16px;overflow:hidden;border:1px solid #ececf0">
-    <div style="background:#0c0a0b;color:#fff;padding:20px 24px;font-weight:600">Bagseven</div>
-    <div style="padding:24px">
-      <div style="height:3px;width:40px;background:#0002f8;margin-bottom:16px"></div>
-      <h1 style="font-size:22px;margin:0 0 12px">${title}</h1>
-      <p style="line-height:1.5;color:#3a3a40">${body}</p>
-      ${rows ? `<table style="margin-top:16px;width:100%;border-collapse:collapse">${rows}</table>` : ''}
-      <p style="margin-top:24px"><a href="${href}" style="display:inline-block;background:#0e0e10;color:#fff;text-decoration:none;padding:10px 16px;border-radius:999px;font-size:14px;font-weight:600">Open Bagseven</a></p>
-    </div>
-  </div>
-</body></html>`;
 }
 
 export async function sendNotify(payload: NotifyPayload): Promise<{ ok: boolean; id?: string; skipped?: string; error?: string }> {
@@ -63,12 +44,14 @@ export async function sendNotify(payload: NotifyPayload): Promise<{ ok: boolean;
   const resend = new Resend(key);
   const subject = payload.subject ?? `[Bagseven] ${payload.title}`;
   const href = payload.href ?? `${dashboardUrl()}/app`;
+  const rendered = renderNotificationEmail(payload, href);
   const { data, error } = await resend.emails.send({
     from: fromAddress(),
     to: payload.to,
     replyTo: operatorNotifyEmail() ?? undefined,
     subject,
-    html: htmlEmail(payload.title, payload.body, href, payload.meta),
+    html: rendered.html,
+    text: rendered.text,
   });
   if (error) {
     const msg = error.message ?? String(error);

@@ -69,7 +69,7 @@ export function ProviderCheckout({ creditsOnly = false }: { creditsOnly?: boolea
     </> : <SoftCard className="space-y-4 p-5">
       <div className="flex items-center justify-between gap-3"><h2 className="font-semibold">Provider plan checkout</h2><SecondaryButton onClick={() => void refresh()} disabled={loading || busy}>Refresh</SecondaryButton></div>
       {!op.loading && !op.holder ? <p>Sign in to create a checkout.</p> : loading ? <p className="text-sm text-[var(--muted)]">Loading plans and provider status…</p> : <>
-        {blocked ? <div className="rounded-xl border border-[var(--line)] bg-[var(--soft)] p-3 text-sm"><p>{blocked}</p><Link href="/app/settings#provider-gas" className="mt-2 inline-block font-semibold text-[var(--blue)] underline">Configure provider gas in Tracks</Link></div> : null}
+        {blocked ? <div className="rounded-xl border border-[var(--line)] bg-[var(--soft)] p-3 text-sm"><p>{blocked}</p><Link href="/app/settings#provider-gas" className="mt-2 inline-block font-semibold text-[var(--blue)] underline">Open Network & gas</Link></div> : null}
         {available.length ? <>
           <label className="block text-sm font-semibold">Plan
             <select value={planId} onChange={event => setPlanId(event.target.value)} className="mt-1 w-full rounded-xl border border-[var(--line)] bg-white px-3 py-2.5 font-normal">

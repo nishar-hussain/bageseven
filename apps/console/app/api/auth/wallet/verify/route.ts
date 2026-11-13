@@ -6,12 +6,19 @@ import { attachSessionCookie, getSession, mergeSessionIdentity, sessionHolder, s
 import { WALLET_CHALLENGE_COOKIE, VERIFIED_WALLET_COOKIE, readWalletClaim, spendingWalletCookieOptions,
   verifiedWalletToken, walletChallenge, walletChallengeMessage } from '../../../../../lib/spending-wallet';
 
+function needsEmailConfirmation(session: { wallet_address?: string | null; wallet_rebind_verified_at?: number | null }, owner: string) {
+  if (!session.wallet_address || session.wallet_address.toLowerCase() === owner.toLowerCase()) return false;
+  const age = Date.now() - (session.wallet_rebind_verified_at ?? 0) * 1000;
+  return !session.wallet_rebind_verified_at || age < 0 || age > 600000;
+}
+
 export async function GET(req: NextRequest) {
   const session = await getSession();
   if (!session || !sessionIsValid(session)) return NextResponse.json({ error: { message: 'Sign in first' } }, { status: 401 });
   if (!session.email_verified_at) return NextResponse.json({ error: { message: 'Verify your email before linking a wallet' } }, { status: 409 });
   const owner = req.nextUrl.searchParams.get('owner') ?? '';
   if (!/^0x[0-9a-fA-F]{40}$/.test(owner)) return NextResponse.json({ error: { message: 'Invalid wallet address' } }, { status: 400 });
+  if (needsEmailConfirmation(session, owner)) return NextResponse.json({ error: { code: 'EMAIL_RECONFIRM_REQUIRED', message: 'This is a different wallet from the one linked to your account. Choose Replace linked wallet and confirm your account email before signing.' } }, { status: 409 });
   const challenge = walletChallenge(sessionHolder(session), req.nextUrl.origin, owner);
   await saveAuthChallenge(challenge.token, 300000);
   const response = NextResponse.json({ message: challenge.message }, { headers: { 'cache-control': 'no-store' } });
@@ -32,13 +39,9 @@ export async function POST(req: NextRequest) {
   const signer = await recoverMessageAddress({ message: walletChallengeMessage(challenge), signature: body.signature as `0x${string}` }).catch(() => '');
   if (signer.toLowerCase() !== challenge.owner) return NextResponse.json({ error: { message: 'Signature does not match the connected wallet' } }, { status: 403 });
   const existingWallet = session.wallet_address?.toLowerCase();
-  const replacingWallet = Boolean(existingWallet && existingWallet !== challenge.owner);
-  const rebindFresh = Boolean(
-    session.wallet_rebind_verified_at && Date.now() - session.wallet_rebind_verified_at * 1000 <= 10 * 60_000,
-  );
-  if (replacingWallet && !rebindFresh) {
+  if (needsEmailConfirmation(session, challenge.owner)) {
     return NextResponse.json(
-      { error: { message: 'Confirm your email again before replacing the linked wallet.' } },
+      { error: { code: 'EMAIL_RECONFIRM_REQUIRED', message: 'Confirm your account email with a new code before replacing the linked wallet.' } },
       { status: 409 },
     );
   }

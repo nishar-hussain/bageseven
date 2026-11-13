@@ -91,11 +91,11 @@ export default function PlansPage() {
         title="Plans"
         description={
           <>
-            Priced packages that mint entitlements on pay. Embed them via{' '}
+            Sell one-time credit packs or recurring access. Add your plans to the unified embed in{' '}
             <Link href="/app/builder" className="font-medium text-[var(--blue)] underline decoration-dotted underline-offset-2">
               Builder
             </Link>{' '}
-            (<code className="fi-mono text-xs">cmp_pricing</code>).
+            .
           </>
         }
         action={<PrimaryButton onClick={() => setShowCreate((v) => !v)}>{showCreate ? 'Close' : 'New plan'}</PrimaryButton>}
@@ -105,7 +105,7 @@ export default function PlansPage() {
         <SoftCard className="p-5">
           <h2 className="text-[15px] font-semibold">New plan</h2>
           <p className="mt-1 text-[13px] text-[var(--muted)]">
-            Paying this plan entitles the selected feature for the access period (Registry grant).
+            Confirmed payment activates the selected feature for the plan’s access period.
           </p>
           <form onSubmit={(e) => void create(e)} className="mt-4 grid gap-3 md:grid-cols-2">
             <label className="block text-xs font-semibold uppercase text-[var(--muted)]">

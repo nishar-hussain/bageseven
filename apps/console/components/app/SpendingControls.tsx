@@ -1,10 +1,12 @@
 'use client';
 
+import { withWalletOperation } from '../../lib/bagseven-sdk-wallet';
 import { errorMessage } from '../../lib/error-message';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useAccount } from 'wagmi';
 import { useConnectModal } from '@rainbow-me/rainbowkit';
+import { useAccountWallet } from '../wallet/AccountWallet';
 import { mandateApi, type MandateOverview, type SpendingConfig } from '../../lib/mandate-client';
 import { connectedSpendingWallet, signSpendingMessage as sign } from '../../lib/spending-wallet-client';
 
@@ -16,6 +18,7 @@ export function SpendingControls({ selectedId, overview, onChange, onCreated }: 
 }) {
   const { address, isConnected, connector } = useAccount();
   const { openConnectModal } = useConnectModal();
+  const account = useAccountWallet();
   const [config, setConfig] = useState<SpendingConfig | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -41,14 +44,14 @@ export function SpendingControls({ selectedId, overview, onChange, onCreated }: 
     if (!config) throw new Error('Spending configuration has not loaded');
     if (!isConnected || !address || !connector) {
       openConnectModal?.();
-      throw new Error('Connect your wallet using Connect Wallet, then try again.');
+      throw new Error('Connect or reconnect your wallet using the wallet button, then try again.');
     }
     // Use the selected RainbowKit/WalletConnect connector, never an unrelated
     // injected provider that happens to be present on window.ethereum.
     const owner = address;
     const wallet = await connectedSpendingWallet(connector, owner, expected);
     const chainId = `0x${config.chain_id.toString(16)}`;
-    try { await wallet.request({ method: 'wallet_switchEthereumChain', params: [{ chainId }] }); }
+    try { if (Number(await wallet.request({ method: 'eth_chainId' })) !== config.chain_id) await wallet.request({ method: 'wallet_switchEthereumChain', params: [{ chainId }] }); }
     catch (e) {
       if ((e as { code?: number }).code !== 4902) throw e;
       await wallet.request({ method: 'wallet_addEthereumChain', params: [{ chainId, chainName: config.chain_id === 43113 ? 'Avalanche Testnet' : 'Avalanche', rpcUrls: [config.rpc_url], nativeCurrency: { name: 'Avalanche', symbol: 'AVAX', decimals: 18 } }] });
@@ -70,7 +73,7 @@ export function SpendingControls({ selectedId, overview, onChange, onCreated }: 
   }
   async function run(action: () => Promise<void>) {
     setBusy(true); setError(''); setMessage('');
-    try { await action(); await onChange(); }
+    try { await withWalletOperation('Manage agent spending', action); await onChange(); }
     catch (e) { setError(errorMessage(e)); }
     finally { setBusy(false); }
   }
@@ -122,7 +125,7 @@ export function SpendingControls({ selectedId, overview, onChange, onCreated }: 
       <button type="button" disabled={busy || !config} className={buttonClass} onClick={() => {
         if (!isConnected) { openConnectModal?.(); return; }
         void run(async () => { await ownerWallet(); setMessage('Your connected wallet is ready for agent spending.'); });
-      }}>{isConnected ? 'Use connected wallet' : 'Connect wallet'}</button>
+      }}>{isConnected ? 'Use connected wallet' : account.profile?.wallet_address ? 'Reconnect wallet' : 'Connect wallet'}</button>
     </div>
     {error && <p role="alert" className="break-words text-sm text-[var(--deny)]">{error}</p>}
     {message && <p role="status" className="break-words text-sm">{message}</p>}
