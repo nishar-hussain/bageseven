@@ -74,7 +74,7 @@ export class BagsevenClient {
     return this.request('POST', '/v1/usage/consume', input);
   }
 
-  async identify(input: { holder: string; expiresIn?: number }): Promise<IdentifyResult> {
+  async identify(input: { holder: string; email?: string; expiresIn?: number }): Promise<IdentifyResult> {
     return this.request('POST', '/v1/access-tokens', input);
   }
 
@@ -128,6 +128,7 @@ export class BagsevenClient {
   async createCheckoutSession(input: {
     plan_id: string;
     holder: string;
+    billing_email?: string;
     success_url?: string;
     expires_in?: number;
   }): Promise<{ session: { id: string; status: string; amount: string; holder: string } }> {

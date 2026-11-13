@@ -99,7 +99,7 @@ export class PostgresSubscriptionStore implements SubscriptionStore {
         const [original] = await tx.select().from(billingDocuments).where(eq(billingDocuments.source, `checkout:${sub.checkoutId}`));
         if (!original) throw Error('BILLING_DOCUMENT_MISSING');
         const terms = original.terms as BillingDocumentTerms;
-        await issueBillingDocument(tx, { source, provider: sub.providerId, holder: sub.holder, terms: {
+        await issueBillingDocument(tx, { source, provider: sub.providerId, holder: sub.holder, billingEmail: original.billingEmail ?? undefined, terms: {
           ...terms, amount: sub.plan.amount, kind: 'renewal',
           periodStart: new Date(period.due * 1000).toISOString(),
           periodEnd: new Date((period.due + sub.plan.ttl_seconds) * 1000).toISOString(),

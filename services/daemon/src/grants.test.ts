@@ -245,9 +245,11 @@ describe('prepaid access without a spending mandate', () => {
         url: '/v1/check?feature=ocr&holder=sdk-human',
         headers: { authorization: 'Bearer pk_test_unit' },
       });
-      expect(check.statusCode).toBe(200);
-      expect(check.json().enabled).toBe(true);
-      expect(check.json().remaining).toBe('4');
+      expect(check.statusCode).toBe(403);
+      const privateCheck = await app.inject({ method: 'GET', url: '/v1/check?feature=ocr&holder=sdk-human', headers: { authorization: 'Bearer sk_test_unit' } });
+      expect(privateCheck.statusCode).toBe(200);
+      expect(privateCheck.json().enabled).toBe(true);
+      expect(privateCheck.json().remaining).toBe('4');
 
       const pkConsume = await app.inject({
         method: 'POST',

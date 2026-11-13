@@ -162,6 +162,20 @@
       "when": 1795478400000,
       "tag": "0022_billing_documents",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1795564800000,
+      "tag": "0023_customer_billing_lifecycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1795651200000,
+      "tag": "0024_provider_api_keys",
+      "breakpoints": true
     }
   ]
 }

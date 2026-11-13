@@ -271,7 +271,7 @@ function Workspace({ boot }: { boot: Bootstrap }) {
         <div className="sidebar-bottom">
           <div className="plan-status">
             <span className="dot" />
-            {pro.enabled ? "Pro workspace" : "Starter workspace"}
+            {pro.enabled ? "CSV access enabled" : "Receipt workspace"}
             <small>{scanRemaining} scans available</small>
             <button className="text-button" onClick={() => setTab("billing")}>
               Manage plan →
@@ -332,7 +332,7 @@ function Workspace({ boot }: { boot: Bootstrap }) {
                   ? "Turn receipt photos into searchable expenses. Upload, review, and keep moving."
                   : tab === "insights"
                     ? "A clear breakdown of your saved expenses, grouped by category and currency."
-                    : "Scan credits, Pro exports, and your access — all in one place."}
+                    : "Scan credits, export permissions, and billing — all in one place."}
               </p>
             </div>
             {tab === "receipts" && (
@@ -634,7 +634,7 @@ function Workspace({ boot }: { boot: Bootstrap }) {
                       disabled={!receipts.length || !!busy || !pro.enabled}
                       onClick={() => void download("csv")}
                     >
-                      Export CSV {pro.enabled ? "↗" : "· Pro"}
+                      Export CSV {pro.enabled ? "↗" : "· locked"}
                     </button>
                     <button
                       className="button secondary"
@@ -770,8 +770,8 @@ function Workspace({ boot }: { boot: Bootstrap }) {
                   },
                   {
                     title: "CSV exports",
-                    value: pro.enabled ? "Included" : "Pro required",
-                    note: "Unlimited while Pro access is active",
+                    value: pro.enabled ? "Included" : "Separate access required",
+                    note: "Requires an active CSV export entitlement",
                   },
                   {
                     title: "Expense insights",
@@ -794,20 +794,6 @@ function Workspace({ boot }: { boot: Bootstrap }) {
               <section className="card billing">
                 <div className="section-heading">
                   <h2>Manage your access</h2>
-                  <div className="row">
-                    <button
-                      className={`button ${billingView === "pricing" ? "" : "secondary"}`}
-                      onClick={() => setBillingView("pricing")}
-                    >
-                      Plans
-                    </button>
-                    <button
-                      className={`button ${billingView === "portal" ? "" : "secondary"}`}
-                      onClick={() => setBillingView("portal")}
-                    >
-                      My access
-                    </button>
-                  </div>
                 </div>
                 <BagsevenEmbed
                   key={`${billingView}-${revision}`}
@@ -817,11 +803,6 @@ function Workspace({ boot }: { boot: Bootstrap }) {
                   apiUrl={boot.apiUrl}
                   initialView={billingView}
                   planIds={boot.planIds}
-                  heading={
-                    billingView === "pricing"
-                      ? "Find your next plan"
-                      : "Your active access"
-                  }
                   theme={{ accent: "#0002f8" }}
                 />
               </section>

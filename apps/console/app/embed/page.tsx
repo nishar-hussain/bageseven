@@ -11,6 +11,7 @@ function EmbedInner() {
   const params = useSearchParams();
   const design = params.get('design');
   const [published, setPublished] = useState<DesignConfig | null>(null);
+  const [publishedKey, setPublishedKey] = useState('');
   const [error, setError] = useState('');
   const [customer, setCustomer] = useState<{
     token: string;
@@ -27,7 +28,7 @@ function EmbedInner() {
       .then(async (response) => {
         const body = await response.json();
         if (!response.ok) throw Error(body.error ?? 'Page unavailable.');
-        if (!cancelled) setPublished(validateDesign(body.config));
+        if (!cancelled) { setPublished(validateDesign(body.config)); setPublishedKey(body.publishableKey || ''); }
       })
       .catch((e) => {
         if (!cancelled) setError(e instanceof Error ? e.message : 'Page unavailable.');
@@ -52,7 +53,7 @@ function EmbedInner() {
     };
   }, [design, parent]);
   const token = design ? (customer?.token ?? '') : (params.get('token') ?? '');
-  const pk = params.get('pk') ?? process.env.NEXT_PUBLIC_BAGSEVEN_PUBLISHABLE_KEY ?? '';
+  const pk = design ? publishedKey : params.get('pk') ?? '';
   const component = params.get('component') ?? params.get('cmp') ?? 'cmp_portal';
   const holder = params.get('holder') ?? undefined;
   const checkoutSessionId = params.get('session') ?? params.get('checkoutSessionId') ?? undefined;

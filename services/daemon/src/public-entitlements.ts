@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { Database } from '@bagseven/db';
+import type { FastifyInstance } from 'fastify';
 import { ApiError } from '@bagseven/server';
 import {
   assertKnownFeature,
@@ -11,7 +12,8 @@ import { add, gte } from '@bagseven/money';
 import {
   assertCanRead,
   assertCanWrite,
-  authenticateRequest,
+  authenticateApiRequest,
+  assertProviderResource,
   issueEmbedToken,
   type ApiPrincipal,
 } from './api-keys.js';
@@ -34,6 +36,7 @@ const consumeBody = z.object({
 
 const tokenBody = z.object({
   holder: z.string().min(1),
+  email: z.string().email().optional(),
   expiresIn: z.number().int().positive().max(3600).optional(),
 });
 
@@ -56,6 +59,7 @@ export function isPublicEntitlementPath(url: string): boolean {
     path === '/v1/access-tokens' ||
     path === '/v1/credits' ||
     path === '/v1/usage/consume' ||
+    path === '/v1/billing-documents' ||
     path === '/v1/plans' ||
     path === '/v1/checkout-sessions'
   ) {
@@ -97,21 +101,17 @@ export async function entitlementView(grant: Grant | null, feature: string) {
   };
 }
 
-function principalFrom(req: FastifyRequest): ApiPrincipal {
-  return authenticateRequest(req.headers.authorization, process.env);
-}
-
 function holderFor(principal: ApiPrincipal, requested?: string): string {
   if (principal.kind === 'embed') return principal.holder;
   if (!requested) throw new ApiError(400, 'HOLDER_REQUIRED', 'holder is required');
   return requested;
 }
 
-export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: GrantRouteDeps = {}): void {
+export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: GrantRouteDeps & { db?: Database } = {}): void {
   const store = getGrantStore(process.env);
 
   app.get('/v1/check', async (req) => {
-    const principal = principalFrom(req);
+    const principal = await authenticateApiRequest(req, deps.db);
     const q = req.query as { feature?: string; holder?: string };
     if (!q.feature) throw new ApiError(400, 'FEATURE_REQUIRED', 'feature is required');
     try {
@@ -121,17 +121,17 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
     }
     const holder = holderFor(principal, q.holder);
     assertCanRead(principal, holder);
-    const live = await store.findLive({ feature: q.feature, holder });
+    const live = (await store.findLive({ feature: q.feature, holder })).filter(g => !principal.provider || g.merchant === principal.provider);
     const grant = [...live].sort((a, b) => Number(b.remaining) - Number(a.remaining))[0] ?? null;
     return { ...await entitlementView(grant, q.feature), total_remaining: (await getFeatureValueType(q.feature)) === 'boolean' ? (grant ? '1' : '0') : live.reduce((sum, g) => add(sum, g.remaining), '0') };
   });
 
   app.get('/v1/entitlements', async (req) => {
-    const principal = principalFrom(req);
+    const principal = await authenticateApiRequest(req, deps.db);
     const q = req.query as { holder?: string; feature?: string };
     const holder = holderFor(principal, q.holder);
     assertCanRead(principal, holder);
-    const grants = await store.findLive({ holder, feature: q.feature || undefined });
+    const grants = (await store.findLive({ holder, feature: q.feature || undefined })).filter(g => !principal.provider || g.merchant === principal.provider);
     return {
       holder,
       entitlements: await Promise.all(grants.map((g) => entitlementView(g, g.feature))),
@@ -141,10 +141,11 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
 
   /** Customer portal — cancel renewal; access stays until paid_through. */
   app.post('/v1/entitlements/:id/cancel-renewal', async (req) => {
-    const principal = principalFrom(req);
+    const principal = await authenticateApiRequest(req, deps.db);
     const { id } = req.params as { id: string };
     const grant = await store.get(id);
     if (!grant) throw new ApiError(404, 'GRANT_NOT_FOUND', 'grant not found');
+    assertProviderResource(principal, grant.merchant);
     assertCanWrite(principal, grant.holder);
     if (principal.kind === 'embed' && principal.holder !== grant.holder) {
       throw new ApiError(403, 'HOLDER_MISMATCH', 'embed token is scoped to a different holder');
@@ -160,15 +161,16 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
   });
 
   app.post('/v1/access-tokens', async (req) => {
-    const principal = principalFrom(req);
+    const principal = await authenticateApiRequest(req, deps.db);
     if (principal.kind !== 'sk') throw new ApiError(403, 'FORBIDDEN', 'secret key required to issue embed tokens');
     const body = tokenBody.parse(req.body ?? {});
-    const token = issueEmbedToken(body.holder, process.env, body.expiresIn ?? 900);
+    const email = body.email ?? (z.string().email().safeParse(body.holder).success ? body.holder : undefined);
+    const token = issueEmbedToken(body.holder, process.env, body.expiresIn ?? 900, email?.trim().toLowerCase(), principal);
     return { token, holder: body.holder, expires_in: body.expiresIn ?? 900 };
   });
 
   app.post('/v1/usage/consume', async (req) => {
-    const principal = principalFrom(req);
+    const principal = await authenticateApiRequest(req, deps.db);
     const body = consumeBody.parse(req.body ?? {});
     try {
       assertKnownFeature(body.feature);
@@ -180,7 +182,7 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
 
     let grantId = body.grant_id?.trim();
     if (!grantId) {
-      const live = await store.findLive({ feature: body.feature, holder });
+      const live = (await store.findLive({ feature: body.feature, holder })).filter(g => !principal.provider || g.merchant === principal.provider);
       const ranked = [...live].sort((a, b) => Number(b.remaining) - Number(a.remaining));
       const pick = ranked.find((g) => gte(g.remaining, body.amount)) ?? ranked[0];
       if (!pick) throw new ApiError(404, 'GRANT_NOT_FOUND', `No living ${body.feature} grant for ${holder}`);
@@ -188,6 +190,7 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
     }
     const grant = await store.get(grantId);
     if (!grant) throw new ApiError(404, 'GRANT_NOT_FOUND', 'grant not found');
+    assertProviderResource(principal, grant.merchant);
     if (grant.feature !== body.feature) throw new ApiError(403, 'FEATURE_MISMATCH', 'grant does not cover the requested feature');
     if (grant.holder !== holder) throw new ApiError(403, 'HOLDER_MISMATCH', 'grant holder does not match');
 
@@ -215,7 +218,8 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
   });
 
   app.post('/v1/credits', async (req) => {
-    const principal = principalFrom(req);
+    const principal = await authenticateApiRequest(req, deps.db);
+    if (principal.provider) throw new ApiError(403, 'CHECKOUT_REQUIRED', 'Use a priced provider checkout to purchase credits');
     const body = creditsBody.parse(req.body ?? {});
     try {
       assertKnownFeature(body.feature);
@@ -224,7 +228,7 @@ export function registerPublicEntitlementRoutes(app: FastifyInstance, deps: Gran
     }
     const holder = holderFor(principal, body.holder);
     assertCanWrite(principal, holder);
-    const live = await store.findLive({ feature: body.feature, holder });
+    const live = (await store.findLive({ feature: body.feature, holder })).filter(g => !principal.provider || g.merchant === principal.provider);
     const prior = [...live].sort((a, b) => Number(b.remaining) - Number(a.remaining))[0];
     if (!prior) {
       throw new ApiError(404, 'GRANT_NOT_FOUND', `No living ${body.feature} grant for ${holder} — mint with email and wallet first`);

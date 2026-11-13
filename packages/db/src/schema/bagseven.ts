@@ -17,6 +17,13 @@ export const authCredentials = pgTable('auth_credentials', {
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
 }, t => [index('idx_auth_credential_expiry').on(t.expiresAt)]);
 
+export const providerApiKeys = pgTable('provider_api_keys', {
+  id: uuid('id').primaryKey(), providerId: text('provider_id').notNull(), name: text('name').notNull(), kind: text('kind').notNull(),
+  keyHash: text('key_hash').notNull().unique(), hint: text('hint').notNull(), publicKey: text('public_key'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(), expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  lastUsedAt: timestamp('last_used_at', { withTimezone: true }), revokedAt: timestamp('revoked_at', { withTimezone: true }),
+}, t => [index('idx_provider_api_keys_owner').on(t.providerId, t.createdAt.desc(), t.id)]);
+
 export const x402Authorities = pgTable('x402_authorities', {
   id: uuid('id').primaryKey(), providerId: text('provider_id').notNull(),
   mandateId: uuid('mandate_id').notNull().references(() => mandates.id), workerId: uuid('worker_id').notNull().references(() => agents.id),
@@ -234,6 +241,7 @@ export const checkoutSessions = pgTable(
     customerWallet: text('customer_wallet'),
     paymentTx: text('payment_tx'),
     paymentToken: text('payment_token'),
+    billingEmail: text('billing_email'),
     grantId: text('grant_id'),
     successUrl: text('success_url'),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
@@ -282,6 +290,7 @@ export const billingDocuments = pgTable('billing_documents', {
   providerId: text('provider_id').notNull(),
   holder: text('holder').notNull(),
   terms: jsonb('terms').notNull(),
+  billingEmail: text('billing_email'),
   status: text('status').notNull().default('OPEN'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   expiresAt: timestamp('expires_at', { withTimezone: true }),
@@ -293,6 +302,19 @@ export const billingDocuments = pgTable('billing_documents', {
   index('idx_billing_documents_provider_holder').on(t.providerId, t.holder),
   index('idx_billing_documents_holder_created').on(t.holder, t.createdAt.desc(), t.id.desc()),
 ]);
+
+/** Durable provider-idempotent paid invoice email outbox. */
+export const billingEmailDeliveries = pgTable('billing_email_deliveries', {
+  documentId: text('document_id').primaryKey().references(() => billingDocuments.id),
+  recipient: text('recipient').notNull(), status: text('status').notNull().default('PENDING'),
+  attempts: integer('attempts').notNull().default(0),
+  nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  firstAttemptAt: timestamp('first_attempt_at', { withTimezone: true }),
+  leaseId: uuid('lease_id'), leaseUntil: timestamp('lease_until', { withTimezone: true }),
+  providerMessageId: text('provider_message_id'), lastError: text('last_error'),
+  sentAt: timestamp('sent_at', { withTimezone: true }),
+}, t => [index('idx_billing_email_due').on(t.status,t.nextAttemptAt,t.leaseUntil,t.documentId)]);
 
 /** Every on-chain action for audit. */
 /** Private discovery metadata; Avalanche contract state remains authoritative for access. */

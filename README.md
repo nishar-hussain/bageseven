@@ -17,7 +17,7 @@ pnpm start:local
 pnpm mcp:local
 ```
 
-Apply migrations through **0022**. `pnpm build` builds deployment artifacts; contract changes also require rebuilding their paired ABI/bytecode artifacts. Public-Fuji local mode uses real testnet contracts with localhost web services. It does not publish Railway or Vercel hosting.
+Apply migrations through **0024**. `pnpm build` builds deployment artifacts; contract changes also require rebuilding their paired ABI/bytecode artifacts. Public-Fuji local mode uses real testnet contracts with localhost web services. It does not publish Railway or Vercel hosting.
 
 Live entitlements require a deployed `BagEntitlementRegistry`, `ENTITLEMENT_STORE=avalanche`, `AVALANCHE_ENTITLEMENT_REGISTRY`, and a persistent `ENTITLEMENT_SUBJECT_SECRET`. Fuji uses chain 43113. Set the exact six-decimal payment token in `AVALANCHE_USDC`; no token address is guessed. Providers must sign a fresh gas authorization and fund the dedicated signer with AVAX. Production never falls back to a platform gas wallet.
 
@@ -42,7 +42,7 @@ Account sign-in uses email OTP; wallet linking requires an explicit ownership si
 
 Monthly billing uses `BagSubscriptionPlan`, payer-approved token allowance and subscribe/cancel transactions, with durable collection and fulfillment journals. Cancellation preserves paid time. Provider gas must explicitly cover subscriptions and have at least 31 days remaining at checkout.
 
-Invoices snapshot checkout terms and each renewal separately. Verified payment creates receipt evidence independently of access fulfillment. Tax assessment and automatic invoice/receipt email delivery are not included. A historical token or payment time that was never recorded stays unknown.
+Invoices snapshot checkout terms and each renewal separately. Verified payment creates receipt evidence independently of access fulfillment. Paid invoices and receipts are emailed to the authenticated customer through a durable delivery queue. Tax assessment is not included. A historical token or payment time that was never recorded stays unknown.
 
 The browser coordinates wallet actions across screens and same-origin tabs. It does not queue or silently retry approvals. For an existing pending MetaMask request, review or dismiss it in the wallet, then acknowledge the reminder. An already-connected Fuji wallet does not need another account/network prompt.
 
@@ -54,4 +54,4 @@ Read [product semantics](docs/PRODUCT.md), [developer integration](docs/DEVELOPE
 
 The public [documentation index](http://localhost:3001/docs/introduction) includes authentication, Builder, subscriptions, customer invoices, provider gas, SDK/API and x402 guides. Website documentation content lives in `apps/landing/lib/docs.ts`; root and website `llms.txt` copies must stay synchronized. The ReceiptBox integration is optional; see [developer integration](docs/DEVELOPERS.md) before running its state-changing demo checks.
 
-Isolated x402 payments use a separately approved EIP-3009 signer, funded only through an agent's on-chain mandate. Manage it on the existing Spending page; use `bagseven_x402_payment` to reconcile uncertain payments. See [developer lifecycle and local verification](docs/DEVELOPERS.md#isolated-x402-payments) and [hosting requirements](docs/HOSTING.md). Apply migrations through 0022 and preserve the separate payment-custody key.
+Isolated x402 payments use a separately approved EIP-3009 signer, funded only through an agent's on-chain mandate. Manage it on the existing Spending page; use `bagseven_x402_payment` to reconcile uncertain payments. See [developer lifecycle and local verification](docs/DEVELOPERS.md#isolated-x402-payments) and [hosting requirements](docs/HOSTING.md). Apply migrations through 0024 and preserve the separate payment-custody key.

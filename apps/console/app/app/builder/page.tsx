@@ -1,4 +1,5 @@
 'use client';
+import { paymentTokenLabel } from '../../../lib/bagseven-sdk-wallet';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
@@ -79,7 +80,7 @@ export default function BuilderPage() {
   const hostedFrame = useRef<HTMLIFrameElement>(null);
   const current = designs.find((d) => d.id === selected);
   const dirty = !loading && (!current || JSON.stringify(current.config) !== JSON.stringify(draft));
-  const pk = process.env.NEXT_PUBLIC_BAGSEVEN_PUBLISHABLE_KEY || '';
+  const [pk, setPk] = useState('');
   const open = useCallback((design: Design) => {
     setSelected(design.id);
     setDraft(design.config);
@@ -99,12 +100,14 @@ export default function BuilderPage() {
     setLoading(true);
     setError('');
     try {
-      const [saved, catalog, me] = await Promise.all([
+      const [saved, catalog, me, credentials] = await Promise.all([
         request<{ designs: Design[] }>('/api/builder/designs'),
         billingApi.listPlans(),
         request<{ holder: string }>('/api/me'),
+        request<{ keys: Array<{ kind: string; public_key: string | null; revoked_at: string | null; expires_at: string }> }>('/api/developer/credentials'),
       ]);
       const owned = catalog.plans.filter((p) => p.active && p.provider_id === me.holder);
+      setPk(credentials.keys.find(key => key.kind === 'pk' && !key.revoked_at && Date.parse(key.expires_at) > Date.now())?.public_key || '');
       setDesigns(saved.designs);
       setPlans(owned);
       if (saved.designs[0]) open(saved.designs[0]);
@@ -231,7 +234,7 @@ export default function BuilderPage() {
   const code = useMemo(
     () =>
       codeTab === 'react'
-        ? reactInstall(draft, origin, pk)
+        ? reactInstall(draft, origin, pk || 'YOUR_PROVIDER_PUBLISHABLE_KEY')
         : iframeInstall(current?.id ?? 'PUBLISH_YOUR_PAGE_FIRST', origin),
     [draft, origin, pk, codeTab, current?.id],
   );
@@ -485,7 +488,7 @@ export default function BuilderPage() {
                                 </small>
                               </span>
                               <span className={styles.planPrice}>
-                                {plan.amount}
+                                {plan.amount} {paymentTokenLabel(plan.payment?.chain_id, plan.payment?.usdt)}
                                 <small>{plan.interval === 'month' ? '/ 30 days' : 'one-time'}</small>
                               </span>
                             </label>
@@ -625,13 +628,15 @@ export default function BuilderPage() {
                           <p>{previewError}</p>
                           <button onClick={() => void refreshPreview()}>Try again</button>
                         </div>
+                      ) : !pk ? (
+                        <div className={styles.loading}>Create a publishable key in Developers to enable the billing preview and integration.</div>
                       ) : preview ? (
                         <BagsevenEmbed
                           key={previewKey}
                           {...designProps(draft)}
                           accessToken={preview.token}
                           holder={preview.holder}
-                          publishableKey={pk}
+                          publishableKey={pk || undefined}
                           apiUrl="/api/public"
                         />
                       ) : (

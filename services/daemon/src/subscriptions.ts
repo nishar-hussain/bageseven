@@ -62,6 +62,7 @@ export class Subscriptions {
   async verifyCheckout(session: CheckoutSession, payer: string, hash: string) {
     const plan = await this.store.plan(session.plan_id);
     if (!plan || plan.status !== 'ready' || !session.plan) throw Error('SUBSCRIPTION_PLAN_NOT_READY');
+    if (payer.toLowerCase() === session.plan.merchant_wallet.toLowerCase()) throw Error('SELF_PAYMENT: customer and provider payout wallets must be different');
     const payment = await this.chain.payment(hash, plan.contract, subscriptionKey(payer, session.id), session.plan, payer);
     if (!payment) throw Error('PAYMENT_PENDING: waiting for the subscription transaction to confirm');
     if (payment.paidAt > Math.floor(Date.parse(session.expires_at) / 1000)) throw Error('CHECKOUT_EXPIRED: subscription was paid after checkout expiry');

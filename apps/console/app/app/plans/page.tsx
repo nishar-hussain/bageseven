@@ -1,4 +1,5 @@
 'use client';
+import { paymentTokenLabel } from '../../../lib/bagseven-sdk-wallet';
 import { RecurringSubscriptions } from './RecurringSubscriptions';
 
 import { errorMessage } from '../../../lib/error-message';
@@ -137,7 +138,7 @@ export default function PlansPage() {
               </select>
             </label>
             <label className="block text-xs font-semibold uppercase text-[var(--muted)]">
-              Amount (stablecoin)
+              Amount ({paymentTokenLabel(op.status?.tracks.avalanche.chain_id, op.status?.tracks.avalanche.usdt)})
               <input
                 className="mt-1 w-full rounded-xl border border-[var(--line)] px-3 py-2 text-sm"
                 value={amount}
@@ -274,7 +275,7 @@ export default function PlansPage() {
                     <td className="px-4 py-3.5 font-mono text-[12px] text-[var(--muted)]" title={p.id}>
                       {shortId(p.id)}
                     </td>
-                    <td className="px-4 py-3.5 tabular-nums">{p.amount} stablecoin</td>
+                    <td className="px-4 py-3.5 tabular-nums">{p.amount} {paymentTokenLabel(p.payment?.chain_id, p.payment?.usdt)}</td>
                     <td className="px-4 py-3.5 tabular-nums">{p.credits}</td>
                     <td className="px-4 py-3.5 text-[var(--muted)]">{p.interval === 'month' ? 'Every 30 days' : 'One time'}</td>
                     <td className="px-4 py-3.5">{featureLabel(p.feature, features)}</td>

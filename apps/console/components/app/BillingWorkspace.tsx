@@ -1,4 +1,5 @@
 'use client';
+import { paymentTokenLabel } from '../../lib/bagseven-sdk-wallet';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -47,7 +48,7 @@ export function BillingWorkspace({ kind }: { kind: 'customers' | 'invoices' }) {
           <button aria-pressed={view === 'purchases'} onClick={() => change({ view: 'purchases', customer: '' })}>My purchases</button>
         </nav>
         <label className={styles.filter}>Status<select aria-label="Invoice status" value={status} onChange={e => change({ status: e.target.value })}>
-          {['ALL', 'OPEN', 'PAID', 'EXPIRED', 'VOID'].map(s => <option key={s} value={s}>{s === 'ALL' ? 'All invoices' : s.charAt(0) + s.slice(1).toLowerCase()}</option>)}
+          {['ALL', 'PAID'].map(s => <option key={s} value={s}>{s === 'ALL' ? 'All invoices' : s.charAt(0) + s.slice(1).toLowerCase()}</option>)}
         </select></label>
         {customer && <button className={styles.clear} onClick={() => change({ customer: '' })}>Clear customer filter</button>}
       </>}
@@ -63,7 +64,7 @@ export function BillingWorkspace({ kind }: { kind: 'customers' | 'invoices' }) {
       </div> : <div className={styles.tableScroll}><table className={styles.table}>
         <thead><tr>{(isCustomers ? ['Customer', 'Relationship', 'Paid invoices', 'Recurring permissions', 'Last activity', ''] : ['Invoice / plan', view === 'purchases' ? 'Provider' : 'Customer', 'Amount', 'Issued', 'Status', '']).map((h, i) => <th key={i} scope="col">{h || <span className="sr-only">Actions</span>}</th>)}</tr></thead>
         <tbody>{isCustomers ? rows.customers?.map(c => <tr key={c.holder}>
-          <td><div className={styles.identity}><span className={styles.avatar}>{c.holder.slice(0, 1).toUpperCase()}</span><div><strong className={styles.account} title={c.holder}>{c.holder}</strong><small>First checkout {billingDate(c.first_seen)}</small></div></div></td>
+          <td><div className={styles.identity}><span className={styles.avatar}>{c.holder.slice(0, 1).toUpperCase()}</span><div><strong className={styles.account} title={c.holder}>{c.holder}</strong><small>First purchase {billingDate(c.first_seen)}</small></div></div></td>
           <td><StatusPill tone={c.payments ? 'good' : 'neutral'}>{c.payments ? 'Paying customer' : 'Awaiting first payment'}</StatusPill></td>
           <td>{c.payments} <small>of {c.invoices} invoices</small></td>
           <td>{c.active_subscriptions} active</td><td>{billingDate(c.last_seen)}</td>
@@ -71,7 +72,7 @@ export function BillingWorkspace({ kind }: { kind: 'customers' | 'invoices' }) {
         </tr>) : rows.documents?.map(d => <tr key={d.id}>
           <td><strong>{d.terms.planName}</strong><small className={styles.number}>{documentNumber(d.id)}</small><small>{d.terms.kind === 'renewal' ? 'Subscription renewal' : d.terms.kind === 'subscription' ? 'First subscription period' : 'One-time purchase'}</small></td>
           <td><span className={styles.account} title={view === 'purchases' ? d.provider_id : d.holder}>{view === 'purchases' ? d.provider_id : d.holder}</span></td>
-          <td className={styles.amount}>{d.terms.amount}<small>stablecoin · chain {d.terms.chainId}</small></td>
+          <td className={styles.amount}>{d.terms.amount}<small>{paymentTokenLabel(d.terms.chainId, d.terms.token ?? undefined)} · chain {d.terms.chainId}</small></td>
           <td>{billingDate(d.created_at)}</td><td><StatusPill tone={d.status === 'PAID' ? 'good' : d.status === 'OPEN' ? 'warn' : 'neutral'}>{d.status === 'OPEN' ? 'Awaiting payment' : d.status.toLowerCase()}</StatusPill></td>
           <td><Link className={styles.action} href={'/app/invoices/' + d.id}>{d.status === 'PAID' ? 'Invoice & receipt' : 'View invoice'} <ArrowUpRight size={14} /></Link></td>
         </tr>)}</tbody>

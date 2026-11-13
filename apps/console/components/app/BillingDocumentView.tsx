@@ -1,4 +1,5 @@
 'use client';
+import { paymentTokenLabel } from '../../lib/bagseven-sdk-wallet';
 import { useEffect, useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
@@ -8,11 +9,12 @@ import { PageHeader, SecondaryButton, StatusPill } from './ui';
 import { billingDate, documentNumber } from './BillingWorkspace';
 import styles from './billing.module.css';
 
-export function BillingDocumentView({ id }: { id: string }) {
-  const [document, setDocument] = useState<BillingDocument | null>(null);
+export function BillingDocumentView({ id, initialDocument, shared = false }: { id: string; initialDocument?: BillingDocument; shared?: boolean }) {
+  const [document, setDocument] = useState<BillingDocument | null>(initialDocument ?? null);
   const [error, setError] = useState(''), [receipt, setReceipt] = useState(false);
-  const [revision, setRevision] = useState(0), [loading, setLoading] = useState(true);
+  const [revision, setRevision] = useState(0), [loading, setLoading] = useState(!initialDocument);
   useEffect(() => {
+    if (initialDocument) return;
     const controller = new AbortController();
     setLoading(true); setError('');
     void fetch('/api/billing-documents?id=' + encodeURIComponent(id), { cache: 'no-store', signal: controller.signal })
@@ -20,20 +22,21 @@ export function BillingDocumentView({ id }: { id: string }) {
       .catch(e => { if (!controller.signal.aborted) setError(e instanceof Error ? e.message : 'Could not load invoice.'); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [id, revision]);
+  }, [id, revision, initialDocument]);
   const paid = document?.status === 'PAID';
   const showingReceipt = receipt && paid;
-  const currency = document?.terms.chainId === 43113 && document.terms.token?.toLowerCase() === '0x5425890298aed601595a70ab815c96711a31bc65' ? 'USDC' : 'stablecoin';
+  const currency = paymentTokenLabel(document?.terms.chainId, document?.terms.token ?? undefined);
   const explorer = document?.terms.chainId === 43113 ? 'https://testnet.snowtrace.io/tx/' : document?.terms.chainId === 43114 ? 'https://snowtrace.io/tx/' : null;
   return <div className={styles.document}>
     <div className={styles.noPrint}><PageHeader title="Billing document" description="Original invoice terms and recorded payment evidence."
-      action={<><SecondaryButton disabled={loading} onClick={() => setRevision(n => n + 1)}>Refresh</SecondaryButton><SecondaryButton disabled={!document || loading || Boolean(error)} onClick={() => window.print()}><Printer size={14} /> Print / save PDF</SecondaryButton></>} />
+      action={<>{!shared && <SecondaryButton disabled={loading} onClick={() => setRevision(n => n + 1)}>Refresh</SecondaryButton>}<SecondaryButton disabled={!document || loading || Boolean(error)} onClick={() => window.print()}><Printer size={14} /> Print / save PDF</SecondaryButton></>} />
       <div className={styles.toolbar} style={{ marginTop: 24 }}>
         <nav aria-label="Billing document type" className={styles.tabs}>
           <button aria-pressed={!showingReceipt} onClick={() => setReceipt(false)}>Invoice</button>
           <button aria-pressed={showingReceipt} disabled={!paid} onClick={() => setReceipt(true)}>Payment receipt</button>
-        </nav><Link href="/app/invoices" className={styles.action}>Back to invoices</Link>
+        </nav>{!shared && <Link href="/app/invoices" className={styles.action}>Back to invoices</Link>}
       </div>
+    {!shared && document?.email_delivery && <p className={styles.note} style={{ marginTop: 12 }} role="status">Receipt email: {document.email_delivery.status === 'SENT' ? 'Sent to the customer' : document.email_delivery.status === 'RECONCILIATION_REQUIRED' ? 'Delivery needs review — verify the email provider before sending again' : 'Scheduled for delivery'}</p>}
     </div>
     {error ? <p role="alert" className={styles.error}>{error}</p> : loading ? <p role="status">Loading document…</p> : document ? <article className={styles.paper} data-billing-print>
       <div className={styles.documentHead}>

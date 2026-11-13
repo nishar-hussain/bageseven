@@ -118,7 +118,7 @@ export async function providerCheckouts(
     `with scoped as (
     select c.id,c.holder,c.amount,c.created_at,p.name as plan,
       case when c.status='PENDING' and c.expires_at <= now() then 'EXPIRED' else c.status end as status,
-      c.payment_tx as "paymentTx",c.chain_id as "chainId"
+      c.payment_tx as "paymentTx",c.chain_id as "chainId",c.payment_token as "paymentToken"
     from checkout_sessions c join billing_plans p on p.id=c.plan_id where p.provider_id=$1
       and c.created_at <= now() and ($4::int=0 or c.created_at >= date_trunc('day',now() at time zone 'UTC') at time zone 'UTC' - ($4::int-1)*interval '1 day')
   ), filtered as (select * from scoped where $2='ALL' or status=$2),
@@ -138,6 +138,7 @@ export async function providerCheckouts(
       status: string;
       paymentTx: string | null;
       chainId: number;
+      paymentToken: string | null;
     }[];
   };
 }

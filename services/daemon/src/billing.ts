@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import { ApiError } from '@bagseven/server';
+import { billingDocumentUrl } from '@bagseven/db';
 import { EntitlementPreflightError, getGrantStore } from '@bagseven/entitlements';
 import type { Redis } from 'ioredis';
 import { billingDocumentId, type Database } from '@bagseven/db';
@@ -11,7 +12,8 @@ import { assertProviderReady } from './provider-gas.js';
 import { verifyPaymentAuthorization, verifyAvalanchePayment } from './avalanche-payment.js';
 import { avalancheDemoAllowed } from './avalanche-settle.js';
 import {
-  authenticateRequest,
+  authenticateApiRequest,
+  authenticatedPrincipal,
   type ApiPrincipal,
 } from './api-keys.js';
 import {
@@ -26,14 +28,12 @@ const confirmBody = z.object({
   payment_signature: z.string().optional(),
 });
 
-function principalFrom(auth: string | string[] | undefined): ApiPrincipal {
-  return authenticateRequest(auth, process.env);
-}
-
 /** Provider scope is accepted only from the authenticated console BFF. */
 export function providerScope(req: { headers: { authorization?: string; [key: string]: unknown } }): string | undefined {
   const provider = req.headers['x-bagseven-provider'];
-  if (provider === undefined) return undefined;
+  const keyProvider = authenticatedPrincipal(req)?.provider;
+  if (provider === undefined) return keyProvider;
+  if (keyProvider) throw new ApiError(403, 'FORBIDDEN', 'API key provider cannot be overridden');
   if (typeof provider !== 'string' || !provider.trim() || req.headers.authorization !== `Bearer ${process.env.DAEMON_AUTH_TOKEN}`) {
     throw new ApiError(403, 'FORBIDDEN', 'Provider scope requires console authentication');
   }
@@ -45,7 +45,7 @@ export function providerScope(req: { headers: { authorization?: string; [key: st
 function planInProviderScope(plan: { provider_id?: string } | null | undefined, provider?: string): boolean {
   if (!plan) return false;
   if (!provider) return true;
-  return plan.provider_id === provider || plan.provider_id === 'legacy';
+  return plan.provider_id === provider;
 }
 
 export function registerBillingRoutes(
@@ -63,7 +63,7 @@ export function registerBillingRoutes(
   const confirmations = new Map<string, Promise<unknown>>();
 
   app.post('/v1/plans', async (req) => {
-    const principal = principalFrom(req.headers.authorization);
+    const principal = await authenticateApiRequest(req, deps.db);
     if (principal.kind !== 'sk') throw new ApiError(403, 'FORBIDDEN', 'secret key required to create plans');
     try {
       const plan = await store.createPlan({ ...CreatePlanInput.parse(req.body ?? {}), provider_id: providerScope(req) ?? 'legacy' });
@@ -75,20 +75,31 @@ export function registerBillingRoutes(
   });
 
   app.get('/v1/plans', async (req) => {
-    const principal = principalFrom(req.headers.authorization);
+    const principal = await authenticateApiRequest(req, deps.db);
     if (principal.kind === 'embed') throw new ApiError(403, 'FORBIDDEN', 'embed tokens cannot list merchant plans');
     const q = req.query as { active?: string };
     const provider = providerScope(req);
     // Console scopes by provider; still surface unscoped 'legacy' plans created via secret key / seeds.
     return {
       plans: (await store.listPlans(q.active === 'true')).filter(
-        (p) => !provider || p.provider_id === provider || p.provider_id === 'legacy',
-      ),
+        (p) => !provider || p.provider_id === provider || (!principal.provider && p.provider_id === 'legacy'),
+      ).map(p => ({ ...p, payment: { chain_id: avalancheConfig().chainId, usdt: avalancheConfig().usdt } })),
     };
   });
 
+  app.get('/v1/billing-documents', async req => {
+    const principal = await authenticateApiRequest(req, deps.db);
+    if (principal.kind === 'pk') throw new ApiError(403, 'FORBIDDEN', 'Customer access token required');
+    const holder = principal.kind === 'embed' ? principal.holder : (req.query as { holder?: string }).holder;
+    if (!holder || !deps.db) throw new ApiError(400, 'HOLDER_REQUIRED', 'Customer identity required');
+    const rows = await deps.db.$client.query(`select id,terms,paid_recorded_at from billing_documents
+      where holder=$1 and status='PAID' and ($2::text is null or provider_id=$2) order by created_at desc,id desc limit 50`, [holder, principal.provider ?? null]);
+    return { email: principal.kind === 'embed' ? principal.billingEmail ?? null : null, documents: rows.rows.map(row => ({ id: row.id, terms: row.terms, paid_at: row.paid_recorded_at,
+      url: billingDocumentUrl(process.env.CONSOLE_URL || 'http://localhost:3000', row.id, new Date(), process.env.ENTITLEMENT_SUBJECT_SECRET || '') })) };
+  });
+
   app.get('/v1/plans/:id', async (req) => {
-    principalFrom(req.headers.authorization);
+    await authenticateApiRequest(req, deps.db);
     const { id } = req.params as { id: string };
     const plan = await store.getPlan(id);
     if (!planInProviderScope(plan, providerScope(req))) throw new ApiError(404, 'PLAN_NOT_FOUND', 'plan not found');
@@ -96,10 +107,14 @@ export function registerBillingRoutes(
   });
 
   app.post('/v1/checkout-sessions', async (req) => {
-    const principal = principalFrom(req.headers.authorization);
+    const principal = await authenticateApiRequest(req, deps.db);
     if (principal.kind === 'pk') throw new ApiError(403, 'FORBIDDEN', 'publishable keys cannot create checkout sessions');
     try {
       const body = CreateCheckoutInput.parse(req.body ?? {});
+      if (principal.kind === 'embed') {
+        if (body.billing_email && body.billing_email !== principal.billingEmail) throw new ApiError(403, 'BILLING_EMAIL_SCOPE', 'Billing email must come from the authenticated customer identity');
+        body.billing_email = principal.billingEmail;
+      } else if (!body.billing_email && z.string().email().safeParse(body.holder).success) body.billing_email = body.holder.toLowerCase();
       if (principal.kind === 'embed' && body.holder !== principal.holder) {
         throw new ApiError(403, 'HOLDER_MISMATCH', 'embed token is scoped to a different holder');
       }
@@ -124,7 +139,7 @@ export function registerBillingRoutes(
   });
 
   app.get('/v1/checkout-sessions', async (req) => {
-    const principal = principalFrom(req.headers.authorization);
+    const principal = await authenticateApiRequest(req, deps.db);
     if (principal.kind !== 'sk') throw new ApiError(403, 'FORBIDDEN', 'secret key required');
     const q = req.query as { holder?: string; plan_id?: string };
     const provider = providerScope(req);
@@ -136,7 +151,8 @@ export function registerBillingRoutes(
   });
 
   app.get('/v1/checkout-sessions/:id', async (req) => {
-    const principal = principalFrom(req.headers.authorization);
+    const principal = await authenticateApiRequest(req, deps.db);
+    if (principal.kind === 'pk') throw new ApiError(403, 'FORBIDDEN', 'Customer access token required to read private checkout details');
     const { id } = req.params as { id: string };
     const session = await store.getCheckout(id);
     if (!session) throw new ApiError(404, 'CHECKOUT_NOT_FOUND', 'checkout session not found');
@@ -197,9 +213,10 @@ export function registerBillingRoutes(
     const session = await store.getCheckout(id);
     if (!session) throw new ApiError(404, 'CHECKOUT_NOT_FOUND', 'checkout session not found');
     if (session.status === 'PAID') return { session, already_paid: true };
-    if (session.status !== 'PENDING' && !(session.status === 'EXPIRED' && session.plan?.interval === 'month')) throw new ApiError(409, `CHECKOUT_${session.status}`, `session is ${session.status}`);
+    if (session.status !== 'PENDING' && session.status !== 'EXPIRED') throw new ApiError(409, `CHECKOUT_${session.status}`, `session is ${session.status}`);
     const plan = session.plan ?? await store.getPlan(session.plan_id);
     if (!plan) throw new ApiError(404, 'PLAN_NOT_FOUND', 'plan missing');
+    if (body.customer_wallet.toLowerCase() === plan.merchant_wallet.toLowerCase()) throw new ApiError(409, 'SELF_PAYMENT', 'Customer and provider payout wallets must be different');
     await ready(plan.provider_id);
     if (session.chain_id !== avalancheConfig().chainId) throw new ApiError(409, 'CHECKOUT_NETWORK_CHANGED', 'Create a new checkout for the configured network');
     if (session.payment_token && session.payment_token.toLowerCase() !== avalancheConfig().usdt.toLowerCase()) throw new ApiError(409, 'CHECKOUT_TOKEN_CHANGED', 'Create a new checkout for the configured payment token');
@@ -214,6 +231,7 @@ export function registerBillingRoutes(
           await verifyAvalanchePayment({
             payment_tx: body.payment_tx, merchant_wallet: plan.merchant_wallet,
             customer_wallet: body.customer_wallet, amount: session.amount,
+            notBefore: session.created_at, notAfter: session.expires_at,
           });
         } catch (error) {
           // Keep the checkout payable: an RPC outage or pending receipt is retryable.
@@ -272,7 +290,7 @@ export function registerBillingRoutes(
         payment_tx: body.payment_tx,
         customer_wallet: body.customer_wallet,
         grant_id: grant.id,
-        allow_expired: plan.interval === 'month',
+        allow_expired: !demo || plan.interval === 'month',
       });
 
       return {

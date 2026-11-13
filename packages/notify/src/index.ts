@@ -3,6 +3,7 @@ export { renderNotificationEmail } from './email.js';
 import { Resend } from 'resend';
 
 export type NotifyEvent =
+  | 'billing_receipt'
   | 'magic_link'
   | 'grant_minted'
   | 'credits_bought'
@@ -18,6 +19,7 @@ export interface NotifyPayload {
   href?: string;
   actionLabel?: string;
   code?: string;
+  idempotencyKey?: string;
   meta?: Record<string, string | number | boolean | null | undefined>;
 }
 
@@ -52,7 +54,7 @@ export async function sendNotify(payload: NotifyPayload): Promise<{ ok: boolean;
     subject,
     html: rendered.html,
     text: rendered.text,
-  });
+  }, payload.idempotencyKey ? { idempotencyKey: payload.idempotencyKey } : undefined);
   if (error) {
     const msg = error.message ?? String(error);
     console.error(`[notify] ${payload.event} failed`, error);

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { encodeAbiParameters, encodeEventTopics, parseAbi } from 'viem';
 import { verifyAvalanchePayment } from './avalanche-payment.js';
-const rpc = vi.hoisted(() => ({ getChainId: vi.fn(), readContract: vi.fn(), getTransactionReceipt: vi.fn(), getBlockNumber: vi.fn() }));
+const rpc = vi.hoisted(() => ({ getChainId: vi.fn(), readContract: vi.fn(), getTransactionReceipt: vi.fn(), getBlockNumber: vi.fn(), getBlock: vi.fn() }));
 vi.mock('viem', async (original) => ({ ...await original<typeof import('viem')>(), createPublicClient: () => rpc }));
 const token = '0x4444444444444444444444444444444444444444';
 const from = '0x1111111111111111111111111111111111111111', to = '0x2222222222222222222222222222222222222222';
@@ -16,6 +16,19 @@ beforeEach(() => {
   rpc.getTransactionReceipt.mockResolvedValue({ status: 'success', blockNumber: 10n, logs: [transfer()] });
 });
 describe('Avalanche USDT receipt verification', () => {
+  it('rejects a self-transfer even when the token emits a successful Transfer event', async () => {
+    rpc.getTransactionReceipt.mockResolvedValue({ status: 'success', blockNumber: 10n, logs: [transfer(5_000_000n, token, from, from)] });
+    await expect(verifyAvalanchePayment({ ...input, merchant_wallet: from }, env)).rejects.toThrow('SELF_PAYMENT');
+  });
+  it('accepts timely payment evidence after checkout expiry, but rejects a late or pre-checkout transfer', async () => {
+    rpc.getBlock.mockResolvedValue({ timestamp: 2000n });
+    const window = { ...input, notBefore: new Date(1990_500).toISOString(), notAfter: new Date(2010_000).toISOString() };
+    await expect(verifyAvalanchePayment(window, env)).resolves.toBeUndefined();
+    rpc.getBlock.mockResolvedValue({ timestamp: 2011n });
+    await expect(verifyAvalanchePayment(window, env)).rejects.toThrow('CHECKOUT_EXPIRED');
+    rpc.getBlock.mockResolvedValue({ timestamp: 1989n });
+    await expect(verifyAvalanchePayment(window, env)).rejects.toThrow('PAYMENT_BEFORE_CHECKOUT');
+  });
   it('accepts a confirmed transfer with the correct token, sender, recipient and amount', async () => { await expect(verifyAvalanchePayment(input, env)).resolves.toBeUndefined(); });
   it.each([
     ['underpayment', [transfer(1n)]],

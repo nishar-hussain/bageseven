@@ -22,6 +22,7 @@ contract BagSubscriptionPlan {
     bool private entered;
 
     error InvalidTerms();
+    error SelfPayment();
     error NotDue();
     error Inactive();
     error CollectionWindowClosed();
@@ -70,6 +71,7 @@ contract BagSubscriptionPlan {
         emit Cancelled(id, sub.paidThrough);
     }
     function collect(address payer) private {
+        if (payer == merchant) revert SelfPayment();
         if (ISubscriptionToken(token).balanceOf(payer) < amount) revert InsufficientFunds();
         if (ISubscriptionToken(token).allowance(payer, address(this)) < amount) revert AllowanceRequired();
         (bool ok, bytes memory result) = token.call(abi.encodeCall(ISubscriptionToken.transferFrom, (payer, merchant, amount)));

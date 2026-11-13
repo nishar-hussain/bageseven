@@ -1,4 +1,5 @@
 'use client';
+import { paymentTokenLabel } from '../../../lib/bagseven-sdk-wallet';
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -13,6 +14,7 @@ type Checkout = {
   status: string;
   paymentTx: string | null;
   chainId: number;
+  paymentToken: string | null;
 };
 function CheckoutList() {
   const params = useSearchParams();
@@ -146,7 +148,7 @@ function CheckoutList() {
                         <Link href={'/app/invoices?customer=' + encodeURIComponent(s.holder)} className="text-[var(--blue)] underline">{s.holder}</Link>
                       </td>
                       <td className="whitespace-nowrap p-4">{new Date(s.created_at).toLocaleDateString()}</td>
-                      <td className="whitespace-nowrap p-4">{s.amount} stablecoin</td>
+                      <td className="whitespace-nowrap p-4">{s.amount} {paymentTokenLabel(s.chainId, s.paymentToken ?? undefined)}</td>
                       <td className="whitespace-nowrap p-4">
                         {s.status === 'PENDING' ? 'Awaiting payment' : s.status.toLowerCase()}
                       </td>

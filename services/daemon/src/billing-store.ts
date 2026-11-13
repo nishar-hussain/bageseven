@@ -5,7 +5,7 @@ import { assertKnownFeature } from '@bagseven/entitlements';
 import { AVALANCHE_FUJI_CHAIN_ID, avalancheConfig } from '@bagseven/onchain';
 import { usdtUnits } from './avalanche-payment.js';
 import { billingPlans, checkoutSessions, issueBillingDocument, recordDocumentPayment, billingDocuments, type Database } from '@bagseven/db';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 
 export const PlanSchema = z.object({
   id: z.string().min(1),
@@ -33,6 +33,7 @@ export const CheckoutSessionSchema = z.object({
   platform_fee_bps: z.number().int().default(0),
   platform_fee_amount: z.string().default('0'),
   chain_id: z.number().int().default(AVALANCHE_FUJI_CHAIN_ID),
+  billing_email: z.string().email().optional(),
   customer_wallet: z.string().optional(),
   payment_tx: z.string().optional(),
   payment_token: z.string().optional(),
@@ -62,7 +63,8 @@ export const CreateCheckoutInput = z.object({
   worker_id: z.string().uuid().optional(),
   holder: z.string().min(1),
   success_url: z.string().url().optional(),
-  expires_in: z.number().int().positive().max(86_400).default(3600),
+  expires_in: z.number().int().min(60).max(86_400).default(1800),
+  billing_email: z.string().email().optional(),
 });
 
 /** 0.1% owed by the provider; preserve fractional micro-USDT until invoicing. */
@@ -85,6 +87,11 @@ export class MemoryBillingStore {
     const prior = this.payments.get(key);
     if (prior && prior !== checkoutId) throw new Error('PAYMENT_REUSED: this transaction belongs to another checkout');
     this.payments.set(key, checkoutId);
+    const session = this.sessions.get(checkoutId);
+    if (session) {
+      if (session.payment_tx && session.payment_tx.toLowerCase() !== key) throw new Error('PAYMENT_REUSED');
+      this.sessions.set(checkoutId, { ...session, payment_tx: key, ...(_payer ? { customer_wallet: _payer.toLowerCase() } : {}) });
+    }
   }
 
   createPlan(raw: z.input<typeof CreatePlanInput>): Plan {
@@ -121,12 +128,15 @@ export class MemoryBillingStore {
     const input = CreateCheckoutInput.parse(raw);
     const plan = this.plans.get(input.plan_id);
     if (!plan || !plan.active) throw new Error('PLAN_NOT_FOUND');
+    const existing = [...this.sessions.values()].find(s => s.plan_id === plan.id && s.holder === input.holder && s.worker_id === input.worker_id && s.success_url === input.success_url && s.billing_email === input.billing_email && s.status === 'PENDING' && !s.payment_tx && Date.parse(s.expires_at) > Date.now());
+    if (existing) return this.getCheckout(existing.id)!;
     const id = `cs_${randomUUID().replace(/-/g, '').slice(0, 18)}`;
     const session: CheckoutSession = {
       id,
       plan_id: plan.id,
       holder: input.holder,
       worker_id: input.worker_id,
+      billing_email: input.billing_email,
       status: 'PENDING',
       amount: plan.amount,
       chain_id: avalancheConfig().chainId,
@@ -213,22 +223,33 @@ export class PostgresBillingStore implements BillingStore {
     const input = CreateCheckoutInput.parse(raw);
     const plan = await this.getPlan(input.plan_id);
     if (!plan?.active) throw new Error('PLAN_NOT_FOUND');
-    const session: CheckoutSession = { id: `cs_${randomUUID().replace(/-/g, '')}`, plan_id: plan.id, holder: input.holder, worker_id: input.worker_id, status: 'PENDING', amount: plan.amount, chain_id: avalancheConfig().chainId, payment_token: avalancheConfig().usdt, platform_fee_bps: 10, platform_fee_amount: platformFee(plan.amount), success_url: input.success_url, expires_at: new Date(Date.now() + input.expires_in * 1000).toISOString(), created_at: nowIso(), plan };
-    await this.db.transaction(async tx => {
-      await tx.insert(checkoutSessions).values({ id: session.id, planId: plan.id, holder: session.holder, workerId: session.worker_id, status: session.status, amount: session.amount, chainId: session.chain_id, paymentToken: avalancheConfig().usdt, platformFeeBps: session.platform_fee_bps, platformFeeAmount: session.platform_fee_amount, successUrl: session.success_url, expiresAt: new Date(session.expires_at) });
-      await issueBillingDocument(tx, { source: `checkout:${session.id}`, provider: plan.provider_id, holder: session.holder,
+    if (!input.billing_email) throw new Error('BILLING_EMAIL_REQUIRED: identify the authenticated customer with their verified billing email before checkout');
+    const session: CheckoutSession = { billing_email: input.billing_email, id: `cs_${randomUUID().replace(/-/g, '')}`, plan_id: plan.id, holder: input.holder, worker_id: input.worker_id, status: 'PENDING', amount: plan.amount, chain_id: avalancheConfig().chainId, payment_token: avalancheConfig().usdt, platform_fee_bps: 10, platform_fee_amount: platformFee(plan.amount), success_url: input.success_url, expires_at: new Date(Date.now() + input.expires_in * 1000).toISOString(), created_at: nowIso(), plan };
+    return this.db.transaction(async tx => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'checkout:' + plan.id + ':' + input.holder}, 0))`);
+      const prior = await tx.execute(sql`select * from checkout_sessions where plan_id=${plan.id} and holder=${input.holder}
+        and worker_id is not distinct from ${input.worker_id ?? null}::text and success_url is not distinct from ${input.success_url ?? null}
+        and billing_email=${input.billing_email} and chain_id=${session.chain_id} and payment_token=${session.payment_token}
+        and status='PENDING' and payment_tx is null and expires_at>now() order by created_at desc limit 1`);
+      if (prior.rows[0]) {
+        const saved = prior.rows[0];
+        return CheckoutSessionSchema.parse({ ...saved, plan, created_at: new Date(saved.created_at as string).toISOString(), expires_at: new Date(saved.expires_at as string).toISOString(),
+          worker_id: saved.worker_id ?? undefined, success_url: saved.success_url ?? undefined, customer_wallet: saved.customer_wallet ?? undefined, payment_tx: saved.payment_tx ?? undefined, grant_id: saved.grant_id ?? undefined });
+      }
+      await tx.insert(checkoutSessions).values({ id: session.id, planId: plan.id, holder: session.holder, billingEmail: input.billing_email, workerId: session.worker_id, status: session.status, amount: session.amount, chainId: session.chain_id, paymentToken: avalancheConfig().usdt, platformFeeBps: session.platform_fee_bps, platformFeeAmount: session.platform_fee_amount, successUrl: session.success_url, expiresAt: new Date(session.expires_at) });
+      await issueBillingDocument(tx, { source: `checkout:${session.id}`, provider: plan.provider_id, holder: session.holder, billingEmail: input.billing_email,
         createdAt: new Date(session.created_at), expiresAt: new Date(session.expires_at), terms: {
           planId: plan.id, planName: plan.name, feature: plan.feature, amount: session.amount, chainId: session.chain_id,
           token: avalancheConfig().usdt, merchant: plan.merchant_wallet, kind: plan.interval === 'month' ? 'subscription' : 'once',
         } });
+      return session;
     });
-    return session;
   }
   async getCheckout(id: string): Promise<CheckoutSession | null> {
     const [s] = await this.db.select().from(checkoutSessions).where(eq(checkoutSessions.id, id));
     if (!s) return null;
     const status = s.status === 'PENDING' && s.expiresAt.getTime() <= Date.now() ? 'EXPIRED' : s.status;
-    return CheckoutSessionSchema.parse({ ...s, status, plan_id: s.planId, worker_id: s.workerId || undefined, chain_id: s.chainId, payment_token: s.paymentToken || undefined, platform_fee_bps: s.platformFeeBps, platform_fee_amount: s.platformFeeAmount, customer_wallet: s.customerWallet || undefined, payment_tx: s.paymentTx || undefined, grant_id: s.grantId || undefined, success_url: s.successUrl || undefined, expires_at: s.expiresAt.toISOString(), created_at: s.createdAt.toISOString(), plan: await this.getPlan(s.planId) });
+    return CheckoutSessionSchema.parse({ ...s, status, billing_email: s.billingEmail ?? undefined, plan_id: s.planId, worker_id: s.workerId || undefined, chain_id: s.chainId, payment_token: s.paymentToken || undefined, platform_fee_bps: s.platformFeeBps, platform_fee_amount: s.platformFeeAmount, customer_wallet: s.customerWallet || undefined, payment_tx: s.paymentTx || undefined, grant_id: s.grantId || undefined, success_url: s.successUrl || undefined, expires_at: s.expiresAt.toISOString(), created_at: s.createdAt.toISOString(), plan: await this.getPlan(s.planId) });
   }
   async listCheckouts(opts?: { holder?: string; plan_id?: string }): Promise<CheckoutSession[]> {
     const rows = await this.db.select().from(checkoutSessions).orderBy(desc(checkoutSessions.createdAt));

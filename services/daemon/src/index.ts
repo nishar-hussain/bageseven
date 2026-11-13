@@ -1,3 +1,4 @@
+import { expireCheckouts, PostgresReceiptDeliveryStore, ReceiptMailer } from './billing-lifecycle.js';
 import { Subscriptions } from './subscriptions.js';
 import { registerRegistryDeployment } from './registry-deployment.js';
 import { configureFeatureDatabase } from './feature-registry.js';
@@ -218,7 +219,7 @@ export function buildRoutes(app: FastifyInstance, { config, redis, db }: Service
   registerRegistryDeployment(app, db, config);
   const providerGas = new ProviderGasManager(db, config);
   const subscriptions = new Subscriptions(new PostgresSubscriptionStore(db), new AvalancheSubscriptionChain(providerGas, config), getGrantStore(config));
-  registerSubscriptionRoutes(app, subscriptions);
+  registerSubscriptionRoutes(app, subscriptions, db);
   const x402 = new X402Payments(new X402Authorities(db, config), getGrantStore(config), async (job, hooks) => {
     const resolved = await resolveWorker(config, job.data.authority.worker_id);
     if (resolved.mandate.id !== job.data.authority.mandate_id || resolved.mandate.provider_id !== job.data.authority.provider ||
@@ -230,6 +231,21 @@ export function buildRoutes(app: FastifyInstance, { config, redis, db }: Service
     release: async id => { await daemonApi(config, 'POST', `/v1/reservations/${id}/release`, {}); },
   });
   registerX402Routes(app, x402, config);
+
+  const receiptMailer = new ReceiptMailer(new PostgresReceiptDeliveryStore(db), config);
+  let billingTicking = false;
+  const billingTick = async () => {
+    if (billingTicking) return;
+    billingTicking = true;
+    try {
+      const results = await Promise.allSettled([expireCheckouts(db), receiptMailer.tick()]);
+      for (const result of results) if (result.status === 'rejected') app.log.warn('Billing lifecycle needs retry');
+    } finally { billingTicking = false; }
+  };
+  app.addHook('onReady', async () => { void billingTick(); });
+  const billingTimer = setInterval(() => void billingTick(), 15000);
+  billingTimer.unref();
+  app.addHook('onClose', async () => { clearInterval(billingTimer); });
 
   let ticking = false;
   let planCursor = '';
@@ -459,7 +475,7 @@ export function buildRoutes(app: FastifyInstance, { config, redis, db }: Service
   registerWorkerManagement(app, { config, resolve: worker => resolveWorker(config, worker), policy: (method, path, body) => daemonApi(config, method, path, body) });
   registerProviderGasRoutes(app, db, config);
   registerGrantRoutes(app, grantDeps);
-  registerPublicEntitlementRoutes(app, grantDeps);
+  registerPublicEntitlementRoutes(app, { ...grantDeps, db });
   registerBillingRoutes(app, { redis, db, subscriptions, validateWorker: async worker => {
     const resolved = await resolveWorker(config, worker);
     if (resolved.agent.status !== 'active' || resolved.mandate.status !== 'active') throw new ApiError(403, 'WORKER_INACTIVE', 'Choose an active agent for this checkout');

@@ -32,7 +32,7 @@ export function toApiError(err: unknown): ApiError {
     const providerCode = message.split(':')[0]!;
     return new ApiError(providerCode.includes('SIGNATURE') || providerCode.includes('FORBIDDEN') ? 403 : providerCode.includes('UNCONFIGURED') ? 503 : 409, providerCode, message);
   }
-  return new ApiError(500, 'INTERNAL_ERROR', message);
+  return new ApiError(500, 'INTERNAL_ERROR', 'An internal error occurred');
 }
 
 function isZodError(err: unknown): err is ZodError {
