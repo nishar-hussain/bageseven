@@ -57,3 +57,5 @@ Billing metrics come from a consistent read-only PostgreSQL snapshot. They do no
 The public landing walkthrough is an explicitly labeled local simulation of checkout, credit use and cancellation. It sends no wallet requests, payments or registry consumption. Actual checkout and wallet actions belong to the authenticated embedded product.
 
 Providers manage named, expiring API keys in Developers. Secret keys are shown once, can be replaced with overlapping rotation, and can be revoked. Revocation stops new API requests and customer tokens issued by that key while retaining audit metadata. Public keys expose plan listings; customer access and billing history require scoped authentication. Shared deployment credentials never appear in the dashboard.
+
+When connecting ChatGPT, a signed-in customer with verified email and linked wallet reviews one authorization button. Signed-out customers authenticate first. The assistant receives scoped Bagseven credentials; the user’s dashboard session and wallet keys are not shared. A new connection or scope requires explicit consent.

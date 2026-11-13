@@ -164,9 +164,11 @@ export default function McpPage() {
         <h2 className="text-base font-semibold">ChatGPT</h2>
         <p className="text-sm text-[var(--muted)]">
           Tunnel <code className="fi-mono text-xs">:4009/mcp</code> over HTTPS, enable OAuth (
-          <code className="fi-mono text-xs">MCP_OAUTH_REQUIRED</code>), add the custom MCP plugin. You complete email and wallet approval on
-          Bagseven&apos;s authorize page; ChatGPT only stores a Bagseven token.
+          <code className="fi-mono text-xs">MCP_OAUTH_REQUIRED</code>), and add one Bagseven connection using the current endpoint above.
+          An existing verified Bagseven session shows “Authorize and return to ChatGPT.” If you are signed out, sign in and complete any missing verification first.
+          ChatGPT receives a scoped Bagseven token; wallet transactions still require your approval.
         </p>
+        <p className="text-sm text-[var(--muted)]">If your temporary tunnel address changes, reconnect the app with the new URL. Remove retired Bagseven connections so ChatGPT selects the current one.</p>
         <Link href="/app" className="inline-block text-sm font-semibold text-[var(--blue)] underline">
           Back to overview →
         </Link>

@@ -3,11 +3,11 @@ import type { NextConfig } from 'next';
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   async headers() {
-    return [{ source: '/billing/:path*', headers: [
+    return ['/billing/:path*', '/app/mcp/authorize'].map(source => ({ source, headers: [
       { key: 'Cache-Control', value: 'private, no-store' },
       { key: 'Referrer-Policy', value: 'no-referrer' },
       { key: 'X-Robots-Tag', value: 'noindex, nofollow' },
-    ] }];
+    ] }));
   },
   transpilePackages: ['@bagseven/sdk'],
   // RainbowKit → wagmi connectors touch optional Coinbase CDP / x402 peers.

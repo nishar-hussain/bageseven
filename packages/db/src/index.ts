@@ -6,3 +6,4 @@ export * from './billing-documents.js';
 export * from './schema/index.js';
 export * from './billing-links.js';
 export * from './provider-api-keys.js';
+export * from './mcp-console-consent.js';

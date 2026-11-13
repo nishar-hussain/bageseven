@@ -46,7 +46,8 @@ catch (error) { console.error(`[mcp] ${error.message}`); process.exit(1); }
 
 console.log(`[mcp] worker=${process.env.BAGSEVEN_MCP_WORKER} port=${process.env.BAGSEVEN_MCP_PORT}`);
 
-const child = spawn(process.execPath, ['--import', 'tsx', 'scripts/bagseven-mcp.ts'], {
+// Source updates restart only MCP; keep the HTTPS tunnel and OAuth issuer stable.
+const child = spawn(process.execPath, ['--watch', '--import', 'tsx', 'scripts/bagseven-mcp.ts'], {
   cwd: root,
   stdio: 'inherit',
   env: process.env,

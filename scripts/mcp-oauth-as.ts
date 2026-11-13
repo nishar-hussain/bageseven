@@ -4,6 +4,7 @@
  * Email and signed Avalanche wallet ownership approve the connection.
  * Bagseven issues access_token → ChatGPT calls /mcp with Bearer.
  */
+import { beginConsoleConsent, finishConsoleConsent } from './mcp-console-auth.ts';
 import { mcpCredentials } from './mcp-credential-store.ts';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { Express, Request, Response } from 'express';
@@ -83,7 +84,10 @@ export async function verifyMcpAccessToken(authHeader: string | undefined): Prom
   }
   if (token.startsWith('refresh:') || token.startsWith('code:')) return null;
   const row = await tokens.get(token) as AccessToken | undefined;
-  return row && row.exp > Date.now() ? row : null;
+  const issuer = process.env.BAGSEVEN_MCP_PUBLIC_URL?.replace(/\/$/, '');
+  const validResource = !issuer || row?.resource === issuer || row?.resource === resourceUrl(issuer);
+  const validScope = row?.scope.split(' ').some(scope => ['bagseven', 'bagseven:tools'].includes(scope));
+  return row && row.exp > Date.now() && validResource && validScope ? row : null;
 }
 
 function html(value: string): string {
@@ -142,7 +146,41 @@ function authorizePage(opts: {
 </body></html>`;
 }
 
+function validOAuthRequest(query: Record<string, unknown>, base: string): string | null {
+  if (Object.values(query).some(value => typeof value !== 'string' || value.length > 2048)) return 'Invalid OAuth request parameters';
+  if (query.response_type && query.response_type !== 'code') return 'Unsupported OAuth response type';
+  try {
+    const redirect = new URL(String(query.redirect_uri || ''));
+    const chat = redirect.protocol === 'https:' && ['chatgpt.com','chat.openai.com'].includes(redirect.hostname) &&
+      (redirect.pathname === '/connector_platform_oauth_redirect' || /^\/connector\/oauth\/[A-Za-z0-9_-]+$/.test(redirect.pathname));
+    const local = process.env.NODE_ENV !== 'production' && redirect.protocol === 'http:' && ['localhost','127.0.0.1'].includes(redirect.hostname);
+    if ((!chat && !local) || redirect.username || redirect.password || redirect.hash) return 'Invalid OAuth callback';
+  } catch { return 'Invalid OAuth callback'; }
+  if (!query.client_id || String(query.client_id).length > 512) return 'Missing client ID';
+  if (query.code_challenge_method !== 'S256' || !/^[A-Za-z0-9_-]{43}$/.test(String(query.code_challenge || ''))) return 'OAuth requires S256 PKCE';
+  if (query.resource && ![base, resourceUrl(base)].includes(String(query.resource))) return 'Invalid OAuth resource';
+  const scopes = String(query.scope || 'bagseven').split(' ');
+  if (!scopes.every(scope => ['bagseven','bagseven:tools'].includes(scope))) return 'Invalid OAuth scope';
+  return null;
+}
+async function issueAuthorization(res: Response, base: string, q: Record<string, unknown>, account: { accountId: string; wallet: string }) {
+  const invalid = validOAuthRequest(q, base);
+  if (invalid) throw Error(invalid);
+  await prune();
+  const code = b64url(randomBytes(24));
+  await codes.set(code, { clientId: String(q.client_id), redirectUri: String(q.redirect_uri),
+    codeChallenge: String(q.code_challenge), codeChallengeMethod: 'S256', scope: String(q.scope || 'bagseven'),
+    resource: String(q.resource || resourceUrl(base)), humanId: account.accountId, accountWallet: account.wallet, exp: Date.now() + 600000 });
+  const target = new URL(String(q.redirect_uri)); target.searchParams.set('code', code);
+  if (q.state) target.searchParams.set('state', String(q.state)); target.searchParams.set('iss', base);
+  res.set('Cache-Control', 'no-store').set('Referrer-Policy', 'no-referrer').redirect(302, target.href);
+}
+
 export function mountMcpOAuth(app: Express): void {
+  app.use('/oauth', (_req, res, next) => {
+    res.set('Cache-Control', 'no-store').set('Referrer-Policy', 'no-referrer');
+    next();
+  });
   const asMeta = (req: Request, res: Response) => {
     const base = publicBase(req);
     res.json({
@@ -154,7 +192,7 @@ export function mountMcpOAuth(app: Express): void {
       grant_types_supported: ['authorization_code', 'refresh_token'],
       code_challenge_methods_supported: ['S256'],
       token_endpoint_auth_methods_supported: ['none', 'client_secret_post', 'client_secret_basic'],
-      scopes_supported: ['openid', 'bagseven', 'bagseven:tools'],
+      scopes_supported: ['bagseven', 'bagseven:tools'],
       authorization_response_iss_parameter_supported: true,
       client_id_metadata_document_supported: false,
     });
@@ -178,7 +216,15 @@ export function mountMcpOAuth(app: Express): void {
 
   app.post('/oauth/account/challenge', (req, res) => startAccountConsent(req, res, publicBase(req)));
 
-  app.get('/oauth/authorize', (req, res) => {
+  app.get('/oauth/account/console', async (req, res) => {
+    const base = publicBase(req);
+    try {
+      const proof = await finishConsoleConsent(req, res, base);
+      await issueAuthorization(res, base, Object.fromEntries(new URLSearchParams(proof.query)), { accountId: proof.email, wallet: proof.wallet });
+    } catch { res.status(400).type('html').send('<h1>Connection expired</h1><p>Return to ChatGPT and connect Bagseven again.</p>'); }
+  });
+
+  app.get('/oauth/authorize', async (req, res) => {
     const base = publicBase(req);
     const client_id = String(req.query.client_id || '');
     const redirect_uri = String(req.query.redirect_uri || '');
@@ -194,6 +240,9 @@ export function mountMcpOAuth(app: Express): void {
       res.status(400).send('missing client_id or redirect_uri');
       return;
     }
+    const invalid = validOAuthRequest(req.query, base);
+    if (invalid) return res.status(400).send(invalid);
+    if (await beginConsoleConsent(req, res, base, new URLSearchParams(Object.entries(req.query).map(([key, value]) => [key, String(value)])).toString())) return;
     // Accept ChatGPT’s dynamic client id or our configured client.
     res.type('html').send(
       authorizePage({
@@ -240,15 +289,8 @@ export function mountMcpOAuth(app: Express): void {
         );
     };
 
-    let okRedirect = false;
-    try {
-      const target = new URL(redirect_uri);
-      okRedirect = (target.protocol === 'https:' && ['chatgpt.com', 'chat.openai.com'].includes(target.hostname)) ||
-        (target.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(target.hostname));
-    } catch { /* Invalid redirect URLs are refused. */ }
-    if (!okRedirect) {
-      return fail('redirect_uri must be a ChatGPT connector callback (or local inspector)');
-    }
+    const invalid = validOAuthRequest(q, base);
+    if (invalid) return fail(invalid);
 
     let humanId: string;
     let accountWallet: string;
@@ -257,25 +299,7 @@ export function mountMcpOAuth(app: Express): void {
       humanId = consent.accountId; accountWallet = consent.wallet;
     } catch (error) { return fail(error instanceof Error ? error.message : 'Account verification failed'); }
 
-    await prune();
-    const code = b64url(randomBytes(24));
-    await codes.set(code, {
-      clientId: client_id,
-      redirectUri: redirect_uri,
-      codeChallenge: code_challenge,
-      codeChallengeMethod: code_challenge_method,
-      scope,
-      resource,
-      humanId,
-      accountWallet,
-      exp: Date.now() + 10 * 60_000,
-    });
-
-    const redirect = new URL(redirect_uri);
-    redirect.searchParams.set('code', code);
-    if (state) redirect.searchParams.set('state', state);
-    redirect.searchParams.set('iss', base);
-    res.redirect(302, redirect.toString());
+    await issueAuthorization(res, base, q, { accountId: humanId, wallet: accountWallet });
   });
 
   app.post('/oauth/token', async (req, res) => {
@@ -331,7 +355,7 @@ export function mountMcpOAuth(app: Express): void {
       return;
     }
 
-    if (row.redirectUri !== body.redirect_uri) {
+    if (row.redirectUri !== body.redirect_uri || (body.resource && body.resource !== row.resource)) {
       res.status(400).json({ error: 'invalid_grant', error_description: 'redirect_uri mismatch' });
       return;
     }
@@ -381,7 +405,6 @@ export function mountMcpOAuth(app: Express): void {
     res.status(201).json({
       client_id: id,
       client_id_issued_at: Math.floor(Date.now() / 1000),
-      client_secret: b64url(randomBytes(18)),
       redirect_uris: body.redirect_uris || [],
       client_name: body.client_name || 'ChatGPT',
       token_endpoint_auth_method: 'none',

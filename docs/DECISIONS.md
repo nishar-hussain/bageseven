@@ -47,3 +47,7 @@ Paid receipts use a transactional outbox tied to the verified payment record, tr
 ## Provider-owned API credentials
 
 The Developers page must never reveal deployment service credentials. Provider secret keys use cryptographically random 256-bit material, hash-only persistence, one-time creation responses, explicit expiry and soft revocation with audit metadata. Public keys can be retained as public values. Short-lived customer tokens carry their provider and issuing key ID, and check that key on each request. Provider scope is enforced on resources even when customer holder IDs match across merchants. Rotation allows overlap, then explicit revocation; it never rotates wallet/delegated signing keys or entitlement subject secrets.
+
+## Reuse verified account sessions for MCP consent
+
+MCP uses the existing console identity instead of repeating email and wallet authentication for every ChatGPT connection. Explicit authorization remains required. A durable, short-lived browser-bound bridge transfers only an opaque single-use proof between the console and MCP origins, preserving the original PKCE/client/resource/state request. Session cookies stay on the console origin. The callback rejects changed wallet bindings. OAuth alone cannot revive a connection pointing at a retired tunnel hostname.
